@@ -138,3 +138,7 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+.narrafork/
+.worktrees/
+bin/
+backend/.tmp_admin_hash.go
