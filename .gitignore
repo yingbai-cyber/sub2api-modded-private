@@ -144,6 +144,11 @@ frontend/coverage/
 aicodex
 output/
 .codegraph/
-
 # Vitest / Vite cache at repo root
 .vite/
+
+# Local NarraFork worktrees and deployment artifacts
+.narrafork/
+.worktrees/
+bin/
+backend/.tmp_admin_hash.go
