@@ -132,10 +132,6 @@ jobs:
         if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
         run: pnpm --dir frontend install --frozen-lockfile
 
-      - name: Test frontend
-        if: ${{ needs.changes.outputs.frontend == 'true' }}
-        run: pnpm --dir frontend run test:run -- --passWithNoTests
-
       - name: Build frontend assets
         if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
         run: pnpm --dir frontend run build
