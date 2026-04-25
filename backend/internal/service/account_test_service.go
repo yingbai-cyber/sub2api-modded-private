@@ -43,9 +43,11 @@ import (
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
 const (
-	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
-	chatgptCodexAPIURL          = "https://chatgpt.com/backend-api/codex/responses"
-	defaultAntigravityTestModel = "claude-sonnet-4-6"
+	testClaudeAPIURL             = "https://api.anthropic.com/v1/messages?beta=true"
+	chatgptCodexAPIURL           = "https://chatgpt.com/backend-api/codex/responses"
+	chatgptWhamUsageURL          = "https://chatgpt.com/backend-api/wham/usage"
+	openAIUsageProbeMaxBodyBytes = 2 << 20
+	defaultAntigravityTestModel  = "claude-sonnet-4-6"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -3108,10 +3110,22 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 	return fmt.Errorf("%s", errorMsg)
 }
 
-// RunTestBackground executes an account test in-memory (no real HTTP client),
-// capturing SSE output via httptest.NewRecorder, then parses the result.
+// RunTestBackground executes a scheduled account test.
+// OpenAI accounts use a metadata/usage probe to avoid spending generation tokens;
+// the full default /responses probe remains available only through manual tests.
 func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID int64, modelID string) (*ScheduledTestResult, error) {
 	startedAt := time.Now()
+	if s == nil || s.accountRepo == nil {
+		return buildScheduledProbeResult(startedAt, "", "Account repository is not configured"), nil
+	}
+
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return buildScheduledProbeResult(startedAt, "", "Account not found"), nil
+	}
+	if account.IsOpenAI() {
+		return s.runOpenAILightProbeBackground(ctx, account, modelID, startedAt), nil
+	}
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
@@ -3139,6 +3153,378 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
 	}, nil
+}
+
+type openAIWhamUsageResponse struct {
+	PlanType  string `json:"plan_type"`
+	RateLimit struct {
+		Allowed         *bool                  `json:"allowed"`
+		LimitReached    bool                   `json:"limit_reached"`
+		PrimaryWindow   *openAIWhamUsageWindow `json:"primary_window"`
+		SecondaryWindow *openAIWhamUsageWindow `json:"secondary_window"`
+	} `json:"rate_limit"`
+	Credits struct {
+		OverageLimitReached bool `json:"overage_limit_reached"`
+	} `json:"credits"`
+	SpendControl struct {
+		Reached bool `json:"reached"`
+	} `json:"spend_control"`
+	RateLimitReachedType *string `json:"rate_limit_reached_type"`
+}
+
+type openAIWhamUsageWindow struct {
+	UsedPercent        float64 `json:"used_percent"`
+	LimitWindowSeconds int     `json:"limit_window_seconds"`
+	ResetAfterSeconds  int     `json:"reset_after_seconds"`
+	ResetAt            int64   `json:"reset_at"`
+}
+
+func buildScheduledProbeResult(startedAt time.Time, responseText string, errMsg string) *ScheduledTestResult {
+	finishedAt := time.Now()
+	status := "success"
+	if strings.TrimSpace(errMsg) != "" {
+		status = "failed"
+	}
+	return &ScheduledTestResult{
+		Status:       status,
+		ResponseText: responseText,
+		ErrorMessage: errMsg,
+		LatencyMs:    finishedAt.Sub(startedAt).Milliseconds(),
+		StartedAt:    startedAt,
+		FinishedAt:   finishedAt,
+	}
+}
+
+func (s *AccountTestService) runOpenAILightProbeBackground(ctx context.Context, account *Account, modelID string, startedAt time.Time) *ScheduledTestResult {
+	if account.IsOpenAIOAuth() {
+		return s.runOpenAIWhamUsageProbeBackground(ctx, account, startedAt)
+	}
+	if account.IsOpenAIApiKey() {
+		return s.runOpenAIAPIKeyMetadataProbeBackground(ctx, account, modelID, startedAt)
+	}
+	return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("Unsupported OpenAI account type: %s", account.Type))
+}
+
+func (s *AccountTestService) runOpenAIWhamUsageProbeBackground(ctx context.Context, account *Account, startedAt time.Time) *ScheduledTestResult {
+	accessToken := account.GetOpenAIAccessToken()
+	if accessToken == "" {
+		return buildScheduledProbeResult(startedAt, "", "No access token available")
+	}
+	if s.httpUpstream == nil {
+		return buildScheduledProbeResult(startedAt, "", "HTTP upstream is not configured")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, chatgptWhamUsageURL, nil)
+	if err != nil {
+		return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("Failed to create usage probe request: %s", err.Error()))
+	}
+
+	req.Host = "chatgpt.com"
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("Version", codexCLIVersion)
+	req.Header.Set("User-Agent", codexCLIUserAgent)
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		req.Header.Set("chatgpt-account-id", chatgptAccountID)
+	}
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	now := time.Now()
+	if err != nil {
+		updates := buildOpenAIUsageProbeExtraUpdates(0, nil, nil, fmt.Sprintf("Request failed: %s", err.Error()), now)
+		s.persistOpenAIProbeExtra(ctx, account, updates)
+		return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("OpenAI usage probe request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUsageProbeMaxBodyBytes))
+	usage, usageErr := parseOpenAIWhamUsageResponse(body)
+
+	updates := buildOpenAIUsageProbeExtraUpdates(resp.StatusCode, body, usage, "", now)
+	if codexUpdates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(codexUpdates) > 0 {
+		updates = mergeExtraUpdates(updates, codexUpdates)
+	}
+	if usageErr == nil {
+		if whamUpdates := buildCodexUsageExtraUpdates(openAIWhamUsageToCodexSnapshot(usage, now), now); len(whamUpdates) > 0 {
+			updates = mergeExtraUpdates(updates, whamUpdates)
+		}
+	}
+	s.persistOpenAIProbeExtra(ctx, account, updates)
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errMsg := openAIProbeHTTPErrorMessage("OpenAI usage probe", resp.StatusCode, body)
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+			_ = s.accountRepo.SetError(ctx, account.ID, "Authentication failed (401): "+errMsg)
+		}
+		if resp.StatusCode == http.StatusForbidden && s.accountRepo != nil {
+			_ = s.accountRepo.SetError(ctx, account.ID, "Access forbidden (403): account may be suspended, banned, needs verification, or lacks permissions: "+errMsg)
+		}
+		return buildScheduledProbeResult(startedAt, "", errMsg)
+	}
+
+	if usageErr != nil {
+		return buildScheduledProbeResult(startedAt, "OpenAI usage probe succeeded", "")
+	}
+	if openAIWhamUsageLimitReached(usage) {
+		if resetAt := openAIWhamUsageResetAt(usage, now); resetAt != nil && s.accountRepo != nil {
+			_ = s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt)
+			account.RateLimitedAt = &now
+			account.RateLimitResetAt = resetAt
+		}
+		return buildScheduledProbeResult(startedAt, "", openAIWhamUsageLimitMessage(usage))
+	}
+
+	return buildScheduledProbeResult(startedAt, openAIWhamUsageSuccessMessage(usage), "")
+}
+
+func (s *AccountTestService) runOpenAIAPIKeyMetadataProbeBackground(ctx context.Context, account *Account, modelID string, startedAt time.Time) *ScheduledTestResult {
+	_ = modelID
+	apiKey := account.GetOpenAIApiKey()
+	if apiKey == "" {
+		return buildScheduledProbeResult(startedAt, "", "No API key available")
+	}
+	if s.httpUpstream == nil {
+		return buildScheduledProbeResult(startedAt, "", "HTTP upstream is not configured")
+	}
+
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("Invalid base URL: %s", err.Error()))
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
+	if err != nil {
+		return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("Failed to create metadata probe request: %s", err.Error()))
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	now := time.Now()
+	if err != nil {
+		updates := buildOpenAIUsageProbeExtraUpdates(0, nil, nil, fmt.Sprintf("Request failed: %s", err.Error()), now)
+		s.persistOpenAIProbeExtra(ctx, account, updates)
+		return buildScheduledProbeResult(startedAt, "", fmt.Sprintf("OpenAI API key metadata probe request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUsageProbeMaxBodyBytes))
+	updates := buildOpenAIUsageProbeExtraUpdates(resp.StatusCode, body, nil, "", now)
+	if codexUpdates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(codexUpdates) > 0 {
+		updates = mergeExtraUpdates(updates, codexUpdates)
+	}
+	s.persistOpenAIProbeExtra(ctx, account, updates)
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errMsg := openAIProbeHTTPErrorMessage("OpenAI API key metadata probe", resp.StatusCode, body)
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+			_ = s.accountRepo.SetError(ctx, account.ID, "Authentication failed (401): "+errMsg)
+		}
+		return buildScheduledProbeResult(startedAt, "", errMsg)
+	}
+
+	return buildScheduledProbeResult(startedAt, "OpenAI API key metadata probe succeeded", "")
+}
+
+func buildOpenAIModelsURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/models") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/responses") {
+		return strings.TrimSuffix(normalized, "/responses") + "/models"
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/models"
+	}
+	return normalized + "/v1/models"
+}
+
+func (s *AccountTestService) persistOpenAIProbeExtra(ctx context.Context, account *Account, updates map[string]any) {
+	if s == nil || s.accountRepo == nil || account == nil || len(updates) == 0 {
+		return
+	}
+	_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
+	mergeAccountExtra(account, updates)
+}
+
+func buildOpenAIUsageProbeExtraUpdates(status int, body []byte, usage *openAIWhamUsageResponse, probeErr string, now time.Time) map[string]any {
+	updates := map[string]any{
+		"openai_usage_probe_checked_at":  now.Format(time.RFC3339),
+		"openai_usage_probe_last_status": nil,
+	}
+	if status > 0 {
+		updates["openai_usage_probe_last_status"] = status
+	}
+	if usage != nil {
+		updates["openai_usage_probe_plan_type"] = usage.PlanType
+		if usage.RateLimit.Allowed != nil {
+			updates["openai_usage_probe_allowed"] = *usage.RateLimit.Allowed
+		}
+		updates["openai_usage_probe_limit_reached"] = usage.RateLimit.LimitReached
+		if usage.RateLimitReachedType != nil {
+			updates["openai_usage_probe_limit_reached_type"] = *usage.RateLimitReachedType
+		}
+		updates["openai_usage_probe_credit_overage_reached"] = usage.Credits.OverageLimitReached
+		updates["openai_usage_probe_spend_control_reached"] = usage.SpendControl.Reached
+	}
+	errMsg := strings.TrimSpace(probeErr)
+	if errMsg == "" && status > 0 && (status < 200 || status >= 300) {
+		errMsg = strings.TrimSpace(extractUpstreamErrorMessage(body))
+		if errMsg == "" && len(body) > 0 {
+			errMsg = string(body)
+		}
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d", status)
+		}
+	}
+	updates["openai_usage_probe_last_error"] = truncateString(sanitizeUpstreamErrorMessage(errMsg), 2048)
+	return updates
+}
+
+func parseOpenAIWhamUsageResponse(body []byte) (*openAIWhamUsageResponse, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, errors.New("empty usage response")
+	}
+	var usage openAIWhamUsageResponse
+	if err := json.Unmarshal(body, &usage); err != nil {
+		return nil, err
+	}
+	return &usage, nil
+}
+
+func openAIWhamUsageToCodexSnapshot(usage *openAIWhamUsageResponse, now time.Time) *OpenAICodexUsageSnapshot {
+	if usage == nil || (usage.RateLimit.PrimaryWindow == nil && usage.RateLimit.SecondaryWindow == nil) {
+		return nil
+	}
+	snapshot := &OpenAICodexUsageSnapshot{UpdatedAt: now.Format(time.RFC3339)}
+	if w := usage.RateLimit.PrimaryWindow; w != nil {
+		used := w.UsedPercent
+		reset := w.ResetAfterSeconds
+		window := w.LimitWindowSeconds / 60
+		snapshot.PrimaryUsedPercent = &used
+		if reset > 0 {
+			snapshot.PrimaryResetAfterSeconds = &reset
+		}
+		if window > 0 {
+			snapshot.PrimaryWindowMinutes = &window
+		}
+	}
+	if w := usage.RateLimit.SecondaryWindow; w != nil {
+		used := w.UsedPercent
+		reset := w.ResetAfterSeconds
+		window := w.LimitWindowSeconds / 60
+		snapshot.SecondaryUsedPercent = &used
+		if reset > 0 {
+			snapshot.SecondaryResetAfterSeconds = &reset
+		}
+		if window > 0 {
+			snapshot.SecondaryWindowMinutes = &window
+		}
+	}
+	return snapshot
+}
+
+func openAIWhamUsageLimitReached(usage *openAIWhamUsageResponse) bool {
+	if usage == nil {
+		return false
+	}
+	if usage.RateLimit.LimitReached || usage.Credits.OverageLimitReached || usage.SpendControl.Reached {
+		return true
+	}
+	return usage.RateLimit.Allowed != nil && !*usage.RateLimit.Allowed
+}
+
+func openAIWhamUsageResetAt(usage *openAIWhamUsageResponse, now time.Time) *time.Time {
+	if usage == nil {
+		return nil
+	}
+	var resetAt *time.Time
+	for _, window := range []*openAIWhamUsageWindow{usage.RateLimit.PrimaryWindow, usage.RateLimit.SecondaryWindow} {
+		if window == nil {
+			continue
+		}
+		var candidate time.Time
+		switch {
+		case window.ResetAt > 0:
+			candidate = time.Unix(window.ResetAt, 0)
+		case window.ResetAfterSeconds > 0:
+			candidate = now.Add(time.Duration(window.ResetAfterSeconds) * time.Second)
+		default:
+			continue
+		}
+		if resetAt == nil || candidate.After(*resetAt) {
+			candidateCopy := candidate
+			resetAt = &candidateCopy
+		}
+	}
+	return resetAt
+}
+
+func openAIWhamUsageLimitMessage(usage *openAIWhamUsageResponse) string {
+	parts := []string{"OpenAI usage limit reached"}
+	if usage != nil {
+		if usage.PlanType != "" {
+			parts = append(parts, "plan="+usage.PlanType)
+		}
+		if usage.RateLimitReachedType != nil && strings.TrimSpace(*usage.RateLimitReachedType) != "" {
+			parts = append(parts, "type="+strings.TrimSpace(*usage.RateLimitReachedType))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func openAIWhamUsageSuccessMessage(usage *openAIWhamUsageResponse) string {
+	if usage == nil {
+		return "OpenAI usage probe succeeded"
+	}
+	parts := []string{"OpenAI usage probe succeeded"}
+	if usage.PlanType != "" {
+		parts = append(parts, "plan="+usage.PlanType)
+	}
+	if usage.RateLimit.Allowed != nil {
+		parts = append(parts, fmt.Sprintf("allowed=%t", *usage.RateLimit.Allowed))
+	}
+	parts = append(parts, fmt.Sprintf("limit_reached=%t", usage.RateLimit.LimitReached))
+	return strings.Join(parts, ", ")
+}
+
+func openAIProbeHTTPErrorMessage(prefix string, status int, body []byte) string {
+	errMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+	if errMsg == "" && len(body) > 0 {
+		errMsg = strings.TrimSpace(string(body))
+	}
+	if errMsg == "" {
+		errMsg = http.StatusText(status)
+	}
+	return fmt.Sprintf("%s returned %d: %s", prefix, status, sanitizeUpstreamErrorMessage(truncateString(errMsg, 2048)))
 }
 
 // parseTestSSEOutput extracts response text and error message from captured SSE output.
