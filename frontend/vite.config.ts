@@ -44,7 +44,9 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
       checker({
-        vueTsc: true
+        vueTsc: true,
+        // package.json 的 build 已先运行 vue-tsc；生产构建禁用 checker，避免重复启动类型检查进程吃内存。
+        enableBuild: false
       }),
       injectPublicSettings(backendUrl)
     ],
