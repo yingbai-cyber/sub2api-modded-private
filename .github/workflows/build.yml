@@ -1,0 +1,245 @@
+name: Build sub2api modded
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the built binary to sub2api-modded.service after build
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      workflow: ${{ steps.filter.outputs.workflow }}
+      deploy: ${{ steps.deploy.outputs.requested }}
+      should_build: ${{ steps.decide.outputs.should_build }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+              - 'migrations/**'
+            workflow:
+              - '.github/workflows/build.yml'
+
+      - name: Detect deploy request
+        id: deploy
+        run: |
+          echo "requested=${{ (github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy]')) }}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether build is required
+        id: decide
+        run: |
+          if [ "${{ steps.filter.outputs.frontend }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.backend }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.workflow }}" = "true" ] || \
+             [ "${{ steps.deploy.outputs.requested }}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build embedded Linux binary
+    needs: changes
+    if: ${{ needs.changes.outputs.should_build == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore frontend dist cache
+        id: frontend-dist-cache
+        uses: actions/cache@v4
+        with:
+          path: backend/internal/web/dist
+          key: frontend-dist-${{ runner.os }}-${{ hashFiles('frontend/package.json', 'frontend/pnpm-lock.yaml', 'frontend/vite.config.ts', 'frontend/index.html', 'frontend/src/**', 'frontend/public/**', 'frontend/tailwind.config.*', 'frontend/postcss.config.*') }}
+
+      - name: Setup pnpm
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Test frontend
+        if: ${{ needs.changes.outputs.frontend == 'true' }}
+        run: pnpm --dir frontend run test:run -- --passWithNoTests
+
+      - name: Build frontend assets
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
+        run: pnpm --dir frontend run build
+
+      - name: Verify embedded frontend assets
+        run: test -s backend/internal/web/dist/index.html
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Test backend
+        if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.workflow == 'true' }}
+        working-directory: backend
+        run: go test ./...
+
+      - name: Build backend with embedded frontend
+        working-directory: backend
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p ../bin
+          go build -tags embed -trimpath -ldflags "-s -w" -o ../bin/sub2api ./cmd/server
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p artifacts
+          cp bin/sub2api artifacts/sub2api-linux-amd64
+          sha256sum artifacts/sub2api-linux-amd64 > artifacts/sub2api-linux-amd64.sha256
+          printf '%s\n' "${GITHUB_SHA}" > artifacts/commit.txt
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub2api-linux-amd64-${{ github.sha }}
+          path: artifacts/
+          retention-days: 7
+
+  deploy:
+    name: Deploy built binary to server
+    needs:
+      - changes
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ needs.changes.outputs.deploy == 'true' && needs.build.result == 'success' }}
+    environment: production
+
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sub2api-linux-amd64-${{ github.sha }}
+          path: artifacts
+
+      - name: Configure SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/sub2api_deploy_key
+          chmod 600 ~/.ssh/sub2api_deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload binary to server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          scp -i ~/.ssh/sub2api_deploy_key -P "$DEPLOY_PORT" artifacts/sub2api-linux-amd64 "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-${GITHUB_SHA}"
+
+      - name: Install, restart and verify
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          ssh -i ~/.ssh/sub2api_deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "GITHUB_SHA='$GITHUB_SHA' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          bin_path=/root/sub2api-modded/bin/sub2api
+          tmp_path=/tmp/sub2api-${GITHUB_SHA}
+          backup_path=/root/sub2api-modded/bin/sub2api.bak.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}
+          marker_dir=/root/sub2api-modded-data/deployments
+          marker_path=${marker_dir}/last-github-actions-deploy.json
+
+          test -s "$tmp_path"
+          cp "$bin_path" "$backup_path"
+          install -m 0755 "$tmp_path" "$bin_path"
+
+          systemctl restart sub2api-modded.service
+          systemctl is-active sub2api-modded.service
+
+          code="000"
+          for _ in $(seq 1 30); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' http://172.19.0.1:18081/health || true)
+            if [ "$code" = "200" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$code" != "200" ]; then
+            cp "$backup_path" "$bin_path"
+            systemctl restart sub2api-modded.service || true
+            curl -sS -o /dev/null -w '%{http_code}\n' http://172.19.0.1:18081/health || true
+            exit 1
+          fi
+
+          npm_code=$(docker exec npm-app curl -sS -o /dev/null -w '%{http_code}' http://172.19.0.1:18081/health || true)
+          if [ "$npm_code" != "200" ]; then
+            cp "$backup_path" "$bin_path"
+            systemctl restart sub2api-modded.service || true
+            exit 1
+          fi
+
+          mkdir -p "$marker_dir"
+          sha256_line=$(sha256sum "$bin_path")
+          sha256=${sha256_line%% *}
+          deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > "$marker_path" <<EOF
+          {"commit":"${GITHUB_SHA}","sha256":"${sha256}","deployed_at":"${deployed_at}","health_code":"${code}","npm_health_code":"${npm_code}","backup":"${backup_path}"}
+          EOF
+          rm -f "$tmp_path"
+          REMOTE
