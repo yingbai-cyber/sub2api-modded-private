@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -568,6 +569,58 @@ func TestBuildOpenAIImagesURL_HandlesVersionedBaseURL(t *testing.T) {
 		"https://image-upstream.example/v1/images/generations",
 		buildOpenAIImagesURL("https://image-upstream.example/v1/images/generations", openAIImagesGenerationsEndpoint),
 	)
+}
+
+func TestShouldUseOpenAIImagesWeb2API_FreePlanGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1536x1024","quality":"high","output_format":"jpeg"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+
+	freeAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}
+	teamAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "team"}}
+	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	require.True(t, shouldUseOpenAIImagesWeb2API(freeAccount, parsed))
+	require.False(t, shouldUseOpenAIImagesWeb2API(teamAccount, parsed))
+	require.False(t, shouldUseOpenAIImagesWeb2API(apiKeyAccount, parsed))
+}
+
+func TestShouldUseOpenAIImagesWeb2API_TransportOverrideAndStreamGuard(t *testing.T) {
+	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"plan_type": "team"},
+		Extra:       map[string]any{"openai_images_transport": "web2api"},
+	}
+	require.True(t, shouldUseOpenAIImagesWeb2API(account, parsed))
+
+	parsed.Stream = true
+	require.False(t, shouldUseOpenAIImagesWeb2API(account, parsed))
+
+	parsed.Stream = false
+	account.Extra["openai_images_transport"] = "responses"
+	account.Credentials["plan_type"] = "free"
+	require.False(t, shouldUseOpenAIImagesWeb2API(account, parsed))
+}
+
+func TestBuildOpenAIImageConversationRequestUsesWeb2APIPictureHint(t *testing.T) {
+	body, err := json.Marshal(buildOpenAIImageConversationRequest(&OpenAIImagesRequest{Prompt: "draw a cat"}, "parent-1", nil))
+	require.NoError(t, err)
+	require.Equal(t, "auto", gjson.GetBytes(body, "model").String())
+	require.Equal(t, "picture_v2", gjson.GetBytes(body, "system_hints.0").String())
+	require.Equal(t, "draw a cat", gjson.GetBytes(body, "messages.0.content.parts.0").String())
+	require.False(t, gjson.GetBytes(body, "tools").Exists())
+	require.False(t, gjson.GetBytes(body, "tool_choice").Exists())
 }
 
 type openAIImageTestSSEEvent struct {
@@ -1218,6 +1271,51 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyEditUsesConfiguredV1BaseURL(t *
 	require.Contains(t, string(upstream.lastBody), "gpt-image-2")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "ZWRpdGVk", gjson.Get(rec.Body.String(), "data.0.b64_json").String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthImageToolChoiceErrorTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024","quality":"high"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":{"message":"Tool choice 'image_generation' not found in 'tools' parameter.","type":"invalid_request_error","param":"tool_choice"}}`,
+			)),
+		},
+	}
+	svc.httpUpstream = upstream
+
+	account := &Account{
+		ID:       8,
+		Name:     "openai-oauth-no-image-tool",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "token-123",
+			"chatgpt_account_id": "acct-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "Tool choice 'image_generation' not found")
+	require.False(t, c.Writer.Written(), "service layer should return failover error instead of writing response")
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTransformsEvents(t *testing.T) {
