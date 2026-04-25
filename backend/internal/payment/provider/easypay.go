@@ -24,16 +24,19 @@ import (
 
 // EasyPay constants.
 const (
-	easypayCodeSuccess     = 1
-	easypayStatusPaid      = 1
-	easypayHTTPTimeout     = 10 * time.Second
-	maxEasypayResponseSize = 1 << 20 // 1MB
-	maxEasypayErrorSummary = 512
-	easypayAmountTolerance = 0.005
-	tradeStatusSuccess     = "TRADE_SUCCESS"
-	signTypeMD5            = "MD5"
-	paymentModePopup       = "popup"
-	deviceMobile           = "mobile"
+	easypayCodeSuccess        = 1
+	easypayCodeSuccessEZFPY   = 200
+	easypayStatusPaid         = 1
+	easypayHTTPTimeout        = 10 * time.Second
+	maxEasypayResponseSize    = 1 << 20 // 1MB
+	maxEasypayErrorSummary    = 512
+	easypayAmountTolerance    = 0.005
+	tradeStatusSuccess        = "TRADE_SUCCESS"
+	signTypeMD5               = "MD5"
+	paymentModePopup          = "popup"
+	easypayQueryModeFindOrder = "findorder"
+	easypayFindOrderNoType    = "1"
+	deviceMobile              = "mobile"
 )
 
 // EasyPay implements payment.Provider for the EasyPay aggregation platform.
@@ -51,7 +54,7 @@ type easyPayCustomMethod struct {
 
 // NewEasyPay creates a new EasyPay provider.
 // config keys: pid, pkey, apiBase, notifyUrl, returnUrl, cid, cidAlipay, cidWxpay,
-// refundSuccessCode (0 or 1; defaults to 1).
+// refundSuccessCode (0 or 1; defaults to 1), siteName/sitename, queryMode.
 func NewEasyPay(instanceID string, config map[string]string) (*EasyPay, error) {
 	for _, k := range []string{"pid", "pkey", "apiBase", "notifyUrl", "returnUrl"} {
 		if strings.TrimSpace(config[k]) == "" {
@@ -151,6 +154,9 @@ func (e *EasyPay) createRedirectPayment(req payment.CreatePaymentRequest) (*paym
 		"return_url": returnURL, "name": req.Subject,
 		"money": req.Amount,
 	}
+	if siteName := e.resolveSiteName(); siteName != "" {
+		params["sitename"] = siteName
+	}
 	if cid := e.resolveCID(paymentType); cid != "" {
 		params["cid"] = cid
 	}
@@ -178,6 +184,9 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 		"return_url": returnURL, "name": req.Subject,
 		"money": req.Amount, "clientip": req.ClientIP,
 	}
+	if siteName := e.resolveSiteName(); siteName != "" {
+		params["sitename"] = siteName
+	}
 	if cid := e.resolveCID(paymentType); cid != "" {
 		params["cid"] = cid
 	}
@@ -198,22 +207,27 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 		PayURL  string `json:"payurl"`
 		PayURL2 string `json:"payurl2"` // H5 mobile payment URL
 		QRCode  string `json:"qrcode"`
+		CodeURL string `json:"code_url"` // ezfpy-compatible QR image/content URL
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse: %w", err)
 	}
-	if resp.Code != easypayCodeSuccess {
+	if resp.Code != easypayCodeSuccess && resp.Code != easypayCodeSuccessEZFPY {
 		return nil, fmt.Errorf("easypay error: %s", resp.Msg)
 	}
 	payURL := resp.PayURL
 	if req.IsMobile && resp.PayURL2 != "" {
 		payURL = resp.PayURL2
 	}
+	qrCode := resp.QRCode
+	if qrCode == "" {
+		qrCode = resp.CodeURL
+	}
 	base := e.apiBase()
 	return &payment.CreatePaymentResponse{
 		TradeNo: resp.TradeNo,
 		PayURL:  resolveEasyPayReturnedRef(base, payURL),
-		QRCode:  resolveEasyPayReturnedRef(base, resp.QRCode),
+		QRCode:  resolveEasyPayReturnedRef(base, qrCode),
 	}, nil
 }
 
@@ -308,6 +322,7 @@ func (e *EasyPay) upstreamPaymentType(paymentType string) string {
 }
 
 func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
+	tradeNo = strings.TrimSpace(tradeNo)
 	result, err := e.queryOrder(ctx, tradeNo)
 	if err != nil {
 		return nil, err
@@ -317,11 +332,18 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		responseTradeNo = result.tradeNo
 	}
 	amount, _ := strconv.ParseFloat(result.money, 64)
+	metadata := e.MerchantIdentityMetadata()
+	if pid := strings.TrimSpace(result.pid); pid != "" {
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata["pid"] = pid
+	}
 	return &payment.QueryOrderResponse{
 		TradeNo:  responseTradeNo,
 		Status:   result.status,
 		Amount:   amount,
-		Metadata: e.MerchantIdentityMetadata(),
+		Metadata: metadata,
 	}, nil
 }
 
@@ -331,9 +353,26 @@ type easyPayQueryResult struct {
 	status  string
 	money   string
 	tradeNo string
+	pid     string
 }
 
 func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*easyPayQueryResult, error) {
+	outTradeNo = strings.TrimSpace(outTradeNo)
+	if strings.EqualFold(strings.TrimSpace(e.config["queryMode"]), easypayQueryModeFindOrder) {
+		return e.queryOrderFindOrder(ctx, outTradeNo)
+	}
+	result, err := e.queryOrderLegacy(ctx, outTradeNo)
+	if err == nil {
+		return result, nil
+	}
+	findResult, findErr := e.queryOrderFindOrder(ctx, outTradeNo)
+	if findErr == nil {
+		return findResult, nil
+	}
+	return nil, fmt.Errorf("easypay query legacy: %v; findorder: %w", err, findErr)
+}
+
+func (e *EasyPay) queryOrderLegacy(ctx context.Context, outTradeNo string) (*easyPayQueryResult, error) {
 	params := map[string]string{
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": outTradeNo,
@@ -463,6 +502,143 @@ func pickEasyPayJSON(top, nested json.RawMessage) json.RawMessage {
 		return nested
 	}
 	return nil
+}
+
+func (e *EasyPay) queryOrderFindOrder(ctx context.Context, outTradeNo string) (*easyPayQueryResult, error) {
+	params := map[string]string{
+		"order_no": outTradeNo,
+		"type":     easypayFindOrderNoType,
+	}
+	body, err := e.post(ctx, e.apiBase()+"/api/findorder", params)
+	if err != nil {
+		return nil, fmt.Errorf("easypay findorder query: %w", err)
+	}
+	payload, err := parseEasyPayOrderQueryPayload(body, outTradeNo)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Code != 0 && payload.Code != easypayCodeSuccess && payload.Code != easypayCodeSuccessEZFPY {
+		msg := strings.TrimSpace(payload.Msg)
+		if msg == "" {
+			msg = summarizeEasyPayResponse(body)
+		}
+		return nil, fmt.Errorf("easypay query error: %s", msg)
+	}
+	if echoed := strings.TrimSpace(payload.OutTradeNo); echoed != "" && !strings.EqualFold(echoed, strings.TrimSpace(outTradeNo)) {
+		return nil, fmt.Errorf("easypay query out_trade_no mismatch: expected %s, got %s", strings.TrimSpace(outTradeNo), echoed)
+	}
+	status := payment.ProviderStatusPending
+	if payload.HasTradeStatus {
+		if strings.EqualFold(strings.TrimSpace(payload.TradeStatus), tradeStatusSuccess) {
+			status = payment.ProviderStatusPaid
+		}
+	} else if payload.Status == easypayStatusPaid {
+		status = payment.ProviderStatusPaid
+	}
+	return &easyPayQueryResult{
+		status:  status,
+		money:   payload.Money,
+		tradeNo: strings.TrimSpace(payload.TradeNo),
+		pid:     strings.TrimSpace(payload.PID),
+	}, nil
+}
+
+type easyPayOrderQueryPayload struct {
+	Code           int             `json:"code"`
+	Msg            string          `json:"msg"`
+	PID            string          `json:"pid"`
+	Status         int             `json:"status"`
+	TradeStatus    string          `json:"trade_status"`
+	HasTradeStatus bool            `json:"-"`
+	Money          string          `json:"money"`
+	TradeNo        string          `json:"trade_no"`
+	OutTradeNo     string          `json:"out_trade_no"`
+	OrderNo        string          `json:"order_no"`
+	Data           json.RawMessage `json:"data"`
+}
+
+func parseEasyPayOrderQueryPayload(body []byte, queryRef string) (*easyPayOrderQueryPayload, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
+	var root easyPayOrderQueryPayload
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
+	_, root.HasTradeStatus = raw["trade_status"]
+	if data := strings.TrimSpace(string(root.Data)); data != "" && data != "null" {
+		if nested, ok := parseEasyPayNestedOrderPayload(root.Data, queryRef); ok {
+			mergeEasyPayOrderQueryPayload(&root, nested)
+		}
+	}
+	return &root, nil
+}
+
+func parseEasyPayNestedOrderPayload(data []byte, queryRef string) (*easyPayOrderQueryPayload, bool) {
+	var nestedRaw map[string]json.RawMessage
+	var nested easyPayOrderQueryPayload
+	if err := json.Unmarshal(data, &nestedRaw); err == nil {
+		if err := json.Unmarshal(data, &nested); err == nil {
+			_, nested.HasTradeStatus = nestedRaw["trade_status"]
+			return &nested, true
+		}
+	}
+
+	var rowRaws []map[string]json.RawMessage
+	var rows []easyPayOrderQueryPayload
+	if err := json.Unmarshal(data, &rowRaws); err != nil {
+		return nil, false
+	}
+	if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 {
+		return nil, false
+	}
+	for i := range rows {
+		if i < len(rowRaws) {
+			_, rows[i].HasTradeStatus = rowRaws[i]["trade_status"]
+		}
+	}
+	queryRef = strings.TrimSpace(queryRef)
+	for i := range rows {
+		if strings.EqualFold(strings.TrimSpace(rows[i].OutTradeNo), queryRef) || strings.EqualFold(strings.TrimSpace(rows[i].OrderNo), queryRef) || strings.EqualFold(strings.TrimSpace(rows[i].TradeNo), queryRef) {
+			return &rows[i], true
+		}
+	}
+	return &rows[0], true
+}
+
+func mergeEasyPayOrderQueryPayload(dst, src *easyPayOrderQueryPayload) {
+	if dst == nil || src == nil {
+		return
+	}
+	if src.Code != 0 {
+		dst.Code = src.Code
+	}
+	if src.Msg != "" {
+		dst.Msg = src.Msg
+	}
+	if src.PID != "" {
+		dst.PID = src.PID
+	}
+	if src.Status != 0 {
+		dst.Status = src.Status
+	}
+	if src.HasTradeStatus {
+		dst.TradeStatus = src.TradeStatus
+		dst.HasTradeStatus = true
+	}
+	if src.Money != "" {
+		dst.Money = src.Money
+	}
+	if src.TradeNo != "" {
+		dst.TradeNo = src.TradeNo
+	}
+	if src.OutTradeNo != "" {
+		dst.OutTradeNo = src.OutTradeNo
+	}
+	if src.OrderNo != "" {
+		dst.OrderNo = src.OrderNo
+	}
 }
 
 func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
@@ -620,10 +796,10 @@ func parseEasyPayRefundResponse(status int, body []byte, successCode int) error 
 func easyPayResponseCodeIsSuccess(code any, successCode int) bool {
 	switch v := code.(type) {
 	case float64:
-		return v == float64(successCode)
+		return v == float64(successCode) || v == float64(easypayCodeSuccessEZFPY)
 	case string:
 		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return err == nil && n == successCode
+		return err == nil && (n == successCode || n == easypayCodeSuccessEZFPY)
 	default:
 		return false
 	}
@@ -642,6 +818,13 @@ func summarizeEasyPayResponse(body []byte) string {
 		return truncated + "..."
 	}
 	return summary
+}
+
+func (e *EasyPay) resolveSiteName() string {
+	if v := strings.TrimSpace(e.config["siteName"]); v != "" {
+		return v
+	}
+	return strings.TrimSpace(e.config["sitename"])
 }
 
 func (e *EasyPay) resolveCID(paymentType string) string {
