@@ -254,6 +254,18 @@ func RegisterGatewayRoutes(
 			}
 			h.OpenAIGateway.Embeddings(c)
 		})
+		gateway.GET("/images/capability", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformOpenAI {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Images API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.ImagesCapability(c)
+		})
 		gateway.POST("/images/generations", imagesHandler)
 		gateway.POST("/images/edits", imagesHandler)
 		gateway.POST("/images/generations/async", h.AsyncImage.Submit)
@@ -415,6 +427,18 @@ func RegisterGatewayRoutes(
 			return
 		}
 		h.OpenAIGateway.Embeddings(c)
+	})
+	rootRoute(http.MethodGet, "/images/capability", bodyLimit, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Images API is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.ImagesCapability(c)
 	})
 	rootRoute(http.MethodPost, "/images/generations", bodyLimit, imagesHandler)
 	rootRoute(http.MethodPost, "/images/edits", bodyLimit, imagesHandler)
