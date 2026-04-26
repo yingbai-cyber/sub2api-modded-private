@@ -39,20 +39,20 @@ func shouldUseOpenAIImagesWeb2API(account *Account, parsed *OpenAIImagesRequest)
 	if account == nil || parsed == nil || !account.IsOpenAIOAuth() {
 		return false
 	}
+	if err := validateOpenAIImagesWeb2APIRequest(parsed); err != nil {
+		return false
+	}
 	transport := normalizeOpenAIImagesTransport(account.GetExtraString("openai_images_transport"))
 	if transport == "" {
 		transport = normalizeOpenAIImagesTransport(account.GetCredential("openai_images_transport"))
 	}
 	switch transport {
 	case "web2api":
-		return !parsed.Stream
+		return true
 	case "responses":
 		return false
 	}
-	if !isOpenAIFreePlan(account) {
-		return false
-	}
-	return parsed.Endpoint == openAIImagesGenerationsEndpoint && !parsed.Stream
+	return isOpenAIFreePlan(account)
 }
 
 func normalizeOpenAIImagesTransport(value string) string {
@@ -64,6 +64,76 @@ func normalizeOpenAIImagesTransport(value string) string {
 	default:
 		return ""
 	}
+}
+
+func validateOpenAIImagesWeb2APIRequest(parsed *OpenAIImagesRequest) error {
+	unsupported := unsupportedOpenAIImagesWeb2APIParams(parsed)
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return &OpenAIImagesUnsupportedParamsError{
+		Mode:        "basic_web2api",
+		Unsupported: unsupported,
+	}
+}
+
+func unsupportedOpenAIImagesWeb2APIParams(parsed *OpenAIImagesRequest) []string {
+	if parsed == nil {
+		return []string{"request"}
+	}
+	unsupported := make([]string, 0, 8)
+	if parsed.Endpoint != openAIImagesGenerationsEndpoint {
+		unsupported = append(unsupported, "edits")
+	}
+	if parsed.Multipart {
+		unsupported = append(unsupported, "multipart")
+	}
+	if parsed.ExplicitModel {
+		unsupported = append(unsupported, "model")
+	}
+	if parsed.ExplicitSize {
+		unsupported = append(unsupported, "size")
+	}
+	if parsed.Stream {
+		unsupported = append(unsupported, "stream")
+	}
+	if parsed.N != 1 {
+		unsupported = append(unsupported, "n")
+	}
+	if parsed.ResponseFormat != "" && parsed.ResponseFormat != "b64_json" {
+		unsupported = append(unsupported, "response_format")
+	}
+	if parsed.Quality != "" {
+		unsupported = append(unsupported, "quality")
+	}
+	if parsed.Background != "" {
+		unsupported = append(unsupported, "background")
+	}
+	if parsed.OutputFormat != "" {
+		unsupported = append(unsupported, "output_format")
+	}
+	if parsed.Moderation != "" {
+		unsupported = append(unsupported, "moderation")
+	}
+	if parsed.InputFidelity != "" {
+		unsupported = append(unsupported, "input_fidelity")
+	}
+	if parsed.Style != "" {
+		unsupported = append(unsupported, "style")
+	}
+	if parsed.OutputCompression != nil {
+		unsupported = append(unsupported, "output_compression")
+	}
+	if parsed.PartialImages != nil {
+		unsupported = append(unsupported, "partial_images")
+	}
+	if parsed.HasMask || parsed.MaskImageURL != "" || parsed.MaskUpload != nil {
+		unsupported = append(unsupported, "mask")
+	}
+	if len(parsed.InputImageURLs) > 0 || len(parsed.Uploads) > 0 {
+		unsupported = append(unsupported, "images")
+	}
+	return unsupported
 }
 
 func isOpenAIFreePlan(account *Account) bool {
@@ -88,9 +158,12 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuthWeb2API(
 	parsed *OpenAIImagesRequest,
 	requestModel string,
 ) (*OpenAIForwardResult, error) {
+	if err := validateOpenAIImagesWeb2APIRequest(parsed); err != nil {
+		return nil, err
+	}
 	startTime := time.Now()
 	if requestModel == "" {
-		requestModel = "gpt-image-2"
+		requestModel = openAIImagesDefaultModel
 	}
 	logger.LegacyPrintf(
 		"service.openai_gateway",
