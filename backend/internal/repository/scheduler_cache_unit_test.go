@@ -298,6 +298,35 @@ func TestMarshalSchedulerCacheAccountKeepsEncodingJSONWireFormat(t *testing.T) {
 	}
 }
 
+func TestBuildSchedulerMetadataAccount_KeepsOpenAIImageCapabilityFields(t *testing.T) {
+	account := service.Account{
+		ID:       8,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"plan_type":               "free",
+			"openai_images_transport": "web2api",
+			"access_token":            "drop-secret-access-token",
+			"refresh_token":           "drop-secret-refresh-token",
+			"model_mapping":           map[string]any{"gpt-image-2": "gpt-image-2"},
+		},
+		Extra: map[string]any{
+			"openai_images_transport": "web2api",
+			"unused_large_field":      "drop-me",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, "free", got.GetCredential("plan_type"))
+	require.Equal(t, "web2api", got.GetCredential("openai_images_transport"))
+	require.Equal(t, "web2api", got.GetExtraString("openai_images_transport"))
+	require.NotEmpty(t, got.GetModelMapping())
+	require.Empty(t, got.GetCredential("access_token"))
+	require.Empty(t, got.GetCredential("refresh_token"))
+	require.Nil(t, got.Extra["unused_large_field"])
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	account := service.Account{
 		ID:       42,
