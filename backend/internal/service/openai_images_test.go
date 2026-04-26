@@ -67,6 +67,33 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSON(t *testing.T) {
 	require.False(t, parsed.Multipart)
 }
 
+func TestNormalizeOpenAIImageSizeTier(t *testing.T) {
+	tests := []struct {
+		name string
+		size string
+		want string
+	}{
+		{name: "square 1K", size: "1024x1024", want: "1K"},
+		{name: "landscape 2K", size: "1536x1024", want: "2K"},
+		{name: "portrait 2K", size: "1024x1536", want: "2K"},
+		{name: "wide 2K", size: "2048x1152", want: "2K"},
+		{name: "square 2K", size: "2048x2048", want: "2K"},
+		{name: "landscape 4K", size: "3840x2160", want: "4K"},
+		{name: "portrait 4K", size: "2160x3840", want: "4K"},
+		{name: "auto fallback", size: "auto", want: "2K"},
+		{name: "empty fallback", size: "", want: "2K"},
+		{name: "oversized square fallback", size: "3840x3840", want: "2K"},
+		{name: "upper X delimiter", size: "3840X2160", want: "4K"},
+		{name: "unicode multiply delimiter", size: "2160×3840", want: "4K"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, normalizeOpenAIImageSizeTier(tt.size))
+		})
+	}
+}
+
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -197,7 +224,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_UnknownSizesDoNotBlockPass
 		{size: "2048x1153", wantTier: "2K"},
 		{size: "4096x1024", wantTier: "4K"},
 		{size: "3840x1024", wantTier: "4K"},
-		{size: "512x512", wantTier: "1K"},
+		{size: "512x512", wantTier: "2K"},
 		{size: "invalid", wantTier: "2K"},
 		{size: "999999999999999999999999999x2", wantTier: "2K"},
 	}
