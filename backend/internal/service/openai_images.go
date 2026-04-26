@@ -532,54 +532,65 @@ func isOpenAINativeImageOption(name string) bool {
 }
 
 func normalizeOpenAIImageSizeTier(size string) string {
-	trimmed := strings.TrimSpace(size)
-	normalized := strings.ToLower(trimmed)
-	switch normalized {
-	case "", "auto":
+	width, height, ok := parseOpenAIImageSizeDimensions(size)
+	if !ok || !isValidOpenAIImageDimensions(width, height) {
 		return "2K"
-	case "1024x1024":
+	}
+
+	pixels := width * height
+	switch {
+	case pixels <= 1024*1024:
 		return "1K"
-	case "1536x1024", "1024x1536", "1792x1024", "1024x1792", "2048x2048", "2048x1152", "1152x2048":
+	case pixels <= 2048*2048:
 		return "2K"
-	case "3840x2160", "2160x3840":
+	default:
 		return "4K"
 	}
-	width, height, ok := parseOpenAIImageSizeDimensions(trimmed)
-	if !ok {
-		return "2K"
-	}
-	return classifyUnknownOpenAIImageSizeTier(width, height)
 }
 
-const (
-	openAIImage2KMaxPixels = 2560 * 1440
-)
+func parseOpenAIImageSizeDimensions(size string) (int64, int64, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(size))
+	if normalized == "" || normalized == "auto" {
+		return 0, 0, false
+	}
+	normalized = strings.ReplaceAll(normalized, "×", "x")
 
-func parseOpenAIImageSizeDimensions(size string) (int, int, bool) {
-	trimmed := strings.TrimSpace(size)
-	parts := strings.Split(strings.ToLower(trimmed), "x")
+	parts := strings.Split(normalized, "x")
 	if len(parts) != 2 {
 		return 0, 0, false
 	}
-	width, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	width, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
 	if err != nil {
 		return 0, 0, false
 	}
-	height, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	height, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
 	if err != nil {
-		return 0, 0, false
-	}
-	if width <= 0 || height <= 0 {
 		return 0, 0, false
 	}
 	return width, height, true
 }
 
-func classifyUnknownOpenAIImageSizeTier(width int, height int) string {
-	if height > 0 && width > openAIImage2KMaxPixels/height {
-		return "4K"
+func isValidOpenAIImageDimensions(width, height int64) bool {
+	if width <= 0 || height <= 0 {
+		return false
 	}
-	return "2K"
+	if width%16 != 0 || height%16 != 0 {
+		return false
+	}
+	if width > 3840 || height > 3840 {
+		return false
+	}
+
+	longSide, shortSide := width, height
+	if height > width {
+		longSide, shortSide = height, width
+	}
+	if longSide > shortSide*3 {
+		return false
+	}
+
+	pixels := width * height
+	return pixels >= 655360 && pixels <= 8294400
 }
 
 func (s *OpenAIGatewayService) ForwardImages(
