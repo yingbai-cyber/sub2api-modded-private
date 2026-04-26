@@ -169,6 +169,57 @@ func TestCalculateCostUnified_ImageMode(t *testing.T) {
 	require.Equal(t, string(BillingModeImage), cost.BillingMode)
 }
 
+func TestGatewayServiceCalculateImageCost_ChannelImageModeUsesSizeTierAndImageCount(t *testing.T) {
+	groupID := int64(3)
+	cs := newTestChannelServiceWithCache(t, &channelCache{
+		pricingByGroupModel: map[channelModelKey]*ChannelModelPricing{
+			{groupID: groupID, model: "gpt-image-2"}: {
+				BillingMode:     BillingModeImage,
+				PerRequestPrice: testPtrFloat64(0.01),
+				Intervals: []PricingInterval{
+					{TierLabel: "1K", PerRequestPrice: testPtrFloat64(0.04)},
+					{TierLabel: "2K", PerRequestPrice: testPtrFloat64(0.08)},
+					{TierLabel: "4K", PerRequestPrice: testPtrFloat64(0.16)},
+				},
+			},
+		},
+		channelByGroupID: map[int64]*Channel{
+			groupID: {ID: 3, Status: StatusActive},
+		},
+		groupPlatform:           map[int64]string{groupID: ""},
+		wildcardByGroupPlatform: map[channelGroupPlatformKey][]*wildcardPricingEntry{},
+		mappingByGroupModel:     map[channelModelKey]string{},
+		wildcardMappingByGP:     map[channelGroupPlatformKey][]*wildcardMappingEntry{},
+		byID:                    map[int64]*Channel{},
+	})
+
+	bs := &BillingService{cfg: &config.Config{}, fallbackPrices: map[string]*ModelPricing{}}
+	resolver := NewModelPricingResolver(cs, bs)
+	svc := &GatewayService{billingService: bs, resolver: resolver}
+
+	cost := svc.calculateImageCost(context.Background(), &ForwardResult{
+		ImageCount: 2,
+		ImageSize:  "4K",
+	}, &APIKey{Group: &Group{ID: groupID}}, "gpt-image-2", 1.0)
+
+	require.NotNil(t, cost)
+	require.InDelta(t, 0.32, cost.TotalCost, 1e-10)
+	require.InDelta(t, 0.32, cost.ActualCost, 1e-10)
+	require.Equal(t, string(BillingModeImage), cost.BillingMode)
+
+	openAICost := (&OpenAIGatewayService{billingService: bs, resolver: resolver}).calculateOpenAIImageCost(
+		context.Background(),
+		"gpt-image-2",
+		&APIKey{Group: &Group{ID: groupID}},
+		&OpenAIForwardResult{ImageCount: 2, ImageSize: "4K"},
+		1.0,
+	)
+	require.NotNil(t, openAICost)
+	require.InDelta(t, 0.32, openAICost.TotalCost, 1e-10)
+	require.InDelta(t, 0.32, openAICost.ActualCost, 1e-10)
+	require.Equal(t, string(BillingModeImage), openAICost.BillingMode)
+}
+
 // TestCalculateCostUnified_RateMultiplierZeroProducesZero 锁定新行为：
 // 保存时强制 > 0；若 0 仍泄漏到计费层，按 0 计费（而非历史上的 1.0）。
 func TestCalculateCostUnified_RateMultiplierZeroProducesZero(t *testing.T) {
