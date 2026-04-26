@@ -27,7 +27,7 @@ type ImageBillingSizeResolution struct {
 
 func ClassifyImageBillingTier(size string) (string, bool) {
 	trimmed := strings.TrimSpace(size)
-	normalized := strings.ToLower(trimmed)
+	normalized := strings.ToLower(strings.ReplaceAll(trimmed, "×", "x"))
 	switch normalized {
 	case "", "auto":
 		return "", false
@@ -37,7 +37,9 @@ func ClassifyImageBillingTier(size string) (string, bool) {
 		return ImageBillingSize2K, true
 	case "4k":
 		return ImageBillingSize4K, true
-	case "2048x2048", "2048x1152":
+	case "1024x1024":
+		return ImageBillingSize1K, true
+	case "1536x1024", "1024x1536", "2048x2048", "2048x1152", "1152x2048", "2560x1440", "1440x2560":
 		return ImageBillingSize2K, true
 	case "3840x2160", "2160x3840":
 		return ImageBillingSize4K, true
@@ -47,18 +49,13 @@ func ClassifyImageBillingTier(size string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	maxEdge := width
-	if height > maxEdge {
-		maxEdge = height
-	}
-	switch {
-	case maxEdge <= 1024:
-		return ImageBillingSize1K, true
-	case maxEdge <= 2048:
+	if !isValidImageBillingDimensions(width, height) && !isOversizeImageBillingDimension(width, height) {
 		return ImageBillingSize2K, true
-	default:
+	}
+	if imageBillingPixelsExceed(width, height, 2560*1440) {
 		return ImageBillingSize4K, true
 	}
+	return ImageBillingSize2K, true
 }
 
 func NormalizeImageBillingTierOrDefault(size string) string {
@@ -173,16 +170,16 @@ func applyImageBillingResolution(
 	*breakdown = resolved.Breakdown
 }
 
-func parseImageBillingDimensions(size string) (int, int, bool) {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(size)), "x")
+func parseImageBillingDimensions(size string) (int64, int64, bool) {
+	parts := strings.Split(strings.ToLower(strings.ReplaceAll(strings.TrimSpace(size), "×", "x")), "x")
 	if len(parts) != 2 {
 		return 0, 0, false
 	}
-	width, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	width, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
 	if err != nil {
 		return 0, 0, false
 	}
-	height, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	height, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
 	if err != nil {
 		return 0, 0, false
 	}
@@ -190,6 +187,44 @@ func parseImageBillingDimensions(size string) (int, int, bool) {
 		return 0, 0, false
 	}
 	return width, height, true
+}
+
+func isValidImageBillingDimensions(width, height int64) bool {
+	if width <= 0 || height <= 0 {
+		return false
+	}
+	if width%16 != 0 || height%16 != 0 {
+		return false
+	}
+	if width > 3840 || height > 3840 {
+		return false
+	}
+
+	longSide, shortSide := width, height
+	if height > width {
+		longSide, shortSide = height, width
+	}
+	if longSide > shortSide*3 {
+		return false
+	}
+
+	pixels := width * height
+	return pixels >= 655360 && pixels <= 8294400
+}
+
+func isOversizeImageBillingDimension(width, height int64) bool {
+	longSide, shortSide := width, height
+	if height > width {
+		longSide, shortSide = height, width
+	}
+	return longSide >= 3840 && shortSide <= 1024
+}
+
+func imageBillingPixelsExceed(width, height int64, threshold int64) bool {
+	if width <= 0 || height <= 0 {
+		return false
+	}
+	return width > threshold/height
 }
 
 func compactTrimmedStrings(values []string) []string {
