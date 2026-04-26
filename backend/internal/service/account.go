@@ -1913,8 +1913,28 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return false
 	}
 	switch capability {
-	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
+	case OpenAIImagesCapabilityBasic:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
+	case OpenAIImagesCapabilityNative:
+		if a.Type == AccountTypeAPIKey {
+			return true
+		}
+		if a.Type != AccountTypeOAuth && a.Type != AccountTypeSetupToken {
+			return false
+		}
+		switch normalizeOpenAIImagesTransport(a.GetExtraString("openai_images_transport")) {
+		case "responses":
+			return true
+		case "web2api":
+			return false
+		}
+		switch normalizeOpenAIImagesTransport(a.GetCredential("openai_images_transport")) {
+		case "responses":
+			return true
+		case "web2api":
+			return false
+		}
+		return !isOpenAIFreePlan(a)
 	default:
 		return true
 	}
