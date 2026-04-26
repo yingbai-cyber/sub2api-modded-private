@@ -114,6 +114,18 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	setOpsRequestContext(c, clientRequestModel, parsed.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
 
+	if parsed.RequiredCapability == service.OpenAIImagesCapabilityNative {
+		capability, capErr := h.gatewayService.GetOpenAIImagesCapabilityForAPIKey(c.Request.Context(), apiKey)
+		if capErr == nil && capability != nil && capability.SupportsBasic && !capability.SupportsAdvanced {
+			unsupported := capability.UnsupportedParams
+			if len(unsupported) == 0 {
+				unsupported = service.BasicOpenAIImagesUnsupportedParams()
+			}
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "This API key only supports basic web image generation. Unsupported parameters: "+strings.Join(unsupported, ", "))
+			return
+		}
+	}
+
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
 
 	if h.errorPassthroughService != nil {
@@ -427,6 +439,25 @@ func (h *OpenAIGatewayHandler) openAIImagesJSONKeepaliveInterval() time.Duration
 		return 0
 	}
 	return time.Duration(h.cfg.Gateway.ImageNonstreamKeepaliveInterval) * time.Second
+}
+
+// ImagesCapability returns the effective image-generation feature set for the current API key.
+func (h *OpenAIGatewayHandler) ImagesCapability(c *gin.Context) {
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok {
+		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return
+	}
+	if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformOpenAI {
+		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
+		return
+	}
+	capability, err := h.gatewayService.GetOpenAIImagesCapabilityForAPIKey(c.Request.Context(), apiKey)
+	if err != nil {
+		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to resolve image capabilities")
+		return
+	}
+	c.JSON(http.StatusOK, capability)
 }
 
 func isMultipartImagesContentType(contentType string) bool {
