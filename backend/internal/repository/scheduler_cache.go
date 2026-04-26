@@ -916,7 +916,15 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	if len(credentials) == 0 {
 		return nil
 	}
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type"}
+	keys := []string{
+		"model_mapping",
+		"compact_model_mapping",
+		"api_key",
+		"project_id",
+		"oauth_type",
+		"plan_type",
+		"openai_images_transport",
+	}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {
@@ -944,6 +952,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_apikey_responses_websockets_v2_enabled",
 		"openai_apikey_responses_websockets_v2_mode",
 		"responses_websockets_v2_enabled",
+		"openai_images_transport",
 		"openai_ws_enabled",
 		"openai_ws_force_http",
 		"openai_responses_mode",

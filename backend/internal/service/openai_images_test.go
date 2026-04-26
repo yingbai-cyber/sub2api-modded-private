@@ -690,7 +690,44 @@ func TestBuildOpenAIImagesURL_HandlesVersionedBaseURL(t *testing.T) {
 	)
 }
 
+func TestAccountSupportsOpenAIImageCapability_FreeWeb2APIIsBasicOnly(t *testing.T) {
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"plan_type": "free"},
+	}
+
+	require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
+	require.False(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+
+	account.Credentials["openai_images_transport"] = "responses"
+	require.True(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+}
+
 func TestShouldUseOpenAIImagesWeb2API_FreePlanGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"prompt":"draw a cat"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.Equal(t, OpenAIImagesCapabilityBasic, parsed.RequiredCapability)
+
+	freeAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}
+	teamAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "team"}}
+	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	require.True(t, shouldUseOpenAIImagesWeb2API(freeAccount, parsed))
+	require.False(t, shouldUseOpenAIImagesWeb2API(teamAccount, parsed))
+	require.False(t, shouldUseOpenAIImagesWeb2API(apiKeyAccount, parsed))
+}
+
+func TestShouldUseOpenAIImagesWeb2API_RejectsAdvancedParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1536x1024","quality":"high","output_format":"jpeg"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -705,16 +742,13 @@ func TestShouldUseOpenAIImagesWeb2API_FreePlanGeneration(t *testing.T) {
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 
 	freeAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}
-	teamAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "team"}}
-	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
-
-	require.True(t, shouldUseOpenAIImagesWeb2API(freeAccount, parsed))
-	require.False(t, shouldUseOpenAIImagesWeb2API(teamAccount, parsed))
-	require.False(t, shouldUseOpenAIImagesWeb2API(apiKeyAccount, parsed))
+	require.False(t, shouldUseOpenAIImagesWeb2API(freeAccount, parsed))
+	require.ErrorContains(t, validateOpenAIImagesWeb2APIRequest(parsed), "model")
+	require.ErrorContains(t, validateOpenAIImagesWeb2APIRequest(parsed), "size")
 }
 
 func TestShouldUseOpenAIImagesWeb2API_TransportOverrideAndStreamGuard(t *testing.T) {
-	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint}
+	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint, N: 1}
 	account := &Account{
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
