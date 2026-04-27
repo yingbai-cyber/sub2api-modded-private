@@ -1144,6 +1144,13 @@ func TestServiceTierCostMultiplier(t *testing.T) {
 	require.InDelta(t, 1.0, serviceTierCostMultiplier("default"), 1e-12)
 }
 
+func TestServiceTierCostMultiplierForModel_GPT55PriorityUsesOfficialFallback(t *testing.T) {
+	require.InDelta(t, 2.5, serviceTierCostMultiplierForModel("gpt-5.5", "priority"), 1e-12)
+	require.InDelta(t, 2.5, serviceTierCostMultiplierForModel("openai/gpt-5.5", " Priority "), 1e-12)
+	require.InDelta(t, 0.5, serviceTierCostMultiplierForModel("gpt-5.5", "flex"), 1e-12)
+	require.InDelta(t, 2.0, serviceTierCostMultiplierForModel("gpt-5.4", "priority"), 1e-12)
+}
+
 func TestCalculateCostWithServiceTier_OpenAIPriorityUsesPriorityPricing(t *testing.T) {
 	svc := newTestBillingService()
 	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 20}
@@ -1175,6 +1182,23 @@ func TestCalculateCostWithServiceTier_FlexAppliesHalfMultiplier(t *testing.T) {
 	require.InDelta(t, baseCost.CacheCreationCost*0.5, flexCost.CacheCreationCost, 1e-10)
 	require.InDelta(t, baseCost.CacheReadCost*0.5, flexCost.CacheReadCost, 1e-10)
 	require.InDelta(t, baseCost.TotalCost*0.5, flexCost.TotalCost, 1e-10)
+}
+
+func TestCalculateCostWithServiceTier_GPT55PriorityUsesTwoPointFiveMultiplier(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50, CacheCreationTokens: 40, CacheReadTokens: 20}
+
+	baseCost, err := svc.CalculateCost("gpt-5.5", tokens, 1.0)
+	require.NoError(t, err)
+
+	priorityCost, err := svc.CalculateCostWithServiceTier("gpt-5.5", tokens, 1.0, "priority")
+	require.NoError(t, err)
+
+	require.InDelta(t, baseCost.InputCost*2.5, priorityCost.InputCost, 1e-10)
+	require.InDelta(t, baseCost.OutputCost*2.5, priorityCost.OutputCost, 1e-10)
+	require.InDelta(t, baseCost.CacheCreationCost*2.5, priorityCost.CacheCreationCost, 1e-10)
+	require.InDelta(t, baseCost.CacheReadCost*2.5, priorityCost.CacheReadCost, 1e-10)
+	require.InDelta(t, baseCost.TotalCost*2.5, priorityCost.TotalCost, 1e-10)
 }
 
 func TestCalculateCostWithServiceTier_Gpt54MiniPriorityFallsBackToTierMultiplier(t *testing.T) {
