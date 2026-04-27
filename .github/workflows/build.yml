@@ -32,6 +32,7 @@ jobs:
       workflow: ${{ steps.filter.outputs.workflow }}
       deploy: ${{ steps.deploy.outputs.requested }}
       should_build: ${{ steps.decide.outputs.should_build }}
+      backend_tests: ${{ steps.decide.outputs.backend_tests }}
 
     steps:
       - name: Checkout repository
@@ -58,14 +59,32 @@ jobs:
       - name: Decide whether build is required
         id: decide
         run: |
+          should_build=false
+          backend_tests=false
+
           if [ "${{ steps.filter.outputs.frontend }}" = "true" ] || \
              [ "${{ steps.filter.outputs.backend }}" = "true" ] || \
              [ "${{ steps.filter.outputs.workflow }}" = "true" ] || \
              [ "${{ steps.deploy.outputs.requested }}" = "true" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            should_build=true
           fi
+
+          if [ "${{ steps.filter.outputs.backend }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.workflow }}" = "true" ]; then
+            backend_tests=true
+          fi
+
+          echo "should_build=${should_build}" >> "$GITHUB_OUTPUT"
+          echo "backend_tests=${backend_tests}" >> "$GITHUB_OUTPUT"
+
+      - name: Report change summary
+        run: |
+          echo "frontend=${{ steps.filter.outputs.frontend }}"
+          echo "backend=${{ steps.filter.outputs.backend }}"
+          echo "workflow=${{ steps.filter.outputs.workflow }}"
+          echo "deploy=${{ steps.deploy.outputs.requested }}"
+          echo "should_build=${{ steps.decide.outputs.should_build }}"
+          echo "backend_tests=${{ steps.decide.outputs.backend_tests }}"
 
   build:
     name: Build embedded Linux binary
@@ -85,14 +104,24 @@ jobs:
           path: backend/internal/web/dist
           key: frontend-dist-${{ runner.os }}-${{ hashFiles('frontend/package.json', 'frontend/pnpm-lock.yaml', 'frontend/vite.config.ts', 'frontend/index.html', 'frontend/src/**', 'frontend/public/**', 'frontend/tailwind.config.*', 'frontend/postcss.config.*') }}
 
+      - name: Report build plan
+        run: |
+          echo "frontend_changed=${{ needs.changes.outputs.frontend }}"
+          echo "backend_changed=${{ needs.changes.outputs.backend }}"
+          echo "workflow_changed=${{ needs.changes.outputs.workflow }}"
+          echo "deploy_requested=${{ needs.changes.outputs.deploy }}"
+          echo "frontend_dist_cache_hit=${{ steps.frontend-dist-cache.outputs.cache-hit }}"
+          echo "backend_tests=${{ needs.changes.outputs.backend_tests }}"
+          echo "note=Go setup/build is still required when building an embedded binary."
+
       - name: Setup pnpm
-        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - name: Setup Node.js
-        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -100,7 +129,7 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install frontend dependencies
-        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' || needs.changes.outputs.frontend == 'true' }}
+        if: ${{ steps.frontend-dist-cache.outputs.cache-hit != 'true' }}
         run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Build frontend assets
@@ -114,10 +143,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache: true
           cache-dependency-path: backend/go.sum
 
+      - name: Skip backend tests
+        if: ${{ needs.changes.outputs.backend_tests != 'true' }}
+        run: echo "Backend tests skipped because neither backend nor build workflow changed."
+
       - name: Test backend
-        if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.workflow == 'true' }}
+        if: ${{ needs.changes.outputs.backend_tests == 'true' }}
         working-directory: backend
         run: go test ./...
 
