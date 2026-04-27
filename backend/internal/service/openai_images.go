@@ -9,6 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -415,8 +419,14 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 		fileName := strings.TrimSpace(part.FileName())
 		if fileName != "" {
 			partContentType := strings.TrimSpace(part.Header.Get("Content-Type"))
+			if len(data) == 0 {
+				return fmt.Errorf("multipart file %s is empty", name)
+			}
+			if !isOpenAIImageUploadContentType(partContentType, data) {
+				return fmt.Errorf("multipart file %s must be an image", name)
+			}
 			if (name == "mask" || name == "markup") && len(data) > 0 {
-				width, height := parseOpenAIImageDimensions(part.Header)
+				width, height := parseOpenAIImageDimensions(data)
 				upload := OpenAIImagesUpload{
 					FieldName:   name,
 					FileName:    fileName,
@@ -434,7 +444,7 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 				}
 			}
 			if name == "image" || strings.HasPrefix(name, "image[") {
-				width, height := parseOpenAIImageDimensions(part.Header)
+				width, height := parseOpenAIImageDimensions(data)
 				req.Uploads = append(req.Uploads, OpenAIImagesUpload{
 					FieldName:   name,
 					FileName:    fileName,
@@ -535,8 +545,26 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 	return nil
 }
 
-func parseOpenAIImageDimensions(_ textproto.MIMEHeader) (int, int) {
-	return 0, 0
+func isOpenAIImageUploadContentType(contentType string, data []byte) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if strings.HasPrefix(contentType, "image/") {
+		return true
+	}
+	if len(data) == 0 {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(http.DetectContentType(data)), "image/")
+}
+
+func parseOpenAIImageDimensions(data []byte) (int, int) {
+	if len(data) == 0 {
+		return 0, 0
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
 
 func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
@@ -634,7 +662,7 @@ func classifyOpenAIImagesCapability(req *OpenAIImagesRequest) OpenAIImagesCapabi
 	if req.Stream || req.N != 1 || req.HasMask || req.HasNativeOptions {
 		return OpenAIImagesCapabilityNative
 	}
-	if req.IsEdits() && !req.Multipart {
+	if req.IsEdits() {
 		return OpenAIImagesCapabilityNative
 	}
 	if req.ResponseFormat != "" && req.ResponseFormat != "b64_json" {

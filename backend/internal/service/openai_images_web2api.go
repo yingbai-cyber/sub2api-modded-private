@@ -85,9 +85,6 @@ func unsupportedOpenAIImagesWeb2APIParams(parsed *OpenAIImagesRequest) []string 
 	if parsed.Endpoint != openAIImagesGenerationsEndpoint {
 		unsupported = append(unsupported, "edits")
 	}
-	if parsed.Multipart {
-		unsupported = append(unsupported, "multipart")
-	}
 	if parsed.ExplicitModel {
 		unsupported = append(unsupported, "model")
 	}
@@ -130,8 +127,8 @@ func unsupportedOpenAIImagesWeb2APIParams(parsed *OpenAIImagesRequest) []string 
 	if parsed.HasMask || parsed.MaskImageURL != "" || parsed.MaskUpload != nil {
 		unsupported = append(unsupported, "mask")
 	}
-	if len(parsed.InputImageURLs) > 0 || len(parsed.Uploads) > 0 {
-		unsupported = append(unsupported, "images")
+	if len(parsed.InputImageURLs) > 0 {
+		unsupported = append(unsupported, "input_image_urls")
 	}
 	return unsupported
 }
