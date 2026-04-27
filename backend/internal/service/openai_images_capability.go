@@ -39,9 +39,9 @@ func (e *OpenAIImagesUnsupportedParamsError) Error() string {
 }
 
 type OpenAIImagesPrincipal struct {
-	OwnerScope  string `json:"owner_scope,omitempty"`
-	GroupScope  string `json:"group_scope,omitempty"`
-	APIKeyScope string `json:"api_key_scope,omitempty"`
+	OwnerScope  string `json:"owner_scope"`
+	GroupScope  string `json:"group_scope"`
+	APIKeyScope string `json:"api_key_scope"`
 }
 
 type OpenAIImagesCapabilityInfo struct {
@@ -50,7 +50,10 @@ type OpenAIImagesCapabilityInfo struct {
 	ImageMode             string                 `json:"image_mode"`
 	Transport             string                 `json:"transport"`
 	Model                 string                 `json:"model"`
-	Principal             *OpenAIImagesPrincipal `json:"principal,omitempty"`
+	Principal             *OpenAIImagesPrincipal `json:"principal"`
+	OwnerScope            string                 `json:"owner_scope"`
+	GroupScope            string                 `json:"group_scope"`
+	APIKeyScope           string                 `json:"api_key_scope"`
 	SupportsBasic         bool                   `json:"supports_basic"`
 	SupportsAdvanced      bool                   `json:"supports_advanced_options"`
 	SupportsStream        bool                   `json:"supports_stream"`
@@ -69,12 +72,16 @@ type OpenAIImagesCapabilityInfo struct {
 }
 
 func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Context, apiKey *APIKey) (*OpenAIImagesCapabilityInfo, error) {
+	principal := s.openAIImagesPrincipal(apiKey)
 	info := &OpenAIImagesCapabilityInfo{
 		UIMode:        "basic",
 		ImageMode:     "none",
 		Transport:     "none",
 		Model:         openAIImagesDefaultModel,
-		Principal:     s.openAIImagesPrincipal(apiKey),
+		Principal:     principal,
+		OwnerScope:    principal.OwnerScope,
+		GroupScope:    principal.GroupScope,
+		APIKeyScope:   principal.APIKeyScope,
 		MaxN:          1,
 		AccountCounts: map[string]int{},
 	}
@@ -145,11 +152,11 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 
 func (s *OpenAIGatewayService) openAIImagesPrincipal(apiKey *APIKey) *OpenAIImagesPrincipal {
 	if apiKey == nil {
-		return nil
+		return &OpenAIImagesPrincipal{}
 	}
 	secret := s.openAIImagesScopeHMACSecret()
 	if secret == "" {
-		return nil
+		return &OpenAIImagesPrincipal{}
 	}
 
 	principal := &OpenAIImagesPrincipal{

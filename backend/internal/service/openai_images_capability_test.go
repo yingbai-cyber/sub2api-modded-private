@@ -32,6 +32,9 @@ func TestOpenAIImagesCapabilityPrincipalScopesAreStableAndOpaque(t *testing.T) {
 	require.NotNil(t, infoA2.Principal)
 	require.NotNil(t, infoB.Principal)
 	require.NotNil(t, infoC.Principal)
+	require.Equal(t, infoA1.Principal.OwnerScope, infoA1.OwnerScope)
+	require.Equal(t, infoA1.Principal.GroupScope, infoA1.GroupScope)
+	require.Equal(t, infoA1.Principal.APIKeyScope, infoA1.APIKeyScope)
 
 	require.Equal(t, infoA1.Principal.OwnerScope, infoB.Principal.OwnerScope, "same Sub2API user should share owner scope")
 	require.NotEqual(t, infoA1.Principal.APIKeyScope, infoB.Principal.APIKeyScope, "different API keys should still get isolated API key scopes")
@@ -42,6 +45,10 @@ func TestOpenAIImagesCapabilityPrincipalScopesAreStableAndOpaque(t *testing.T) {
 	body, err := json.Marshal(infoA1)
 	require.NoError(t, err)
 	jsonBody := string(body)
+	require.Contains(t, jsonBody, `"principal"`)
+	require.Contains(t, jsonBody, `"owner_scope"`)
+	require.Contains(t, jsonBody, `"group_scope"`)
+	require.Contains(t, jsonBody, `"api_key_scope"`)
 	require.NotContains(t, jsonBody, "user_id")
 	require.NotContains(t, jsonBody, "group_id")
 	require.NotContains(t, jsonBody, "api_key_id")
@@ -52,7 +59,7 @@ func TestOpenAIImagesCapabilityPrincipalScopesAreStableAndOpaque(t *testing.T) {
 	require.NotContains(t, jsonBody, "api_key:"+strconv.FormatInt(apiKeyA.ID, 10))
 }
 
-func TestOpenAIImagesCapabilityPrincipalOmitsEmptyGroupScope(t *testing.T) {
+func TestOpenAIImagesCapabilityPrincipalKeepsEmptyGroupScope(t *testing.T) {
 	svc := newOpenAIImagesCapabilityTestService()
 	apiKey := newOpenAIImagesCapabilityTestAPIKey(1001, 101, nil)
 
@@ -62,6 +69,36 @@ func TestOpenAIImagesCapabilityPrincipalOmitsEmptyGroupScope(t *testing.T) {
 	require.NotEmpty(t, info.Principal.OwnerScope)
 	require.NotEmpty(t, info.Principal.APIKeyScope)
 	require.Empty(t, info.Principal.GroupScope)
+	require.Empty(t, info.GroupScope)
+
+	body, err := json.Marshal(info)
+	require.NoError(t, err)
+	jsonBody := string(body)
+	require.Contains(t, jsonBody, `"principal"`)
+	require.Contains(t, jsonBody, `"group_scope"`)
+}
+
+func TestOpenAIImagesCapabilityKeepsScopeFieldsWhenSecretUnavailable(t *testing.T) {
+	groupID := int64(501)
+	svc := &OpenAIGatewayService{accountRepo: &stubOpenAIAccountRepo{}}
+
+	info, err := svc.GetOpenAIImagesCapabilityForAPIKey(context.Background(), newOpenAIImagesCapabilityTestAPIKey(1001, 101, &groupID))
+	require.NoError(t, err)
+	require.NotNil(t, info.Principal)
+	require.Empty(t, info.Principal.OwnerScope)
+	require.Empty(t, info.OwnerScope)
+	require.Empty(t, info.Principal.GroupScope)
+	require.Empty(t, info.GroupScope)
+	require.Empty(t, info.Principal.APIKeyScope)
+	require.Empty(t, info.APIKeyScope)
+
+	body, err := json.Marshal(info)
+	require.NoError(t, err)
+	jsonBody := string(body)
+	require.Contains(t, jsonBody, `"principal"`)
+	require.Contains(t, jsonBody, `"owner_scope"`)
+	require.Contains(t, jsonBody, `"group_scope"`)
+	require.Contains(t, jsonBody, `"api_key_scope"`)
 }
 
 func TestOpenAIImagesCapabilityPreservesExistingFieldsWithPrincipal(t *testing.T) {
@@ -110,6 +147,32 @@ func TestOpenAIImagesCapabilityPreservesExistingFieldsWithPrincipal(t *testing.T
 		"advanced": 1,
 		"api_key":  1,
 		"web2api":  1,
+	}, info.AccountCounts)
+}
+
+func TestOpenAIImagesCapabilityPreservesWeb2APILaneForFreeOnlyAccounts(t *testing.T) {
+	groupID := int64(501)
+	svc := newOpenAIImagesCapabilityTestService(Account{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"plan_type": "free"},
+	})
+
+	info, err := svc.GetOpenAIImagesCapabilityForAPIKey(context.Background(), newOpenAIImagesCapabilityTestAPIKey(1001, 101, &groupID))
+	require.NoError(t, err)
+	require.True(t, info.Available)
+	require.Equal(t, "basic_web2api", info.ImageMode)
+	require.Equal(t, "web2api", info.Transport)
+	require.True(t, info.SupportsBasic)
+	require.False(t, info.SupportsAdvanced)
+	require.True(t, info.SupportsInputImages)
+	require.True(t, info.SupportsUploads)
+	require.Equal(t, map[string]int{
+		"basic":   1,
+		"web2api": 1,
 	}, info.AccountCounts)
 }
 
