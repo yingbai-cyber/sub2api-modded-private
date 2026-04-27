@@ -316,7 +316,6 @@ const BatchImageIcon = {
       ]
     )
 }
-
 const ChartIcon = {
   render: () =>
     h(
