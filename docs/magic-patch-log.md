@@ -115,6 +115,50 @@
 - 已使用 `-tags embed` 构建 `/root/sub2api-modded/bin/sub2api` 并重启 `sub2api-modded.service`。
 - 宿主机与 `npm-app` 容器访问 `/health` 均返回 `{"status":"ok"}`。
 
+---
+
+### 2026-04-27：跟进 upstream v0.1.119 并保留本地补丁
+**类型**：上游同步 / rebase / 冲突处理
+
+**背景**：
+- 官方 `upstream/main` 从 `9d1751ec` 更新到 `c92b88e3`，包含 `v0.1.119`、OpenAI Images 显式 session、Claude/Anthropic 兼容修复、EasyPay/Zpay 退款处理、邀请返利等改动。
+- 本地分支包含 OpenAI free OAuth 生图 web2api、轻量探测、EasyPay ezfpy 兼容、CI 部署适配等补丁，需要 rebase 到最新官方主线。
+- 当前仓库实际维护分支为 `main`；未发现本地 `magic/main` 分支。
+
+**影响文件**：
+- `backend/internal/payment/provider/easypay.go`
+- `backend/internal/payment/provider/easypay_sign_test.go`
+- `backend/internal/payment/provider/easypay_refund_test.go`
+- `docs/magic-patch-log.md`
+- OpenAI Images 相关补丁文件（rebase 后复核，无冲突）：
+  - `backend/internal/service/openai_images_responses.go`
+  - `backend/internal/service/openai_images_web2api.go`
+  - `backend/internal/service/openai_images_test.go`
+
+**改动摘要**：
+- 已 fetch 官方更新并将本地 `main` rebase 到 `upstream/main=c92b88e3`。
+- 解决 `fix(payment): support ezfpy easypay compatibility` 与官方 `Fix Zpay refund endpoint handling` 在 `easypay.go` 的冲突。
+- EasyPay 合并策略：保留官方退款 URL 归一化、退款响应错误处理、`out_trade_no`/`trade_no` 重试；同时保留本地 ezfpy 兼容的成功码 `200`、旧成功码 `1`、`qrcode`/`code_url` 兼容、`findorder` 查询模式和 fallback。
+- OpenAI free OAuth 生图 web2api 补丁顺利重放，继续保留 `credentials.plan_type=free` 或 `openai_images_transport=web2api` 时走 ChatGPT web2api 的本地行为。
+
+**与官方差异原因**：
+- 官方更新增强了 OpenAI Images 显式 session 与 EasyPay/Zpay 退款处理，但本地仍需要支持 free OAuth 生图 web2api 以及 ezfpy EasyPay 返回格式。
+- ezfpy 的创建支付与查询返回可能使用 `code=200`、`code_url`、`/api/findorder`，不能只保留官方默认的 Zpay 行为。
+
+**rebase 风险点**：
+- 后续 upstream 若继续调整 OpenAI Images OAuth session、Responses failover 或 scheduler cache，需要复核 free 账号是否仍默认走 web2api。
+- 后续 upstream 若继续调整 EasyPay/Zpay，需同时保留官方退款健壮性和本地 ezfpy 兼容矩阵。
+- `origin/main` 仍是 rebase 前历史，当前本地 `main` 相对 `origin/main` 会显示大幅 ahead/behind；推送时需要按用户确认后的策略处理。
+
+**验证结果**：
+- `pnpm install --frozen-lockfile && pnpm run build` 通过，前端已产出到 `backend/internal/web/dist`。
+- `/usr/local/go1.26.2/bin/go test ./internal/payment/provider` 通过。
+- `/usr/local/go1.26.2/bin/go test ./internal/service -run 'TestShouldUseOpenAIImagesWeb2API|TestBuildOpenAIImageConversationRequestUsesWeb2APIPictureHint|TestOpenAIGatewayServiceForwardImages_OAuth'` 通过。
+- `/usr/local/go1.26.2/bin/go test ./...` 通过。
+- `/usr/local/go1.26.2/bin/go build -tags embed -o /root/sub2api-modded/bin/sub2api ./cmd/server` 通过。
+- `systemctl restart sub2api-modded.service` 后服务为 `active`，日志显示 `Server started on 172.19.0.1:18081`。
+- 宿主机与 `npm-app` 容器访问 `/health` 均返回 HTTP 200 / `{"status":"ok"}`。
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
