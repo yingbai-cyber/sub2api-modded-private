@@ -2,11 +2,22 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 )
 
-const openAIImagesDefaultModel = "gpt-image-2"
+const (
+	openAIImagesDefaultModel       = "gpt-image-2"
+	openAIImagesScopeHMACSecretEnv = "SUB2API_SCOPE_HMAC_SECRET"
+	openAIImagesUserScopePrefix    = "sub2api_user_v1:"
+	openAIImagesGroupScopePrefix   = "sub2api_group_v1:"
+	openAIImagesAPIKeyScopePrefix  = "sub2api_key_v1:"
+)
 
 type OpenAIImagesUnsupportedParamsError struct {
 	Mode        string
@@ -27,27 +38,34 @@ func (e *OpenAIImagesUnsupportedParamsError) Error() string {
 	return fmt.Sprintf("%s does not support parameters: %s", mode, strings.Join(e.Unsupported, ", "))
 }
 
+type OpenAIImagesPrincipal struct {
+	OwnerScope  string `json:"owner_scope,omitempty"`
+	GroupScope  string `json:"group_scope,omitempty"`
+	APIKeyScope string `json:"api_key_scope,omitempty"`
+}
+
 type OpenAIImagesCapabilityInfo struct {
-	Available             bool           `json:"available"`
-	UIMode                string         `json:"ui_mode"`
-	ImageMode             string         `json:"image_mode"`
-	Transport             string         `json:"transport"`
-	Model                 string         `json:"model"`
-	SupportsBasic         bool           `json:"supports_basic"`
-	SupportsAdvanced      bool           `json:"supports_advanced_options"`
-	SupportsStream        bool           `json:"supports_stream"`
-	SupportsExactSize     bool           `json:"supports_exact_size"`
-	SupportsCustomSize    bool           `json:"supports_custom_size"`
-	SupportsQuality       bool           `json:"supports_quality"`
-	SupportsOutputFormat  bool           `json:"supports_output_format"`
-	SupportsPartialImages bool           `json:"supports_partial_images"`
-	SupportsEdits         bool           `json:"supports_edits"`
-	SupportsInputImages   bool           `json:"supports_input_images"`
-	SupportsUploads       bool           `json:"supports_uploads"`
-	MaxN                  int            `json:"max_n"`
-	UnsupportedParams     []string       `json:"unsupported_params,omitempty"`
-	AccountCounts         map[string]int `json:"account_counts,omitempty"`
-	Warnings              []string       `json:"warnings,omitempty"`
+	Available             bool                   `json:"available"`
+	UIMode                string                 `json:"ui_mode"`
+	ImageMode             string                 `json:"image_mode"`
+	Transport             string                 `json:"transport"`
+	Model                 string                 `json:"model"`
+	Principal             *OpenAIImagesPrincipal `json:"principal,omitempty"`
+	SupportsBasic         bool                   `json:"supports_basic"`
+	SupportsAdvanced      bool                   `json:"supports_advanced_options"`
+	SupportsStream        bool                   `json:"supports_stream"`
+	SupportsExactSize     bool                   `json:"supports_exact_size"`
+	SupportsCustomSize    bool                   `json:"supports_custom_size"`
+	SupportsQuality       bool                   `json:"supports_quality"`
+	SupportsOutputFormat  bool                   `json:"supports_output_format"`
+	SupportsPartialImages bool                   `json:"supports_partial_images"`
+	SupportsEdits         bool                   `json:"supports_edits"`
+	SupportsInputImages   bool                   `json:"supports_input_images"`
+	SupportsUploads       bool                   `json:"supports_uploads"`
+	MaxN                  int                    `json:"max_n"`
+	UnsupportedParams     []string               `json:"unsupported_params,omitempty"`
+	AccountCounts         map[string]int         `json:"account_counts,omitempty"`
+	Warnings              []string               `json:"warnings,omitempty"`
 }
 
 func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Context, apiKey *APIKey) (*OpenAIImagesCapabilityInfo, error) {
@@ -56,6 +74,7 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 		ImageMode:     "none",
 		Transport:     "none",
 		Model:         openAIImagesDefaultModel,
+		Principal:     s.openAIImagesPrincipal(apiKey),
 		MaxN:          1,
 		AccountCounts: map[string]int{},
 	}
@@ -122,6 +141,41 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 	}
 	info.Warnings = append(info.Warnings, "no schedulable OpenAI image accounts are available")
 	return info, nil
+}
+
+func (s *OpenAIGatewayService) openAIImagesPrincipal(apiKey *APIKey) *OpenAIImagesPrincipal {
+	if apiKey == nil {
+		return nil
+	}
+	secret := s.openAIImagesScopeHMACSecret()
+	if secret == "" {
+		return nil
+	}
+
+	principal := &OpenAIImagesPrincipal{
+		OwnerScope:  openAIImagesUserScopePrefix + openAIImagesScopeHMAC(secret, "user:"+strconv.FormatInt(apiKey.UserID, 10)),
+		APIKeyScope: openAIImagesAPIKeyScopePrefix + openAIImagesScopeHMAC(secret, "api_key:"+strconv.FormatInt(apiKey.ID, 10)),
+	}
+	if apiKey.GroupID != nil {
+		principal.GroupScope = openAIImagesGroupScopePrefix + openAIImagesScopeHMAC(secret, "group:"+strconv.FormatInt(*apiKey.GroupID, 10))
+	}
+	return principal
+}
+
+func (s *OpenAIGatewayService) openAIImagesScopeHMACSecret() string {
+	if secret := strings.TrimSpace(os.Getenv(openAIImagesScopeHMACSecretEnv)); secret != "" {
+		return secret
+	}
+	if s != nil && s.cfg != nil {
+		return strings.TrimSpace(s.cfg.JWT.Secret)
+	}
+	return ""
+}
+
+func openAIImagesScopeHMAC(secret, payload string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func isOpenAIImagesWeb2APIOnlyAccount(account *Account) bool {
