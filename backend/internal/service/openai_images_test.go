@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,7 +97,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T
 	require.NoError(t, writer.WriteField("size", "1536x1024"))
 	part, err := writer.CreateFormFile("image", "source.png")
 	require.NoError(t, err)
-	_, err = part.Write([]byte("fake-image-bytes"))
+	_, err = part.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -276,7 +277,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEditWithMaskAndNa
 	imageHeader.Set("Content-Type", "image/png")
 	imagePart, err := writer.CreatePart(imageHeader)
 	require.NoError(t, err)
-	_, err = imagePart.Write([]byte("source-image-bytes"))
+	_, err = imagePart.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 
 	maskHeader := make(textproto.MIMEHeader)
@@ -284,7 +285,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEditWithMaskAndNa
 	maskHeader.Set("Content-Type", "image/png")
 	maskPart, err := writer.CreatePart(maskHeader)
 	require.NoError(t, err)
-	_, err = maskPart.Write([]byte("mask-image-bytes"))
+	_, err = maskPart.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 
 	require.NoError(t, writer.Close())
@@ -480,6 +481,13 @@ func TestOpenAIUpstreamErrorBodyReadLimitForConfig_RespectsDiagnosticLimit(t *te
 	}}
 
 	require.Equal(t, int64(cfg.Gateway.LogUpstreamErrorBodyMaxBytes), openAIUpstreamErrorBodyReadLimitForConfig(cfg))
+}
+
+func TestBasicOpenAIImagesUnsupportedParams_AllowsUploadReferences(t *testing.T) {
+	unsupported := strings.Join(BasicOpenAIImagesUnsupportedParams(), ",")
+	require.NotContains(t, unsupported, "input_images")
+	require.Contains(t, unsupported, "input_image_urls")
+	require.Contains(t, unsupported, "edits")
 }
 
 func TestAccountSupportsOpenAIImageCapability_OAuthSupportsNative(t *testing.T) {
@@ -727,6 +735,63 @@ func TestShouldUseOpenAIImagesWeb2API_FreePlanGeneration(t *testing.T) {
 	require.False(t, shouldUseOpenAIImagesWeb2API(apiKeyAccount, parsed))
 }
 
+func TestParseOpenAIImagesRequest_MultipartGenerationUploadUsesBasicWeb2API(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("prompt", "use this reference image and make it blue"))
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="image"; filename="reference.png"`)
+	header.Set("Content-Type", "image/png")
+	part, err := writer.CreatePart(header)
+	require.NoError(t, err)
+	_, err = part.Write(openAIImageTestPNGBytes(t))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.NoError(t, err)
+	require.True(t, parsed.Multipart)
+	require.Equal(t, openAIImagesGenerationsEndpoint, parsed.Endpoint)
+	require.Equal(t, "use this reference image and make it blue", parsed.Prompt)
+	require.Len(t, parsed.Uploads, 1)
+	require.Equal(t, "reference.png", parsed.Uploads[0].FileName)
+	require.Equal(t, 1, parsed.Uploads[0].Width)
+	require.Equal(t, 1, parsed.Uploads[0].Height)
+	require.Equal(t, OpenAIImagesCapabilityBasic, parsed.RequiredCapability)
+
+	freeAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}
+	require.NoError(t, validateOpenAIImagesWeb2APIRequest(parsed))
+	require.True(t, shouldUseOpenAIImagesWeb2API(freeAccount, parsed))
+}
+
+func openAIImageTestPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p94AAAAASUVORK5CYII=")
+	require.NoError(t, err)
+	return data
+}
+
+func TestValidateOpenAIImagesWeb2APIRequest_RejectsImageURLsButAllowsUploads(t *testing.T) {
+	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint, N: 1, Uploads: []OpenAIImagesUpload{{FileName: "ref.png", ContentType: "image/png", Data: []byte("x")}}}
+	require.NoError(t, validateOpenAIImagesWeb2APIRequest(parsed))
+
+	parsed.InputImageURLs = []string{"https://example.com/ref.png"}
+	require.ErrorContains(t, validateOpenAIImagesWeb2APIRequest(parsed), "input_image_urls")
+}
+
+func TestClassifyOpenAIImagesCapability_MultipartEditRequiresNative(t *testing.T) {
+	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesEditsEndpoint, Multipart: true, N: 1, Model: openAIImagesDefaultModel}
+	require.Equal(t, OpenAIImagesCapabilityNative, classifyOpenAIImagesCapability(parsed))
+}
+
 func TestShouldUseOpenAIImagesWeb2API_RejectsAdvancedParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1536x1024","quality":"high","output_format":"jpeg"}`)
@@ -774,6 +839,22 @@ func TestBuildOpenAIImageConversationRequestUsesWeb2APIPictureHint(t *testing.T)
 	require.Equal(t, "draw a cat", gjson.GetBytes(body, "messages.0.content.parts.0").String())
 	require.False(t, gjson.GetBytes(body, "tools").Exists())
 	require.False(t, gjson.GetBytes(body, "tool_choice").Exists())
+}
+
+func TestBuildOpenAIImageConversationRequestWithUploadBuildsMultimodalPayload(t *testing.T) {
+	body, err := json.Marshal(buildOpenAIImageConversationRequest(
+		&OpenAIImagesRequest{Prompt: "make the square blue"},
+		"parent-1",
+		[]openAIUploadedImage{{FileID: "file_ref", FileName: "reference.png", FileSize: 123, MimeType: "image/png", Width: 64, Height: 64}},
+	))
+	require.NoError(t, err)
+	require.Equal(t, "multimodal_text", gjson.GetBytes(body, "messages.0.content.content_type").String())
+	require.Equal(t, "image_asset_pointer", gjson.GetBytes(body, "messages.0.content.parts.0.content_type").String())
+	require.Equal(t, "file-service://file_ref", gjson.GetBytes(body, "messages.0.content.parts.0.asset_pointer").String())
+	require.Equal(t, int64(123), gjson.GetBytes(body, "messages.0.content.parts.0.size_bytes").Int())
+	require.Equal(t, "make the square blue", gjson.GetBytes(body, "messages.0.content.parts.1").String())
+	require.Equal(t, "file_ref", gjson.GetBytes(body, "messages.0.metadata.attachments.0.id").String())
+	require.Equal(t, "image/png", gjson.GetBytes(body, "messages.0.metadata.attachments.0.mimeType").String())
 }
 
 type openAIImageTestSSEEvent struct {
