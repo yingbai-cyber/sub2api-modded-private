@@ -1014,16 +1014,8 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	return s.computeTokenBreakdownForModel(input.Model, pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx), nil
 }
 
-// computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
+// computeTokenBreakdownForModel 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
 // applyLongCtx 控制是否检查长上下文定价（区间定价已自含上下文分层，不需要额外应用）。
-func (s *BillingService) computeTokenBreakdown(
-	pricing *ModelPricing, tokens UsageTokens,
-	rateMultiplier float64, serviceTier string,
-	applyLongCtx bool,
-) *CostBreakdown {
-	return s.computeTokenBreakdownForModel("", pricing, tokens, rateMultiplier, serviceTier, applyLongCtx)
-}
-
 func (s *BillingService) computeTokenBreakdownForModel(
 	model string, pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
