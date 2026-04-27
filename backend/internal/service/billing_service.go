@@ -111,9 +111,10 @@ type ModelPricing struct {
 }
 
 const (
-	openAIGPT54LongContextInputThreshold   = 272000
-	openAIGPT54LongContextInputMultiplier  = 2.0
-	openAIGPT54LongContextOutputMultiplier = 1.5
+	openAIGPT54LongContextInputThreshold     = 272000
+	openAIGPT54LongContextInputMultiplier    = 2.0
+	openAIGPT54LongContextOutputMultiplier   = 1.5
+	openAIGPT55PriorityServiceTierMultiplier = 2.5
 )
 
 func normalizeBillingServiceTier(serviceTier string) string {
@@ -137,6 +138,13 @@ func serviceTierCostMultiplier(serviceTier string) float64 {
 	default:
 		return 1.0
 	}
+}
+
+func serviceTierCostMultiplierForModel(model, serviceTier string) float64 {
+	if normalizeBillingServiceTier(serviceTier) == "priority" && isOpenAIGPT55Model(model) {
+		return openAIGPT55PriorityServiceTierMultiplier
+	}
+	return serviceTierCostMultiplier(serviceTier)
 }
 
 // UsageTokens 使用的token数量
@@ -297,7 +305,7 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:     openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:    openAIGPT54LongContextOutputMultiplier,
 	}
-	// GPT-5.5 / GPT-5.5 Pro 暂无独立定价，回退到 GPT-5.4。
+	// GPT-5.5 / GPT-5.5 Pro 标准价仍沿用 GPT-5.4 兜底；GPT-5.5 fast/priority 倍率在 service tier 计算处修正。
 	s.fallbackPrices["gpt-5.5"] = s.fallbackPrices["gpt-5.4"]
 	s.fallbackPrices["gpt-5.5-pro"] = s.fallbackPrices["gpt-5.4"]
 
@@ -1003,13 +1011,21 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 		applyLongCtx = applyLongCtx && *input.LongContextBillingEnabled
 	}
 
-	return s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx), nil
+	return s.computeTokenBreakdownForModel(input.Model, pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx), nil
 }
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
 // applyLongCtx 控制是否检查长上下文定价（区间定价已自含上下文分层，不需要额外应用）。
 func (s *BillingService) computeTokenBreakdown(
 	pricing *ModelPricing, tokens UsageTokens,
+	rateMultiplier float64, serviceTier string,
+	applyLongCtx bool,
+) *CostBreakdown {
+	return s.computeTokenBreakdownForModel("", pricing, tokens, rateMultiplier, serviceTier, applyLongCtx)
+}
+
+func (s *BillingService) computeTokenBreakdownForModel(
+	model string, pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
 	applyLongCtx bool,
 ) *CostBreakdown {
@@ -1025,7 +1041,10 @@ func (s *BillingService) computeTokenBreakdown(
 	cacheCreationMultiplier := 1.0
 	tierMultiplier := 1.0
 
-	if usePriorityServiceTierPricing(serviceTier, pricing) {
+	if normalizeBillingServiceTier(serviceTier) == "priority" && isOpenAIGPT55Model(model) {
+		// GPT-5.5 fast/priority 官方为标准价 2.5x；在价格源缺失或误填 priority 字段时也强制按 2.5x 兜底。
+		tierMultiplier = openAIGPT55PriorityServiceTierMultiplier
+	} else if usePriorityServiceTierPricing(serviceTier, pricing) {
 		if pricing.InputPricePerTokenPriority > 0 {
 			inputPrice = pricing.InputPricePerTokenPriority
 		}
@@ -1039,7 +1058,7 @@ func (s *BillingService) computeTokenBreakdown(
 			cacheCreationPrice = pricing.CacheCreationPricePerTokenPriority
 		}
 	} else {
-		tierMultiplier = serviceTierCostMultiplier(serviceTier)
+		tierMultiplier = serviceTierCostMultiplierForModel(model, serviceTier)
 	}
 
 	longContextPricingEligible := applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing)
@@ -1205,7 +1224,8 @@ func (s *BillingService) calculateCostInternalWithPolicy(
 		return nil, err
 	}
 
-	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, longContextBillingEnabled), nil
+	// 传 model 以支持 GPT-5.5 fast/priority 2.5x 修正；长上下文开关沿用调用方传入的 longContextBillingEnabled。
+	return s.computeTokenBreakdownForModel(model, pricing, tokens, rateMultiplier, serviceTier, longContextBillingEnabled), nil
 }
 
 func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *ModelPricing) *ModelPricing {
@@ -1261,6 +1281,14 @@ func (s *BillingService) shouldApplySessionLongContextPricing(tokens UsageTokens
 
 func usesOpenAILegacyLongContextPricing(normalized string) bool {
 	return normalized == "gpt-5.4" || normalized == "gpt-5.5" || normalized == "gpt-5.5-pro"
+}
+
+func isOpenAIGPT55Model(model string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(model))
+	if !strings.Contains(trimmed, "gpt-5.5") && !strings.Contains(trimmed, "gpt 5.5") {
+		return false
+	}
+	return normalizeCodexModel(trimmed) == "gpt-5.5"
 }
 
 // CalculateCostWithConfig 使用配置中的默认倍率计算费用
