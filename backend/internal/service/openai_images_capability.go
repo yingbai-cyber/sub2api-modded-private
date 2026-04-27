@@ -42,6 +42,8 @@ type OpenAIImagesCapabilityInfo struct {
 	SupportsOutputFormat  bool           `json:"supports_output_format"`
 	SupportsPartialImages bool           `json:"supports_partial_images"`
 	SupportsEdits         bool           `json:"supports_edits"`
+	SupportsInputImages   bool           `json:"supports_input_images"`
+	SupportsUploads       bool           `json:"supports_uploads"`
 	MaxN                  int            `json:"max_n"`
 	UnsupportedParams     []string       `json:"unsupported_params,omitempty"`
 	AccountCounts         map[string]int `json:"account_counts,omitempty"`
@@ -74,6 +76,10 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 		if account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic) {
 			info.SupportsBasic = true
 			info.AccountCounts["basic"]++
+			if isOpenAIImagesWeb2APIOnlyAccount(account) {
+				info.SupportsInputImages = true
+				info.SupportsUploads = true
+			}
 		}
 		if account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative) {
 			info.SupportsAdvanced = true
@@ -103,6 +109,8 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 		info.SupportsOutputFormat = true
 		info.SupportsPartialImages = true
 		info.SupportsEdits = true
+		info.SupportsInputImages = true
+		info.SupportsUploads = true
 		return info, nil
 	}
 	if info.SupportsBasic {
@@ -144,6 +152,6 @@ func BasicOpenAIImagesUnsupportedParams() []string {
 		"response_format:url",
 		"edits",
 		"mask",
-		"input_images",
+		"input_image_urls",
 	}
 }
