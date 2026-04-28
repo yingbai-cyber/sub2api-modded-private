@@ -255,6 +255,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	clientOutputStarted := false
 	codexFailureTerminal := account != nil && account.IsOpenAIOAuthLike()
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	firstSSELineMarked := false
 	var streamEarlyErr error
 	terminalFailurePending := false
 	failureDelivered := false
@@ -479,6 +480,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSELineMarked {
+				firstSSELineMarked = true
+				MarkOpenAITTFTTrace(c, "first_sse_line_ms")
+			}
+
 			dataBytes := []byte(data)
 			eventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
 			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
@@ -709,6 +715,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 				stopFirstOutputTimer()
+				MarkOpenAITTFTTrace(c, "first_client_output_ms")
+				MarkOpenAITTFTTrace(c, "first_token_ms")
+				SetOpenAITTFTTrace(c, "service_first_token_ms", int64(ms))
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 			return
