@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strings"
@@ -217,6 +218,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	}
 
 	// 执行请求
+	req = withOpenAITTFTHTTPTrace(req)
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req)
@@ -228,6 +230,8 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return nil, err
 	}
 	s.recordOpenAIHTTP2Success(profile, entry.protocolMode, entry.proxyKey)
+
+	service.SetOpenAITTFTTraceUpstreamStatusContext(req.Context(), resp.StatusCode)
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -278,6 +282,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return nil, err
 	}
 
+	req = withOpenAITTFTHTTPTrace(req)
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req)
@@ -287,6 +292,8 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		slog.Debug("tls_fingerprint_request_failed", "account_id", accountID, "error", err)
 		return nil, err
 	}
+
+	service.SetOpenAITTFTTraceUpstreamStatusContext(req.Context(), resp.StatusCode)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -540,6 +547,26 @@ func isSupportedGrokCLIVersion(version string) bool {
 	return semver.IsValid(canonical) &&
 		semver.Canonical(canonical) == canonical &&
 		semver.Compare(canonical, minimum) >= 0
+}
+
+func withOpenAITTFTHTTPTrace(req *http.Request) *http.Request {
+	if req == nil || !service.HasOpenAITTFTTraceContext(req.Context()) {
+		return req
+	}
+	ctx := req.Context()
+	trace := &httptrace.ClientTrace{
+		GetConn: func(string) {
+			service.MarkOpenAITTFTTraceContext(ctx, "httptrace_get_conn_ms")
+		},
+		GotConn: func(info httptrace.GotConnInfo) {
+			service.MarkOpenAITTFTTraceContext(ctx, "httptrace_got_conn_ms")
+			service.SetOpenAITTFTTraceConnReusedContext(ctx, info.Reused)
+		},
+		GotFirstResponseByte: func() {
+			service.MarkOpenAITTFTTraceContext(ctx, "httptrace_got_first_response_byte_ms")
+		},
+	}
+	return req.WithContext(httptrace.WithClientTrace(ctx, trace))
 }
 
 // acquireClientWithTLS 获取或创建带 TLS 指纹的客户端
