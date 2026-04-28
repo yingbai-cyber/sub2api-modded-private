@@ -82,6 +82,7 @@ func NewOpenAIGatewayHandler(
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
+	defer service.FinalizeOpenAITTFTTrace(c)
 	// 局部兜底：确保该 handler 内部任何 panic 都不会击穿到进程级。
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -166,6 +167,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqStream := streamResult.Bool()
+	service.MaybeStartOpenAITTFTTrace(c, h.cfg, reqModel, reqStream)
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
 	if previousResponseID != "" {
@@ -233,7 +235,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
 
+	userSlotStart := time.Now()
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
+	service.SetOpenAITTFTTrace(c, "user_slot_ms", time.Since(userSlotStart).Milliseconds())
 	if !acquired {
 		return
 	}
@@ -243,9 +247,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 2. Re-check billing eligibility after wait
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
+	billingStart := time.Now()
+	billingErr := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription)
+	service.SetOpenAITTFTTrace(c, "billing_ms", time.Since(billingStart).Milliseconds())
+	if billingErr != nil {
+		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(billingErr))
+		status, code, message, retryAfter := billingErrorDetails(billingErr)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
@@ -266,6 +273,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	for {
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		accountSelectStart := time.Now()
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
 			c.Request.Context(),
 			apiKey.GroupID,
@@ -276,6 +284,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			service.OpenAIUpstreamTransportAny,
 			requireCompact,
 		)
+		service.SetOpenAITTFTTrace(c, "account_select_ms", time.Since(accountSelectStart).Milliseconds())
 		if err != nil {
 			reqLog.Warn("openai.account_select_failed",
 				zap.Error(err),
@@ -316,8 +325,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		service.SetOpenAITTFTTraceAccountID(c, account.ID)
 
+		accountSlotStart := time.Now()
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		service.SetOpenAITTFTTrace(c, "account_slot_ms", time.Since(accountSlotStart).Milliseconds())
 		if !acquired {
 			return
 		}
@@ -332,6 +344,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
+		service.SetOpenAITTFTTrace(c, "forward_ms", forwardDurationMs)
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
