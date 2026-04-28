@@ -410,6 +410,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
+	SetOpenAITTFTTraceUpstreamModel(c, upstreamModel)
 
 	if !SupportsVerbosity(upstreamModel) && gjson.GetBytes(body, "text.verbosity").Exists() {
 		markPatchDelete("text.verbosity")
@@ -541,8 +542,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageInputSize = imageCfg.InputSize
 	}
 
+	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
+	oauthTokenStart := time.Now()
 	token, _, err := s.GetAccessToken(ctx, account)
+	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -787,6 +791,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	for {
 		// Build upstream request
+		buildUpstreamStart := time.Now()
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		var headerGuard *openAIFirstOutputHeaderGuard
 		if firstOutputTimeout > 0 {
@@ -798,6 +803,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if headerGuard == nil {
 			releaseUpstreamCtx()
 		}
+		SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 		if err != nil {
 			if headerGuard != nil {
 				headerGuard.close()
@@ -814,7 +820,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		httpDoMS := time.Since(upstreamStart).Milliseconds()
+		SetOpenAITTFTTrace(c, "http_do_ms", httpDoMS)
+		SetOpenAITTFTTrace(c, "upstream_headers_ms", httpDoMS)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, httpDoMS)
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -840,6 +849,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if headerGuard != nil {
 			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
+		SetOpenAITTFTTraceUpstreamStatus(c, resp.StatusCode)
 
 		// Handle error response
 		if resp.StatusCode >= 400 {

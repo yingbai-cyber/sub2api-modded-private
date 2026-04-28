@@ -660,6 +660,43 @@ func TestLoadIdempotencyConfigFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultOpenAITTFTTraceConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.OpenAITTFTTrace.Enabled)
+	require.Equal(t, 0.0, cfg.OpenAITTFTTrace.SampleRate)
+	require.Equal(t, 0, cfg.OpenAITTFTTrace.SlowMS)
+}
+
+func TestLoadOpenAITTFTTraceConfigFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("OPENAI_TTFT_TRACE_ENABLED", "true")
+	t.Setenv("OPENAI_TTFT_TRACE_SAMPLE_RATE", "0.25")
+	t.Setenv("OPENAI_TTFT_TRACE_SLOW_MS", "1500")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.OpenAITTFTTrace.Enabled)
+	require.Equal(t, 0.25, cfg.OpenAITTFTTrace.SampleRate)
+	require.Equal(t, 1500, cfg.OpenAITTFTTrace.SlowMS)
+}
+
+func TestValidateOpenAITTFTTraceConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	cfg.OpenAITTFTTrace.SampleRate = -0.1
+	require.ErrorContains(t, cfg.Validate(), "openai_ttft_trace.sample_rate")
+	cfg.OpenAITTFTTrace.SampleRate = 1.1
+	require.ErrorContains(t, cfg.Validate(), "openai_ttft_trace.sample_rate")
+	cfg.OpenAITTFTTrace.SampleRate = 0.5
+	cfg.OpenAITTFTTrace.SlowMS = -1
+	require.ErrorContains(t, cfg.Validate(), "openai_ttft_trace.slow_ms")
+}
+
 func TestLoadSchedulingConfigFromEnv(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_SCHEDULING_STICKY_SESSION_MAX_WAITING", "5")
