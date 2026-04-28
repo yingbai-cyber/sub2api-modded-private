@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -94,6 +95,7 @@ type Config struct {
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
+	OpenAITTFTTrace         OpenAITTFTTraceConfig         `mapstructure:"openai_ttft_trace"`
 }
 
 type LogConfig struct {
@@ -224,6 +226,13 @@ type BatchImageConfig struct {
 	VertexOutputRetentionHours   int    `mapstructure:"vertex_output_retention_hours"`
 	VertexBatchPredictionBaseURL string `mapstructure:"vertex_batch_prediction_base_url"`
 	VertexGCSBaseURL             string `mapstructure:"vertex_gcs_base_url"`
+}
+
+// OpenAITTFTTraceConfig controls request-scoped OpenAI TTFT trace logging.
+type OpenAITTFTTraceConfig struct {
+	Enabled    bool    `mapstructure:"enabled"`
+	SampleRate float64 `mapstructure:"sample_rate"`
+	SlowMS     int     `mapstructure:"slow_ms"`
 }
 
 type LinuxDoConnectConfig struct {
@@ -1928,6 +1937,11 @@ func setDefaults() {
 	viper.SetDefault("idempotency.cleanup_interval_seconds", 60)
 	viper.SetDefault("idempotency.cleanup_batch_size", 500)
 
+	// OpenAI TTFT trace (disabled by default)
+	viper.SetDefault("openai_ttft_trace.enabled", false)
+	viper.SetDefault("openai_ttft_trace.sample_rate", 0.0)
+	viper.SetDefault("openai_ttft_trace.slow_ms", 0)
+
 	// Gateway
 	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
@@ -2161,6 +2175,12 @@ func (c *Config) Validate() error {
 	}
 	if c.SubscriptionMaintenance.QueueSize < 0 {
 		return fmt.Errorf("subscription_maintenance.queue_size must be non-negative")
+	}
+	if math.IsNaN(c.OpenAITTFTTrace.SampleRate) || c.OpenAITTFTTrace.SampleRate < 0 || c.OpenAITTFTTrace.SampleRate > 1 {
+		return fmt.Errorf("openai_ttft_trace.sample_rate must be between 0 and 1")
+	}
+	if c.OpenAITTFTTrace.SlowMS < 0 {
+		return fmt.Errorf("openai_ttft_trace.slow_ms must be non-negative")
 	}
 
 	// Gemini OAuth 配置校验：client_id 与 client_secret 必须同时设置或同时留空。
