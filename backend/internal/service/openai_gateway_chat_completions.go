@@ -215,6 +215,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
 		}
 	}
+	SetOpenAITTFTTraceUpstreamModel(c, upstreamModel)
+	SetOpenAITTFTTrace(c, "conversion_body_ms", time.Since(startTime).Milliseconds())
 
 	if account.Type == AccountTypeAPIKey {
 		if trimmedKey := strings.TrimSpace(promptCacheKey); trimmedKey != "" {
@@ -245,15 +247,19 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	responsesBody = updatedBody
 
 	// 5. Get access token
+	oauthTokenStart := time.Now()
 	token, _, err := s.GetAccessToken(ctx, account)
+	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
 	// 6. Build upstream request
+	buildUpstreamStart := time.Now()
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
 	releaseUpstreamCtx()
+	SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
@@ -268,10 +274,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	upstreamStart := time.Now()
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	httpDoMS := time.Since(upstreamStart).Milliseconds()
+	SetOpenAITTFTTrace(c, "http_do_ms", httpDoMS)
+	SetOpenAITTFTTrace(c, "upstream_headers_ms", httpDoMS)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
+	SetOpenAITTFTTraceUpstreamStatus(c, resp.StatusCode)
 	defer func() { _ = resp.Body.Close() }()
 
 	// 8. Handle error response with failover
@@ -405,6 +416,9 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	if err != nil {
 		return nil, err
 	}
+	if finalResponse != nil {
+		MarkOpenAITTFTTrace(c, "first_sse_line_ms")
+	}
 
 	if finalResponse == nil {
 		writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Upstream stream ended without a terminal response event")
@@ -508,6 +522,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
+	firstSSELineMarked := false
+	firstChatChunkMarked := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -539,10 +555,16 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	processDataLine := func(payload string) bool {
+		if !firstSSELineMarked {
+			firstSSELineMarked = true
+			MarkOpenAITTFTTrace(c, "first_sse_line_ms")
+		}
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
+			MarkOpenAITTFTTrace(c, "first_token_ms")
+			SetOpenAITTFTTrace(c, "service_first_token_ms", int64(ms))
 		}
 
 		var event apicompat.ResponsesStreamEvent
@@ -640,6 +662,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 
 		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
+		if !firstChatChunkMarked && len(chunks) > 0 {
+			firstChatChunkMarked = true
+			MarkOpenAITTFTTrace(c, "first_chat_chunk_ms")
+			SetOpenAITTFTTrace(c, "service_first_chat_chunk_ms", time.Since(startTime).Milliseconds())
+		}
 		if !clientDisconnected {
 			for _, chunk := range chunks {
 				refusalDetector.ObserveChatChunk(chunk)

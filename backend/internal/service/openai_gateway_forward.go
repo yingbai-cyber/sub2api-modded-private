@@ -339,6 +339,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
+	SetOpenAITTFTTraceUpstreamModel(c, upstreamModel)
 
 	if !SupportsVerbosity(upstreamModel) && gjson.GetBytes(body, "text.verbosity").Exists() {
 		markPatchDelete("text.verbosity")
@@ -459,8 +460,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageInputSize = imageCfg.InputSize
 	}
 
+	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
+	oauthTokenStart := time.Now()
 	token, _, err := s.GetAccessToken(ctx, account)
+	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -685,9 +689,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	for {
 		// Build upstream request
+		buildUpstreamStart := time.Now()
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
+		SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 		if err != nil {
 			return nil, err
 		}
@@ -701,13 +707,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		httpDoMS := time.Since(upstreamStart).Milliseconds()
+		SetOpenAITTFTTrace(c, "http_do_ms", httpDoMS)
+		SetOpenAITTFTTrace(c, "upstream_headers_ms", httpDoMS)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, httpDoMS)
 		if err != nil {
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
 			// unschedule the account on durable faults (e.g. rejected proxy credentials).
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
+		SetOpenAITTFTTraceUpstreamStatus(c, resp.StatusCode)
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
