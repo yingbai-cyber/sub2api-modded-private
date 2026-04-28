@@ -2375,6 +2375,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
+	SetOpenAITTFTTraceUpstreamModel(c, upstreamModel)
 
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
@@ -2542,8 +2543,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
+	oauthTokenStart := time.Now()
 	token, _, err := s.GetAccessToken(ctx, account)
+	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -2767,9 +2771,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	for {
 		// Build upstream request
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		buildUpstreamStart := time.Now()
+		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
+		SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 		if err != nil {
 			return nil, err
 		}
@@ -2783,7 +2789,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		httpDoMS := time.Since(upstreamStart).Milliseconds()
+		SetOpenAITTFTTrace(c, "http_do_ms", httpDoMS)
+		SetOpenAITTFTTrace(c, "upstream_headers_ms", httpDoMS)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, httpDoMS)
 		if err != nil {
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -2804,6 +2813,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			})
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
+		SetOpenAITTFTTraceUpstreamStatus(c, resp.StatusCode)
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
@@ -3045,6 +3055,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		reqModel,
 		reqStream,
 	)
+	traceUpstreamModel := upstreamPassthroughModel
+	if traceUpstreamModel == "" {
+		traceUpstreamModel = reqModel
+	}
+	SetOpenAITTFTTraceUpstreamModel(c, traceUpstreamModel)
 	if reqStream && c != nil && c.Request != nil {
 		if timeoutHeaders := collectOpenAIPassthroughTimeoutHeaders(c.Request.Header); len(timeoutHeaders) > 0 {
 			streamWarnLogger := logger.FromContext(ctx).With(
@@ -3060,15 +3075,20 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
+	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
+	oauthTokenStart := time.Now()
 	token, _, err := s.GetAccessToken(ctx, account)
+	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	buildUpstreamStart := time.Now()
+	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	releaseUpstreamCtx()
+	SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -3084,7 +3104,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	upstreamStart := time.Now()
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	httpDoMS := time.Since(upstreamStart).Milliseconds()
+	SetOpenAITTFTTrace(c, "http_do_ms", httpDoMS)
+	SetOpenAITTFTTrace(c, "upstream_headers_ms", httpDoMS)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, httpDoMS)
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
@@ -3105,6 +3128,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
+	SetOpenAITTFTTraceUpstreamStatus(c, resp.StatusCode)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
@@ -3619,6 +3643,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	failedMessage := ""
 	clientOutputStarted := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	firstSSELineMarked := false
 	pendingLines := make([]string, 0, 8)
 	writePendingLines := func() bool {
 		for _, pending := range pendingLines {
@@ -3656,6 +3681,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSELineMarked {
+				firstSSELineMarked = true
+				MarkOpenAITTFTTrace(c, "first_sse_line_ms")
+			}
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			if needModelReplace && strings.Contains(data, mappedModel) {
@@ -3686,6 +3715,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if firstTokenMs == nil && lineStartsClientOutput && trimmedData != "[DONE]" {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
+				MarkOpenAITTFTTrace(c, "first_client_output_ms")
+				MarkOpenAITTFTTrace(c, "first_token_ms")
+				SetOpenAITTFTTrace(c, "service_first_token_ms", int64(ms))
 			}
 			s.parseSSEUsageBytes(dataBytes, usage)
 		}
@@ -4413,6 +4445,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	failedMessage := ""
 	clientOutputStarted := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	firstSSELineMarked := false
 	var streamFailoverErr error
 	sendErrorEvent := func(reason string) {
 		if errorEventSent || clientDisconnected {
@@ -4515,6 +4548,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSELineMarked {
+				firstSSELineMarked = true
+				MarkOpenAITTFTTrace(c, "first_sse_line_ms")
+			}
 
 			// Replace model in response if needed.
 			// Fast path: most events do not contain model field values.
@@ -4577,6 +4614,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if firstTokenMs == nil && startsClientOutput {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
+				MarkOpenAITTFTTrace(c, "first_client_output_ms")
+				MarkOpenAITTFTTrace(c, "first_token_ms")
+				SetOpenAITTFTTrace(c, "service_first_token_ms", int64(ms))
 			}
 			s.parseSSEUsageBytes(dataBytes, usage)
 			return
