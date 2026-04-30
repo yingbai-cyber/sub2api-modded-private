@@ -220,6 +220,50 @@
 - 宿主机与 `npm-app` 容器访问 `/health` 均返回 HTTP 200 / `{"status":"ok"}`。
 - 依赖容器 `sub2api-modded-postgres`、`sub2api-modded-redis` 均为 `healthy`。
 
+---
+
+### 2026-04-30：跟进 upstream v0.1.121 并切换为 GitHub Actions 验证
+**类型**：上游同步 / rebase / 运维约束修正
+
+**背景**：
+- 官方 `upstream/main` 从 `094e1171` 更新到 `48912014`，tag `v0.1.121` 位于 `9d801595`。
+- 本次官方更新包含 Anthropic 缓存 TTL 注入开关、管理员设置契约字段、表格分页大小 localStorage 持久化、OpenAI item references previous response 推断修复等改动。
+- 本地 `main` 已 rebase 到 `upstream/main=48912014`，无源码冲突。
+- 运维约束修正：后续不在服务器本机执行前端/后端构建、依赖安装或全量测试，默认通过 GitHub Actions 完成构建、测试、部署与健康检查。
+
+**影响文件**：
+- `backend/internal/config/config.go`
+- `backend/internal/handler/dto/settings.go`
+- `backend/internal/handler/admin/setting_handler.go`
+- `backend/internal/service/settings_view.go`
+- `frontend/src/views/admin/SettingsView.vue`
+- `frontend/src/components/common/Pagination.vue`
+- `frontend/src/composables/usePersistedPageSize.ts`
+- `backend/internal/handler/openai_gateway_handler.go`
+- `.claude/skills/sub2api-modded-rebase-playbook/SKILL.md`
+- `.claude/skills/sub2api-modded-runtime-ops/SKILL.md`
+- `docs/magic-patch-log.md`
+
+**改动摘要**：
+- 已 fetch upstream 并将本地 `main` rebase 到 `upstream/main=48912014`。
+- rebase 过程没有出现需要手工解决的源码冲突；本地 OpenAI free OAuth web2api、图片能力 scope、GPT-5.5 fast 计费、TTFT trace、CI 部署适配等补丁自动重放。
+- 更新 rebase/runtime SOP：禁止默认在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build`、手动 `systemctl restart sub2api-modded.service`；改由 GitHub Actions runner 构建测试，deploy workflow 负责受控重启、健康检查与失败回滚。
+
+**与官方差异原因**：
+- 官方继续演进设置项、OpenAI 转发和前端表格行为；本地仍需保留 free OAuth 生图 web2api、TTFT trace、计费与部署适配等魔改。
+- 当前服务器承载运行环境，不应承担构建/测试负载；GitHub Actions 已具备前端 embed 构建、`go test ./...`、Linux 二进制构建、artifact 上传与远程部署回滚能力。
+
+**rebase 风险点**：
+- Anthropic 缓存 TTL 注入新增设置项，后续若继续调整设置契约，需关注前后端字段同步和默认值。
+- OpenAI item references previous response 推断修复与本地 TTFT trace/OpenAI gateway 补丁同属转发路径，后续继续关注冲突。
+- 本地 rebase 后 `origin/main` 仍在旧历史；如需上线，应推送到 GitHub 触发 Actions，而不是本机构建。
+
+**验证结果**：
+- 已完成源码级 rebase，无手工冲突。
+- 本机曾误触发部分 Go 测试命令；因服务器重启/中断，结果不作为本次验证依据。后续不再在服务器本机执行构建或测试。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建。
+- 待 GitHub Actions deploy：上传二进制、备份旧二进制、重启 `sub2api-modded.service`、宿主机 `/health` 与 `npm-app` 回源健康检查；失败由 workflow 自动回滚。
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
