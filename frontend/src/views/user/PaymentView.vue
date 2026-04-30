@@ -48,10 +48,13 @@
             <div class="card p-6">
               <AmountInput
                 v-model="amount"
-                :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
+                :amounts="[1, 10, 20, 50, 100, 200, 500, 1000, 2000]"
                 :min="globalMinAmount"
                 :max="globalMaxAmount"
               />
+              <p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
+                {{ t('payment.trialRechargeHint') }}
+              </p>
               <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{ amountError }}</p>
             </div>
             <div v-if="enabledMethods.length >= 1" class="card p-6">
