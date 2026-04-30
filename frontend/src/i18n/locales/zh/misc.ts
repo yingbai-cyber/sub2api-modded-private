@@ -316,6 +316,7 @@ export default {
     quickAmounts: '快捷金额',
     customAmount: '自定义金额',
     enterAmount: '输入金额',
+    trialRechargeHint: '买不了吃亏买不了上当，佬友何不一试',
     paymentMethod: '支付方式',
     fee: '手续费',
     actualPay: '实付金额',
