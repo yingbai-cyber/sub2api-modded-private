@@ -1796,7 +1796,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyEditUsesConfiguredV1BaseURL(t *
 	require.NoError(t, writer.WriteField("prompt", "replace background"))
 	imagePart, err := writer.CreateFormFile("image", "source.png")
 	require.NoError(t, err)
-	_, err = imagePart.Write([]byte("png-image-content"))
+	_, err = imagePart.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -2041,7 +2041,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthEditsMultipartUsesResponsesAPI(t
 	imageHeader.Set("Content-Type", "image/png")
 	imagePart, err := writer.CreatePart(imageHeader)
 	require.NoError(t, err)
-	_, err = imagePart.Write([]byte("png-image-content"))
+	_, err = imagePart.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 
 	maskHeader := make(textproto.MIMEHeader)
@@ -2049,7 +2049,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthEditsMultipartUsesResponsesAPI(t
 	maskHeader.Set("Content-Type", "image/png")
 	maskPart, err := writer.CreatePart(maskHeader)
 	require.NoError(t, err)
-	_, err = maskPart.Write([]byte("png-mask-content"))
+	_, err = maskPart.Write(openAIImageTestPNGBytes(t))
 	require.NoError(t, err)
 
 	require.NoError(t, writer.Close())
