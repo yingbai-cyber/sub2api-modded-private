@@ -159,6 +159,67 @@
 - `systemctl restart sub2api-modded.service` 后服务为 `active`，日志显示 `Server started on 172.19.0.1:18081`。
 - 宿主机与 `npm-app` 容器访问 `/health` 均返回 HTTP 200 / `{"status":"ok"}`。
 
+---
+
+### 2026-04-30：跟进 upstream v0.1.120+3 并保留本地补丁
+**类型**：上游同步 / rebase / 冲突处理
+
+**背景**：
+- 官方 `upstream/main` 从 `c92b88e3` 更新到 `094e1171`；官方 tag `v0.1.120` 位于 `8bf2a7b8`，当前 upstream head 还包含 tag 后 3 个提交。
+- 本次官方更新包含 OpenAI Fast/Flex Policy、Codex/Responses 兼容修复、OpenAI Images API Key versioned base URL、scheduler snapshot/sticky session 修复、Vertex Service Account、请求体压缩解码与流错误处理增强等改动。
+- 本地分支包含 OpenAI free OAuth 生图 web2api、轻量探测、EasyPay ezfpy 兼容、CI 部署适配、图片能力 scope、GPT-5.5 fast 计费和 TTFT trace 等补丁，需要 rebase 到最新官方主线。
+- 当前仓库实际维护分支仍为 `main`；rebase 后 `HEAD=3e2ed41b`，共同基点为 `upstream/main=094e1171`。
+
+**影响文件**：
+- `backend/internal/service/openai_images_test.go`
+- `backend/internal/service/openai_images_web2api.go`
+- `backend/internal/service/openai_images_responses.go`
+- `backend/internal/repository/scheduler_cache.go`
+- `backend/internal/repository/scheduler_cache_unit_test.go`
+- `.github/workflows/build.yml`
+- `backend/internal/payment/provider/easypay.go`
+- `docs/magic-patch-log.md`
+- TTFT trace 相关文件（rebase 后复核）：
+  - `backend/internal/config/config.go`
+  - `backend/internal/repository/http_upstream.go`
+  - `backend/internal/handler/openai_gateway_handler.go`
+  - `backend/internal/handler/openai_chat_completions.go`
+  - `backend/internal/service/openai_first_token_trace.go`
+  - `backend/internal/service/openai_gateway_service.go`
+  - `backend/internal/service/openai_gateway_chat_completions.go`
+
+**改动摘要**：
+- 已 fetch 官方更新并将本地 `main` rebase 到 `upstream/main=094e1171`。
+- 解决 `openai_images_test.go` 多轮冲突：同时保留官方 API Key Images versioned base URL 测试，以及本地 free OAuth web2api、capability、advanced 参数拒绝、failover 等测试。
+- 解决 `openai_images_web2api.go` add/add 冲突：保留本地 `validateOpenAIImagesWeb2APIRequest` 防护、`openAIImagesDefaultModel` 默认模型和 free 账号 basic-only 路由；避免旧补丁回退为任意非流式 generation 都走 web2api。
+- 解决 `.github/workflows/build.yml` add/add 冲突：保留本地部署 SSH 默认值和清晰错误输出；后续本地 CI 补丁继续跳过易碎 frontend test job，只构建 embed 前端。
+- 解决 `easypay.go` 冲突：保留官方退款 URL 归一化、退款重试与非 JSON/HTML 错误处理；同时保留本地 ezfpy 兼容的成功码、`code_url`、`findorder` 查询与 fallback。
+- duplicate/已上游化补丁由 rebase 自动丢弃或等价重放，例如 compact probe 暴露和 CI SSH 默认值相关提交。
+
+**与官方差异原因**：
+- 官方新增/修复了 OpenAI Images、Fast/Flex Policy、scheduler、Vertex 等能力，但本地仍需要 free OAuth 生图 web2api 兼容、TTFT trace 排障、GPT-5.5 fast 计费与 image2/CI/运维适配。
+- CI 部署仍绑定当前 `sub2api-modded.service`、`172.19.0.1:18081` 与 NPM 回源验证流程，不能直接采用纯官方工作流。
+- ezfpy EasyPay 返回格式与查询接口仍与官方默认 Zpay/EasyPay 行为存在差异，需要继续保留本地兼容矩阵。
+
+**rebase 风险点**：
+- upstream 的 OpenAI Fast/Flex Policy 会进入 `/responses`、chat completions 转 responses、WS/passthrough 等路径；后续需关注是否影响本地 GPT-5.5 fast 计费和 TTFT trace stage 覆盖。
+- upstream 的 scheduler cache/sticky session 变更较大；后续若再改调度快照，必须确认 `plan_type`、`openai_images_transport`、账号组等本地调度元数据仍被保留。
+- upstream 的 OpenAI Images base URL 与 OAuth session 逻辑继续演进；后续仍需确认 free OAuth basic 文生图默认 web2api，team/plus/pro/API Key/stream/advanced 请求仍走 Responses 或官方 API Key 路径。
+- `origin/main` 仍是 rebase 前历史；如需推送，需要使用安全的 force-with-lease 策略，避免覆盖远端未知提交。
+
+**验证结果**：
+- OpenAI Images / Fast Policy / scheduler / EasyPay 等专项测试通过：
+  - `/usr/local/go1.26.2/bin/go test ./internal/service -run 'TestBuildOpenAIImagesURL|TestShouldUseOpenAIImagesWeb2API|TestBuildOpenAIImageConversationRequestUsesWeb2APIPictureHint|TestOpenAIGatewayServiceForwardImages_OAuth|TestOpenAIGatewayServiceForwardImages_APIKey|TestOpenAIFastPolicy|TestNormalizeOpenAIServiceTier|TestExtractOpenAIServiceTier|TestOpenAIGatewayServiceRecordUsage_GPT55Priority'`
+  - `/usr/local/go1.26.2/bin/go test ./internal/repository -run 'TestBuildSchedulerMetadataAccount|TestScheduler'`
+  - `/usr/local/go1.26.2/bin/go test ./internal/payment/provider`
+  - `/usr/local/go1.26.2/bin/go test ./internal/pkg/httputil ./internal/handler/admin`
+- `/usr/local/go1.26.2/bin/go test ./...` 通过。
+- `pnpm --dir frontend install --frozen-lockfile && pnpm --dir frontend run build` 通过；`backend/internal/web/dist/index.html` 已生成。
+- `/usr/local/go1.26.2/bin/go build -tags embed -o /root/sub2api-modded/bin/sub2api ./cmd/server` 通过；二进制约 113M。
+- `systemctl restart sub2api-modded.service` 后服务为 `active`，日志显示 `Server started on 172.19.0.1:18081`。
+- 宿主机与 `npm-app` 容器访问 `/health` 均返回 HTTP 200 / `{"status":"ok"}`。
+- 依赖容器 `sub2api-modded-postgres`、`sub2api-modded-redis` 均为 `healthy`。
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
