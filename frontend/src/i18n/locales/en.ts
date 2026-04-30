@@ -6411,6 +6411,7 @@ export default {
     quickAmounts: 'Quick Amounts',
     customAmount: 'Custom Amount',
     enterAmount: 'Enter amount',
+    trialRechargeHint: 'Try it from ¥1 — low risk, quick start.',
     paymentMethod: 'Payment Method',
     fee: 'Fee',
     actualPay: 'Actual Payment',
