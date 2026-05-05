@@ -264,6 +264,65 @@
 - 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建。
 - 待 GitHub Actions deploy：上传二进制、备份旧二进制、重启 `sub2api-modded.service`、宿主机 `/health` 与 `npm-app` 回源健康检查；失败由 workflow 自动回滚。
 
+### 2026-05-05：跟进 upstream v0.1.122/v0.1.123 并保留本地补丁
+**类型**：上游同步 / rebase / 冲突处理
+
+**背景**：
+- 官方 `upstream/main` 从 `48912014` 更新到 `a1106e81`，包含 tag `v0.1.122`（`c129825f`）与 `v0.1.123`（`df722c9`）之后的合并提交。
+- 本次官方更新包含 OpenAI Compact 批量编辑与专属模型映射、APIKey 上游不支持 Responses 时 raw Chat Completions 直转、OpenAI unknown model fallback 收紧、图片生成分组控制/并发/计费、OpenAI Messages/Claude Code 兼容增强、usage billing drain/zero usage 修复、邀请返利后台记录、ops cleanup 设置修复、Select/GroupSelector 搜索和 axios 更新等。
+- 本地分支包含 free OAuth 生图 web2api、图片能力 scope、GPT-5.5 fast 计费、TTFT trace、EasyPay ezfpy、GitHub Actions 部署适配、低额充值 preset、Image2 UI 边界等补丁，需要 rebase 到最新官方主线。
+- 当前仓库实际维护分支仍为 `main`；rebase 后本地 `main` 基于 `upstream/main=a1106e81`。
+
+**影响文件**：
+- `backend/internal/service/openai_images_test.go`
+- `frontend/vite.config.ts`
+- `backend/internal/service/openai_images.go`
+- `backend/internal/handler/openai_chat_completions.go`
+- `backend/internal/service/openai_gateway_chat_completions.go`
+- `backend/internal/service/openai_gateway_service.go`
+- `docs/magic-patch-log.md`
+- rebase 后复核的本地补丁区域：
+  - `backend/internal/service/openai_images_web2api.go`
+  - `backend/internal/service/openai_images_responses.go`
+  - `backend/internal/service/billing_service.go`
+  - `backend/internal/service/openai_gateway_record_usage_test.go`
+  - `.github/workflows/build.yml`
+  - `frontend/src/views/user/PaymentView.vue`
+  - `frontend/src/components/payment/AmountInput.vue`
+  - `frontend/src/i18n/locales/en.ts`
+  - `frontend/src/i18n/locales/zh.ts`
+
+**改动摘要**：
+- 已 fetch upstream 并将本地 `main` rebase 到 `upstream/main=a1106e81`。
+- 解决 `openai_images_test.go` import 冲突：同时保留官方 streaming/client disconnect 测试需要的 `errors` 与本地 web2api conversation body 测试需要的 `encoding/json`。
+- 解决 `frontend/vite.config.ts` 冲突：保留本地轻量构建策略，不重新开启 `checker.typescript`，同时保留 build 阶段禁用 checker 的说明与 `enableBuild: false`。
+- 解决 `openai_images.go` 图片尺寸计费冲突：采用官方更严格的 `int64` 维度解析、`×` 归一、有效尺寸校验与 pixel bucket 分类，继续服务本地 4K 计费场景。
+- 解决 TTFT trace 与官方 OpenAI gateway 大改的冲突：保留官方 raw Chat Completions / stream drain / client disconnect 继续读取 usage / Messages bridge 等逻辑，同时保留本地 TTFT trace 的 account select、build upstream、http do、first SSE、first token、first chat chunk 等埋点。
+- OpenAI free OAuth 生图 web2api 补丁保留：`shouldUseOpenAIImagesWeb2API(account, parsed)` 仍在 OAuth images 分支中生效，`plan_type=free` 与 `openai_images_transport` 覆盖项继续存在，Responses `image_generation` tool 不可用的专用 failover 判断仍保留。
+- OpenAI usage billing 合并官方 unknown model fail-closed 与本地合法映射要求：`RecordUsage` 对无法定价的 token 模型返回错误，不再写 0 元伪成功记录；同时保留官方 `usageBillingModelCandidates` / compact alias / upstream fallback，避免误伤合法映射或上游模型计费。
+- CI 部署 workflow 保留本地 GitHub Actions 构建、测试、artifact、远程部署、健康检查与失败回滚流程。
+- Image2 边界保留：没有恢复已删除的独立 Image2 产品 UI；官方新增的图片生成分组/计费配置属于 Sub2API 管理能力，已随上游保留。
+
+**与官方差异原因**：
+- 官方增强了 OpenAI 兼容、图片生成控制、usage billing 与前端管理能力，但本地仍必须支持 free 层级 OpenAI OAuth 账号通过 ChatGPT web2api 做基础文生图。
+- 本地需要继续保留 TTFT trace 以定位 OpenAI gateway 首包耗时；官方默认不包含这些细粒度埋点。
+- 当前部署流程绑定 `sub2api-modded.service`、`172.19.0.1:18081`、`npm-app` 回源健康检查和 GitHub Actions 远程部署回滚，不能直接采用纯官方发布方式。
+- 本地低额充值 preset 和 EasyPay ezfpy 兼容仍属于当前支付运营需求。
+- Image2 是独立平台，不能把 Image2 产品工作台重新嵌回 Sub2API 前端。
+
+**rebase 风险点**：
+- 官方 OpenAI gateway/compat 改动很大，后续若继续调整 `Forward`、`ForwardAsChatCompletions`、Messages bridge、raw CC 或 streaming drain，需确认 TTFT trace 与 usage 计费仍同时生效。
+- 官方 unknown model fail-closed 语义必须继续保留，避免未知 OpenAI 模型按默认模型误扣费；同时要保留 explicit mapping、channel mapping、`BillingModel`、`UpstreamModel`、compact alias 的合法计费候选。
+- 官方图片生成控制与本地 free OAuth web2api 会共同影响 `/v1/images/generations`，后续需确认 free OAuth basic 路由、分组图片开关、图片 capability scope、size tier 与 image billing mode 不互相覆盖。
+- `origin/main` 仍是 rebase 前历史；如需推送，应先检查远端 SHA 并使用 `--force-with-lease`，由 GitHub Actions 验证/部署，避免本机构建或手动重启。
+
+**验证结果**：
+- 已完成源码级 rebase，并解决手工冲突：`openai_images_test.go`、`frontend/vite.config.ts`、`openai_images.go`、`openai_chat_completions.go`、`openai_gateway_chat_completions.go`、`openai_gateway_service.go`。
+- 已完成轻量检查：`git diff --check` 通过；关键 grep 确认 free OAuth web2api、unknown model fail-closed/合法计费候选、GitHub Actions deploy 健康检查入口仍存在。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或 `systemctl restart`。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建。
+- 待 GitHub Actions deploy：上传二进制、备份旧二进制、重启 `sub2api-modded.service`、宿主机 `/health` 与 `npm-app` 回源健康检查；失败由 workflow 自动回滚。
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
