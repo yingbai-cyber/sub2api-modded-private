@@ -741,6 +741,8 @@ export interface SystemSettings {
 
   // Available Channels feature switch
   available_channels_enabled: boolean;
+  // Available Models feature switch
+  available_models_enabled: boolean;
 
   // Subscription feature switch (user sidebar "My Subscriptions" entry)
   subscription_enabled: boolean;
@@ -1053,6 +1055,8 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+  // Available Models feature switch
+  available_models_enabled?: boolean;
 
   // Subscription feature switch
   subscription_enabled?: boolean;
