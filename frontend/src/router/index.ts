@@ -277,6 +277,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/available-models',
+    name: 'UserAvailableModels',
+    component: () => import('@/views/user/AvailableModelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Available Models',
+      titleKey: 'availableModels.title',
+      descriptionKey: 'availableModels.description'
+    }
+  },
+  {
     path: '/settings/mcp',
     name: 'MCP',
     component: () => import('@/views/user/MCPView.vue'),
