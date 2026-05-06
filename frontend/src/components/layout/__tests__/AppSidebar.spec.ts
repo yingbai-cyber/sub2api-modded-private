@@ -48,6 +48,11 @@ describe('AppSidebar available catalog entries', () => {
     expect(componentSource).not.toContain('v-if="!authStore.isSimpleMode" class="sidebar-section"')
   })
 
+  it('adds available models directly to the admin simple-mode menu when enabled', () => {
+    expect(componentSource).toContain("if (flagAvailableModels() !== false)")
+    expect(componentSource).toContain("filtered.push({ path: '/available-models'")
+  })
+
   it('keeps available channels and available models as separate entries and flags', () => {
     expect(componentSource).toContain("path: '/available-channels'")
     expect(componentSource).toContain("label: t('nav.availableChannels')")
