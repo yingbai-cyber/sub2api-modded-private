@@ -576,7 +576,18 @@ func normalizeOpenAIImageSizeTier(size string) string {
 	case "3840x2160", "2160x3840":
 		return "4K"
 	}
+	if !isValidOpenAIImageDimensions(width, height) && !isOpenAIImageOversizeDimensionForBilling(width, height) {
+		return "2K"
+	}
 	return classifyCustomOpenAIImageSizeTier(width, height)
+}
+
+func isOpenAIImageOversizeDimensionForBilling(width, height int64) bool {
+	longSide, shortSide := width, height
+	if height > width {
+		longSide, shortSide = height, width
+	}
+	return longSide >= 3840 && shortSide <= 1024
 }
 
 func classifyCustomOpenAIImageSizeTier(width, height int64) string {
