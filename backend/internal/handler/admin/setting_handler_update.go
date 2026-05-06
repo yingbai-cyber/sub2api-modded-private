@@ -304,6 +304,8 @@ type UpdateSettingsRequest struct {
 
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
+	// Available Models feature switch (user-facing)
+	AvailableModelsEnabled *bool `json:"available_models_enabled"`
 
 	// Affiliate (邀请返利) feature switch
 	AffiliateEnabled *bool `json:"affiliate_enabled"`
@@ -1530,6 +1532,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.AvailableChannelsEnabled
 			}
 			return previousSettings.AvailableChannelsEnabled
+		}(),
+		AvailableModelsEnabled: func() bool {
+			if req.AvailableModelsEnabled != nil {
+				return *req.AvailableModelsEnabled
+			}
+			return previousSettings.AvailableModelsEnabled
 		}(),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {
