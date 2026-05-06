@@ -116,6 +116,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestedModel := reqModel
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	defer releaseUpstreamCtx()
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
 		compactMappedModel := s.resolveOpenAICompactFallbackModel(account, reqModel)
@@ -231,7 +233,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if policyModel == "" {
 		policyModel = reqModel
 	}
-	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, policyModel, body)
+	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(upstreamCtx, account, policyModel, body)
 	if policyErr != nil {
 		var blocked *OpenAIFastBlockedError
 		if errors.As(policyErr, &blocked) {
@@ -315,7 +317,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
 	oauthTokenStart := time.Now()
-	token, _, err := s.GetAccessToken(ctx, account)
+	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
@@ -456,7 +458,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
 		} else {
-			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
+			result, handleErr := s.handleNonStreamingResponsePassthrough(upstreamCtx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
@@ -492,7 +494,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
 	if !account.IsShadow() {
 		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
+			s.updateCodexUsageSnapshot(upstreamCtx, account.ID, snapshot)
 		}
 	}
 
