@@ -20,6 +20,11 @@ describe('AppSidebar custom SVG styles', () => {
 })
 
 describe('AppSidebar available catalog entries', () => {
+  it('does not hide the admin personal section as a whole in simple mode', () => {
+    expect(componentSource).toContain('v-if="personalNavItems.length > 0"')
+    expect(componentSource).not.toContain('v-if="!authStore.isSimpleMode" class="sidebar-section"')
+  })
+
   it('keeps available channels and available models as separate entries and flags', () => {
     expect(componentSource).toContain("path: '/available-channels'")
     expect(componentSource).toContain("label: t('nav.availableChannels')")
