@@ -962,13 +962,13 @@ export default {
   // Available Models (user-facing)
   availableModels: {
     title: '可用模型',
-    description: '查看你当前可访问的模型、渠道、分组和定价',
-    searchPlaceholder: '搜索模型、渠道、平台或分组...',
+    description: '查看你当前可访问分组可以支配的模型',
+    searchPlaceholder: '搜索模型、平台或分组...',
     empty: '暂无可用模型',
     filteredCount: '已显示 {count} / {total} 条',
     stats: {
       models: '可用模型',
-      channels: '可用渠道',
+      groups: '可访问分组',
       platforms: '平台数量'
     },
     columns: {
@@ -5305,6 +5305,12 @@ export default {
           configureLink: '前往 风控中心 配置内容审计',
           enabled: '启用风控中心',
           enabledHint: '关闭后管理员侧边栏入口隐藏，网关内容审计不会执行。',
+        },
+        availableModels: {
+          title: '可用模型',
+          description: '向已登录用户展示他们当前可访问分组可以支配的模型，不依赖可用渠道目录配置。默认开启。',
+          enabled: '启用可用模型',
+          enabledHint: '关闭后用户菜单中的可用模型入口隐藏，接口返回空数组。',
         },
         affiliate: {
           title: '邀请返利',
