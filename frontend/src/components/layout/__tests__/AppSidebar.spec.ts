@@ -42,6 +42,14 @@ describe('AppSidebar scroll position persistence', () => {
   })
 })
 
+describe('AppSidebar available models entry', () => {
+  it('points the user-facing catalog entry to the dedicated models page', () => {
+    expect(componentSource).toContain("path: '/available-models'")
+    expect(componentSource).toContain("label: t('nav.availableModels')")
+    expect(componentSource).toContain('featureFlag: flagAvailableChannels')
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)
