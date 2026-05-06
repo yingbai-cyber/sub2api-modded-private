@@ -189,6 +189,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
+		// Available models feature (default enabled; opt-out)
+		SettingKeyAvailableModelsEnabled: "true",
 
 		// Model plaza feature (default disabled; opt-in, public unless require_auth)
 		SettingKeyModelPlazaEnabled:     "false",
@@ -786,6 +788,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+	// Available models feature (default: enabled; fail-open unless explicitly false)
+	result.AvailableModelsEnabled = !isFalseSettingValue(settings[SettingKeyAvailableModelsEnabled])
 
 	// Model plaza feature (default: disabled; strict true)
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"
