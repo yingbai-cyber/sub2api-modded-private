@@ -344,6 +344,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		AvailableModelsEnabled:   settings.AvailableModelsEnabled,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 

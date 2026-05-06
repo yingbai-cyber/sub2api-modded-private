@@ -384,6 +384,10 @@ const (
 	// for probing remote Sub2API API-key billing metadata.
 	SettingKeyUpstreamBillingProbeSettings = "upstream_billing_probe_settings"
 
+	// SettingKeyAvailableModelsEnabled is a DB-backed soft switch for the user-facing
+	// "Available Models" discovery page. Defaults to true because it is a conversion entry.
+	SettingKeyAvailableModelsEnabled = "available_models_enabled"
+
 	// =========================
 	// Overload Cooldown (529)
 	// =========================
