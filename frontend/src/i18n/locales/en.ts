@@ -5463,6 +5463,12 @@ export default {
           enabled: 'Enable Risk Control',
           enabledHint: 'When off, the admin sidebar entry is hidden and gateway moderation is skipped.',
         },
+        availableModels: {
+          title: 'Available Models',
+          description: 'Show logged-in users models available through their accessible groups, independent of the available channels catalog. Enabled by default.',
+          enabled: 'Enable Available Models',
+          enabledHint: 'When off, the Available Models menu entry is hidden and the endpoint returns an empty list.',
+        },
         affiliate: {
           title: 'Affiliate (Invite Rebate)',
           description: 'Existing users invite new ones; the inviter earns a percentage rebate on the invitee’s recharges. Disabled by default.',
