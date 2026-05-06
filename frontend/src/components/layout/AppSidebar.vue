@@ -101,8 +101,8 @@
           </template>
         </div>
 
-        <!-- Personal Section for Admin (hidden in simple mode) -->
-        <div v-if="!authStore.isSimpleMode" class="sidebar-section">
+        <!-- Personal Section for Admin -->
+        <div v-if="personalNavItems.length > 0" class="sidebar-section">
           <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
             <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">
               {{ t('nav.myAccount') }}
