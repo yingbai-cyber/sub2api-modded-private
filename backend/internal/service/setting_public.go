@@ -220,6 +220,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyAvailableModelsEnabled,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
@@ -331,6 +332,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
+		AvailableModelsEnabled:   !isFalseSettingValue(settings[SettingKeyAvailableModelsEnabled]),
 
 		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
 
@@ -414,6 +416,25 @@ func (s *SettingService) GetAvailableChannelsRuntime(ctx context.Context) Availa
 	}
 }
 
+// AvailableModelsRuntime is the lightweight view of the available-models feature
+// switch consumed by the user-facing handler.
+type AvailableModelsRuntime struct {
+	Enabled bool
+}
+
+// GetAvailableModelsRuntime reads the available-models feature switch directly
+// from the settings store. Fail-open: on error or missing value returns Enabled=true,
+// matching the opt-out/default-on conversion-entry semantics.
+func (s *SettingService) GetAvailableModelsRuntime(ctx context.Context) AvailableModelsRuntime {
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyAvailableModelsEnabled})
+	if err != nil {
+		return AvailableModelsRuntime{Enabled: true}
+	}
+	return AvailableModelsRuntime{
+		Enabled: !isFalseSettingValue(vals[SettingKeyAvailableModelsEnabled]),
+	}
+}
+
 // IsUserErrorViewAllowed reads the user-facing error-requests visibility switch
 // directly from the settings store. Fail-closed: on error returns false (opt-in default).
 func (s *SettingService) IsUserErrorViewAllowed(ctx context.Context) bool {
@@ -494,6 +515,7 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 	AvailableChannelsEnabled             bool `json:"available_channels_enabled"`
+	AvailableModelsEnabled               bool `json:"available_models_enabled"`
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
@@ -559,6 +581,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		AvailableModelsEnabled:               settings.AvailableModelsEnabled,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
