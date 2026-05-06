@@ -349,6 +349,8 @@ type UpdateSettingsRequest struct {
 
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
+	// Available Models feature switch (user-facing)
+	AvailableModelsEnabled *bool `json:"available_models_enabled"`
 
 	// Subscription feature switch (user-facing subscription surface; see SettingKeySubscriptionEnabled)
 	SubscriptionEnabled *bool `json:"subscription_enabled"`
@@ -2007,6 +2009,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.PluginManagementEnabled
 			}
 			return previousSettings.PluginManagementEnabled
+		}(),
+		AvailableModelsEnabled: func() bool {
+			if req.AvailableModelsEnabled != nil {
+				return *req.AvailableModelsEnabled
+			}
+			return previousSettings.AvailableModelsEnabled
 		}(),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {
