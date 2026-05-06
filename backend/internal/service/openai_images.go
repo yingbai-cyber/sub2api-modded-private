@@ -564,19 +564,29 @@ func isOpenAINativeImageOption(name string) bool {
 
 func normalizeOpenAIImageSizeTier(size string) string {
 	width, height, ok := parseOpenAIImageSizeDimensions(size)
-	if !ok || !isValidOpenAIImageDimensions(width, height) {
+	if !ok {
 		return "2K"
 	}
-
-	pixels := width * height
-	switch {
-	case pixels <= 1024*1024:
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(size), "×", "x"))
+	switch normalized {
+	case "1024x1024":
 		return "1K"
-	case pixels <= 2048*2048:
+	case "1536x1024", "1024x1536", "2048x2048", "2048x1152", "1152x2048", "2560x1440", "1440x2560":
 		return "2K"
-	default:
+	case "3840x2160", "2160x3840":
 		return "4K"
 	}
+	return classifyCustomOpenAIImageSizeTier(width, height)
+}
+
+func classifyCustomOpenAIImageSizeTier(width, height int64) string {
+	if height <= 0 || width <= 0 {
+		return "2K"
+	}
+	if height > 0 && width > (2560*1440)/height {
+		return "4K"
+	}
+	return "2K"
 }
 
 func parseOpenAIImageSizeDimensions(size string) (int64, int64, bool) {
