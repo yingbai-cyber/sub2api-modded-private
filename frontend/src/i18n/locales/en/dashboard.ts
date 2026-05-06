@@ -55,6 +55,8 @@ export default {
     batchImageAgentDesc: 'Copy instructions for an agent',
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
+    viewAvailableModels: 'View Available Models',
+    checkModelsAndPricing: 'See models, channels, and pricing at a glance',
     redeemCode: 'Redeem Code',
     addBalanceWithCode: 'Add balance with a code'
   },
@@ -524,6 +526,27 @@ export default {
     empty: {
       title: 'No channels available',
       description: 'No monitored channels have been configured yet.'
+    }
+  },
+
+  // Available Models (user-facing)
+  availableModels: {
+    title: 'Available Models',
+    description: 'View the models, channels, groups, and pricing currently available to you',
+    searchPlaceholder: 'Search models, channels, platforms, or groups...',
+    empty: 'No available models',
+    filteredCount: 'Showing {count} / {total}',
+    stats: {
+      models: 'Available Models',
+      channels: 'Channels',
+      platforms: 'Platforms'
+    },
+    columns: {
+      model: 'Model',
+      platform: 'Platform',
+      channel: 'Channel',
+      groups: 'Accessible Groups',
+      pricing: 'Pricing'
     }
   },
 
