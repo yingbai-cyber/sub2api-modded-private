@@ -367,6 +367,10 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyAvailableModelsEnabled is a DB-backed soft switch for the user-facing
+	// "Available Models" discovery page. Defaults to true because it is a conversion entry.
+	SettingKeyAvailableModelsEnabled = "available_models_enabled"
+
 	// =========================
 	// Overload Cooldown (529)
 	// =========================
