@@ -296,7 +296,7 @@
 - 已 fetch upstream 并将本地 `main` rebase 到 `upstream/main=a1106e81`。
 - 解决 `openai_images_test.go` import 冲突：同时保留官方 streaming/client disconnect 测试需要的 `errors` 与本地 web2api conversation body 测试需要的 `encoding/json`。
 - 解决 `frontend/vite.config.ts` 冲突：保留本地轻量构建策略，不重新开启 `checker.typescript`，同时保留 build 阶段禁用 checker 的说明与 `enableBuild: false`。
-- 解决 `openai_images.go` 图片尺寸计费冲突：保留官方 `int64` 维度解析与 `×` 归一；同时恢复本地按官方尺寸白名单与 2K 像素阈值划分自定义尺寸的语义，避免 `1024x768` / `1280x768` 被误记为 1K、`2560x1600` / `3840x1024` 被误记为 2K。
+- 解决 `openai_images.go` 图片尺寸计费冲突：保留官方 `int64` 维度解析、`×` 归一和有效尺寸校验；同时恢复本地按官方尺寸白名单与 2K 像素阈值划分自定义有效尺寸的语义，避免 `1024x768` / `1280x768` 被误记为 1K、`2560x1600` / `3840x1024` 被误记为 2K。
 - 解决 TTFT trace 与官方 OpenAI gateway 大改的冲突：保留官方 raw Chat Completions / stream drain / client disconnect 继续读取 usage / Messages bridge 等逻辑，同时保留本地 TTFT trace 的 account select、build upstream、http do、first SSE、first token、first chat chunk 等埋点；OpenAI OAuth legacy /responses 构造上游请求时继续使用 detached context，避免客户端取消导致上游请求 context canceled。
 - OpenAI free OAuth 生图 web2api 补丁保留：`shouldUseOpenAIImagesWeb2API(account, parsed)` 仍在 OAuth images 分支中生效，`plan_type=free` 与 `openai_images_transport` 覆盖项继续存在，Responses `image_generation` tool 不可用的专用 failover 判断仍保留。
 - OpenAI usage billing 合并官方 unknown model fail-closed 与本地合法映射要求：`RecordUsage` 对无法定价的 token 模型返回错误，不再写 0 元伪成功记录；同时保留官方 `usageBillingModelCandidates` / compact alias / upstream fallback，避免误伤合法映射或上游模型计费。
@@ -313,7 +313,7 @@
 **rebase 风险点**：
 - 官方 OpenAI gateway/compat 改动很大，后续若继续调整 `Forward`、`ForwardAsChatCompletions`、Messages bridge、raw CC 或 streaming drain，需确认 TTFT trace 与 usage 计费仍同时生效。
 - 官方 unknown model fail-closed 语义必须继续保留，避免未知 OpenAI 模型按默认模型误扣费；同时要保留 explicit mapping、channel mapping、`BillingModel`、`UpstreamModel`、compact alias 的合法计费候选。
-- 官方图片生成控制与本地 free OAuth web2api 会共同影响 `/v1/images/generations`，后续需确认 free OAuth basic 路由、分组图片开关、图片 capability scope、size tier 与 image billing mode 不互相覆盖；size tier 冲突时保留本地语义：官方尺寸白名单精确分类，自定义/未知合法尺寸按是否超过 `2560*1440` 像素阈值划为 2K/4K，非法或无法解析尺寸回退 2K。
+- 官方图片生成控制与本地 free OAuth web2api 会共同影响 `/v1/images/generations`，后续需确认 free OAuth basic 路由、分组图片开关、图片 capability scope、size tier 与 image billing mode 不互相覆盖；size tier 冲突时保留本地语义：官方尺寸白名单精确分类，自定义/未知有效尺寸按是否超过 `2560*1440` 像素阈值划为 2K/4K，长边至少 3840 且短边不超过 1024 的宽屏/高屏尺寸仅用于 billing 分级时也可按阈值归为 4K，非法、双边超约束或无法解析尺寸回退 2K。
 - OpenAI gateway rebase 时如引入 `detachStreamUpstreamContext(ctx, reqStream)`，要注意 OAuth legacy /responses 的非流式请求也必须 detach client cancel；否则 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 会失败并且生产中可能因客户端断开中断上游请求。
 - `origin/main` 仍是 rebase 前历史；如需推送，应先检查远端 SHA 并使用 `--force-with-lease`，由 GitHub Actions 验证/部署，避免本机构建或手动重启。
 
