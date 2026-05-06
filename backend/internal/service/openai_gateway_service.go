@@ -2973,7 +2973,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	for {
 		// Build upstream request
 		buildUpstreamStart := time.Now()
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+		var upstreamCtx context.Context
+		var releaseUpstreamCtx context.CancelFunc
+		if account.Type == AccountTypeOAuth {
+			upstreamCtx, releaseUpstreamCtx = detachUpstreamContext(ctx)
+		} else {
+			upstreamCtx, releaseUpstreamCtx = detachStreamUpstreamContext(ctx, reqStream)
+		}
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
 		SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
@@ -3139,6 +3145,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	defer releaseUpstreamCtx()
+
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
 		compactMappedModel := resolveOpenAICompactForwardModel(account, reqModel)
@@ -3194,7 +3203,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if policyModel == "" {
 		policyModel = reqModel
 	}
-	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, policyModel, body)
+	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(upstreamCtx, account, policyModel, body)
 	if policyErr != nil {
 		var blocked *OpenAIFastBlockedError
 		if errors.As(policyErr, &blocked) {
@@ -3268,16 +3277,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	SetOpenAITTFTTrace(c, "openai_forward_body_ms", time.Since(startTime).Milliseconds())
 	// Get access token
 	oauthTokenStart := time.Now()
-	token, _, err := s.GetAccessToken(ctx, account)
+	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	SetOpenAITTFTTrace(c, "oauth_token_ms", time.Since(oauthTokenStart).Milliseconds())
 	if err != nil {
 		return nil, err
 	}
 
 	buildUpstreamStart := time.Now()
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
-	releaseUpstreamCtx()
 	SetOpenAITTFTTrace(c, "build_upstream_ms", time.Since(buildUpstreamStart).Milliseconds())
 	if err != nil {
 		return nil, err
@@ -3311,9 +3318,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
 		// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
 		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
-			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
+			return nil, s.handleFailoverErrorResponsePassthrough(upstreamCtx, resp, c, account, body)
 		}
-		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
+		return nil, s.handleErrorResponsePassthrough(upstreamCtx, resp, c, account, body)
 	}
 
 	serviceTier := extractOpenAIServiceTierFromBody(body)
@@ -3334,7 +3341,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	} else {
-		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, reqModel, upstreamPassthroughModel)
+		result, err := s.handleNonStreamingResponsePassthrough(upstreamCtx, resp, c, reqModel, upstreamPassthroughModel)
 		if err != nil {
 			return nil, err
 		}
@@ -3346,7 +3353,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
 	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-		s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
+		s.updateCodexUsageSnapshot(upstreamCtx, account.ID, snapshot)
 	}
 
 	if usage == nil {
@@ -4020,6 +4027,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
+	_ = ctx
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		return nil, err
