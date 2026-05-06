@@ -296,8 +296,8 @@
 - 已 fetch upstream 并将本地 `main` rebase 到 `upstream/main=a1106e81`。
 - 解决 `openai_images_test.go` import 冲突：同时保留官方 streaming/client disconnect 测试需要的 `errors` 与本地 web2api conversation body 测试需要的 `encoding/json`。
 - 解决 `frontend/vite.config.ts` 冲突：保留本地轻量构建策略，不重新开启 `checker.typescript`，同时保留 build 阶段禁用 checker 的说明与 `enableBuild: false`。
-- 解决 `openai_images.go` 图片尺寸计费冲突：采用官方更严格的 `int64` 维度解析、`×` 归一、有效尺寸校验与 pixel bucket 分类，继续服务本地 4K 计费场景。
-- 解决 TTFT trace 与官方 OpenAI gateway 大改的冲突：保留官方 raw Chat Completions / stream drain / client disconnect 继续读取 usage / Messages bridge 等逻辑，同时保留本地 TTFT trace 的 account select、build upstream、http do、first SSE、first token、first chat chunk 等埋点。
+- 解决 `openai_images.go` 图片尺寸计费冲突：保留官方 `int64` 维度解析与 `×` 归一；同时恢复本地按官方尺寸白名单与 2K 像素阈值划分自定义尺寸的语义，避免 `1024x768` / `1280x768` 被误记为 1K、`2560x1600` / `3840x1024` 被误记为 2K。
+- 解决 TTFT trace 与官方 OpenAI gateway 大改的冲突：保留官方 raw Chat Completions / stream drain / client disconnect 继续读取 usage / Messages bridge 等逻辑，同时保留本地 TTFT trace 的 account select、build upstream、http do、first SSE、first token、first chat chunk 等埋点；OpenAI OAuth legacy /responses 构造上游请求时继续使用 detached context，避免客户端取消导致上游请求 context canceled。
 - OpenAI free OAuth 生图 web2api 补丁保留：`shouldUseOpenAIImagesWeb2API(account, parsed)` 仍在 OAuth images 分支中生效，`plan_type=free` 与 `openai_images_transport` 覆盖项继续存在，Responses `image_generation` tool 不可用的专用 failover 判断仍保留。
 - OpenAI usage billing 合并官方 unknown model fail-closed 与本地合法映射要求：`RecordUsage` 对无法定价的 token 模型返回错误，不再写 0 元伪成功记录；同时保留官方 `usageBillingModelCandidates` / compact alias / upstream fallback，避免误伤合法映射或上游模型计费。
 - CI 部署 workflow 保留本地 GitHub Actions 构建、测试、artifact、远程部署、健康检查与失败回滚流程。
@@ -313,13 +313,16 @@
 **rebase 风险点**：
 - 官方 OpenAI gateway/compat 改动很大，后续若继续调整 `Forward`、`ForwardAsChatCompletions`、Messages bridge、raw CC 或 streaming drain，需确认 TTFT trace 与 usage 计费仍同时生效。
 - 官方 unknown model fail-closed 语义必须继续保留，避免未知 OpenAI 模型按默认模型误扣费；同时要保留 explicit mapping、channel mapping、`BillingModel`、`UpstreamModel`、compact alias 的合法计费候选。
-- 官方图片生成控制与本地 free OAuth web2api 会共同影响 `/v1/images/generations`，后续需确认 free OAuth basic 路由、分组图片开关、图片 capability scope、size tier 与 image billing mode 不互相覆盖。
+- 官方图片生成控制与本地 free OAuth web2api 会共同影响 `/v1/images/generations`，后续需确认 free OAuth basic 路由、分组图片开关、图片 capability scope、size tier 与 image billing mode 不互相覆盖；size tier 冲突时保留本地语义：官方尺寸白名单精确分类，自定义/未知合法尺寸按是否超过 `2560*1440` 像素阈值划为 2K/4K，非法或无法解析尺寸回退 2K。
+- OpenAI gateway rebase 时如引入 `detachStreamUpstreamContext(ctx, reqStream)`，要注意 OAuth legacy /responses 的非流式请求也必须 detach client cancel；否则 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 会失败并且生产中可能因客户端断开中断上游请求。
 - `origin/main` 仍是 rebase 前历史；如需推送，应先检查远端 SHA 并使用 `--force-with-lease`，由 GitHub Actions 验证/部署，避免本机构建或手动重启。
 
 **验证结果**：
 - 已完成源码级 rebase，并解决手工冲突：`openai_images_test.go`、`frontend/vite.config.ts`、`openai_images.go`、`openai_chat_completions.go`、`openai_gateway_chat_completions.go`、`openai_gateway_service.go`。
 - 已完成轻量检查：`git diff --check` 通过；关键 grep 确认 free OAuth web2api、unknown model fail-closed/合法计费候选、GitHub Actions deploy 健康检查入口仍存在。
 - 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或 `systemctl restart`。
+- 2026-05-05 首次推送 `79faa177` 后，GitHub Actions `Build sub2api modded` 在 `go test ./...` 阶段失败，deploy job 因无 artifact 被跳过；失败点集中在图片尺寸分级期望与 OAuth legacy passthrough client cancel detach。
+- 已在后续修复中补齐：图片尺寸分级恢复本地语义；OAuth legacy /responses 构造上游请求恢复 detached context，测试用例同时确认上游 request context 未被客户端 cancel 污染；该修复仍需下一轮 GitHub Actions 验证。
 - 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建。
 - 待 GitHub Actions deploy：上传二进制、备份旧二进制、重启 `sub2api-modded.service`、宿主机 `/health` 与 `npm-app` 回源健康检查；失败由 workflow 自动回滚。
 
