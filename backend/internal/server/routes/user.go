@@ -78,6 +78,12 @@ func RegisterUserRoutes(
 			channels.GET("/available", h.AvailableChannel.List)
 		}
 
+		// 用户可用模型（非管理员接口）
+		models := authenticated.Group("/models")
+		{
+			models.GET("/available", h.AvailableModel.List)
+		}
+
 		// 使用记录
 		usage := authenticated.Group("/usage")
 		{

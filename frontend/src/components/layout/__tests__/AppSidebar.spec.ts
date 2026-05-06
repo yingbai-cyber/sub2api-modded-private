@@ -42,11 +42,14 @@ describe('AppSidebar scroll position persistence', () => {
   })
 })
 
-describe('AppSidebar available models entry', () => {
-  it('points the user-facing catalog entry to the dedicated models page', () => {
+describe('AppSidebar available catalog entries', () => {
+  it('keeps available channels and available models as separate entries and flags', () => {
+    expect(componentSource).toContain("path: '/available-channels'")
+    expect(componentSource).toContain("label: t('nav.availableChannels')")
+    expect(componentSource).toContain('featureFlag: flagAvailableChannels')
     expect(componentSource).toContain("path: '/available-models'")
     expect(componentSource).toContain("label: t('nav.availableModels')")
-    expect(componentSource).toContain('featureFlag: flagAvailableChannels')
+    expect(componentSource).toContain('featureFlag: flagAvailableModels')
   })
 })
 
