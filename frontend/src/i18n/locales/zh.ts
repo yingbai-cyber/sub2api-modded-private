@@ -1079,13 +1079,13 @@ export default {
   // Available Models (user-facing)
   availableModels: {
     title: '可用模型',
-    description: '查看你当前可访问的模型、渠道、分组和定价',
-    searchPlaceholder: '搜索模型、渠道、平台或分组...',
+    description: '查看你当前可访问分组可以支配的模型',
+    searchPlaceholder: '搜索模型、平台或分组...',
     empty: '暂无可用模型',
     filteredCount: '已显示 {count} / {total} 条',
     stats: {
       models: '可用模型',
-      channels: '可用渠道',
+      groups: '可访问分组',
       platforms: '平台数量'
     },
     columns: {
@@ -5644,6 +5644,12 @@ export default {
           cyberSessionBlock: 'cyber 会话自动屏蔽',
           cyberSessionBlockHint: '开启后,被上游网络安全策略(cyber_policy)拦截的会话将在 TTL 内被本地屏蔽,不再发往上游。仅屏蔽该会话,不影响同 Key 其他会话。',
           cyberSessionBlockTTL: '屏蔽时长(秒)',
+        },
+        availableModels: {
+          title: '可用模型',
+          description: '向已登录用户展示他们当前可访问分组可以支配的模型，不依赖可用渠道目录配置。默认开启。',
+          enabled: '启用可用模型',
+          enabledHint: '关闭后用户菜单中的可用模型入口隐藏，接口返回空数组。',
         },
         affiliate: {
           title: '邀请返利',

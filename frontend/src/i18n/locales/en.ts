@@ -5485,6 +5485,12 @@ export default {
           cyberSessionBlockHint: 'When enabled, sessions hit by upstream cyber_policy are blocked locally for the TTL and no longer forwarded. Only the offending session is blocked; other sessions on the same key are unaffected.',
           cyberSessionBlockTTL: 'Block TTL (seconds)',
         },
+        availableModels: {
+          title: 'Available Models',
+          description: 'Show logged-in users models available through their accessible groups, independent of the available channels catalog. Enabled by default.',
+          enabled: 'Enable Available Models',
+          enabledHint: 'When off, the Available Models menu entry is hidden and the endpoint returns an empty list.',
+        },
         affiliate: {
           title: 'Affiliate (Invite Rebate)',
           description: 'Existing users invite new ones; the inviter earns a percentage rebate on the invitee’s recharges. Disabled by default.',
