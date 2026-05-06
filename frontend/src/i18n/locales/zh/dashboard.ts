@@ -55,6 +55,8 @@ export default {
     batchImageAgentDesc: '复制给 Agent 的任务说明',
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
+    viewAvailableModels: '查看可用模型',
+    checkModelsAndPricing: '模型、渠道和价格一目了然',
     redeemCode: '兑换码',
     addBalanceWithCode: '使用兑换码充值'
   },
@@ -482,6 +484,27 @@ export default {
     empty: {
       title: '暂无可显示的渠道',
       description: '管理员尚未配置可监控的渠道。'
+    }
+  },
+
+  // Available Models (user-facing)
+  availableModels: {
+    title: '可用模型',
+    description: '查看你当前可访问的模型、渠道、分组和定价',
+    searchPlaceholder: '搜索模型、渠道、平台或分组...',
+    empty: '暂无可用模型',
+    filteredCount: '已显示 {count} / {total} 条',
+    stats: {
+      models: '可用模型',
+      channels: '可用渠道',
+      platforms: '平台数量'
+    },
+    columns: {
+      model: '模型',
+      platform: '平台',
+      channel: '渠道',
+      groups: '可访问分组',
+      pricing: '计费'
     }
   },
 
