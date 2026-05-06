@@ -833,6 +833,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyAvailableModelsEnabled,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
@@ -1394,6 +1395,26 @@ func ValidateEngineFingerprintSignalsJSON(raw string) error {
 	return openai.ValidateEngineFingerprintSignalsJSON(raw)
 }
 
+// AvailableModelsRuntime is the lightweight view of the available-models feature
+// switch consumed by the user-facing handler.
+type AvailableModelsRuntime struct {
+	Enabled bool
+}
+
+// GetAvailableModelsRuntime reads the available-models feature switch directly
+// from the settings store. Fail-open: on error or missing value returns Enabled=true,
+// matching the opt-out/default-on conversion-entry semantics.
+func (s *SettingService) GetAvailableModelsRuntime(ctx context.Context) AvailableModelsRuntime {
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyAvailableModelsEnabled})
+	if err != nil {
+		return AvailableModelsRuntime{Enabled: true}
+	}
+	return AvailableModelsRuntime{
+		Enabled: !isFalseSettingValue(vals[SettingKeyAvailableModelsEnabled]),
+	}
+}
+}
+
 // SetOnUpdateCallback sets a callback function to be called when settings are updated
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
 func (s *SettingService) SetOnUpdateCallback(callback func()) {
@@ -1471,6 +1492,7 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 	AvailableChannelsEnabled             bool `json:"available_channels_enabled"`
+	AvailableModelsEnabled               bool `json:"available_models_enabled"`
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
@@ -1534,6 +1556,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		AvailableModelsEnabled:               settings.AvailableModelsEnabled,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
@@ -3146,6 +3169,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
+		// Available models feature (default enabled; opt-out)
+		SettingKeyAvailableModelsEnabled: "true",
 
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled: "false",
@@ -3667,6 +3692,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+	// Available models feature (default: enabled; fail-open unless explicitly false)
+	result.AvailableModelsEnabled = !isFalseSettingValue(settings[SettingKeyAvailableModelsEnabled])
 
 	// Affiliate (邀请返利) feature (default: disabled; strict true)
 	result.AffiliateEnabled = settings[SettingKeyAffiliateEnabled] == "true"
