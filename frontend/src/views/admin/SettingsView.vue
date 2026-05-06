@@ -7246,6 +7246,30 @@
           </div>
         </div>
 
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.availableModels.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.availableModels.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.availableModels.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.availableModels.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.available_models_enabled" />
+            </div>
+          </div>
+        </div>
+
         <!-- Affiliate (邀请返利) feature card -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -9752,6 +9776,8 @@ const form = reactive<SettingsForm>({
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
   model_plaza_description: '',
+  // Available Models feature switch
+  available_models_enabled: true,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
   // Allow user view error requests
@@ -11408,6 +11434,8 @@ async function saveSettings() {
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,
       model_plaza_description: form.model_plaza_description,
+      // Available Models feature switch
+      available_models_enabled: form.available_models_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,

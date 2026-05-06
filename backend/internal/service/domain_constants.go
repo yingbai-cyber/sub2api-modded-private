@@ -524,6 +524,10 @@ const (
 	// SettingKeyOllamaCloudUsageSettings stores the opt-in global runner switch and interval.
 	SettingKeyOllamaCloudUsageSettings = "ollama_cloud_usage_settings"
 
+	// SettingKeyAvailableModelsEnabled is a DB-backed soft switch for the user-facing
+	// "Available Models" discovery page. Defaults to true because it is a conversion entry.
+	SettingKeyAvailableModelsEnabled = "available_models_enabled"
+
 	// =========================
 	// Overload Cooldown (529)
 	// =========================
