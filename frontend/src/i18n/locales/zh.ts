@@ -714,7 +714,7 @@ export default {
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     viewAvailableModels: '查看可用模型',
-    checkModelsAndPricing: '模型、渠道和价格一目了然',
+    checkModelsAndPricing: '查看你可访问分组的模型',
     redeemCode: '兑换码',
     addBalanceWithCode: '使用兑换码充值'
   },
