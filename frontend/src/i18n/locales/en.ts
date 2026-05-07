@@ -695,7 +695,7 @@ export default {
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     viewAvailableModels: 'View Available Models',
-    checkModelsAndPricing: 'See models, channels, and pricing at a glance',
+    checkModelsAndPricing: 'See models available to your groups',
     redeemCode: 'Redeem Code',
     addBalanceWithCode: 'Add balance with a code'
   },
@@ -1081,13 +1081,13 @@ export default {
   // Available Models (user-facing)
   availableModels: {
     title: 'Available Models',
-    description: 'View the models, channels, groups, and pricing currently available to you',
-    searchPlaceholder: 'Search models, channels, platforms, or groups...',
+    description: 'View the models available to your accessible groups',
+    searchPlaceholder: 'Search models, platforms, or groups...',
     empty: 'No available models',
     filteredCount: 'Showing {count} / {total}',
     stats: {
       models: 'Available Models',
-      channels: 'Channels',
+      groups: 'Accessible Groups',
       platforms: 'Platforms'
     },
     columns: {
