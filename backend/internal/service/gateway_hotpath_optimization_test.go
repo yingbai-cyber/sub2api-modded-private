@@ -113,8 +113,12 @@ type modelsListAccountRepoStub struct {
 	all     []Account
 	err     error
 
-	listByGroupCalls atomic.Int64
-	listAllCalls     atomic.Int64
+	listByGroupCalls          atomic.Int64
+	listByGroupPlatformCalls  atomic.Int64
+	listByGroupPlatformsCalls atomic.Int64
+	listAllCalls              atomic.Int64
+	listPlatformCalls         atomic.Int64
+	listPlatformsCalls        atomic.Int64
 }
 
 type stickyGatewayCacheHotpathStub struct {
@@ -166,6 +170,52 @@ func (s *modelsListAccountRepoStub) ListSchedulable(ctx context.Context) ([]Acco
 	out := make([]Account, len(s.all))
 	copy(out, s.all)
 	return out, nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	s.listByGroupPlatformCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return filterAccountsForPlatforms(s.byGroup[groupID], []string{platform}), nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	s.listByGroupPlatformsCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return filterAccountsForPlatforms(s.byGroup[groupID], platforms), nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	s.listPlatformCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return filterAccountsForPlatforms(s.all, []string{platform}), nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	s.listPlatformsCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return filterAccountsForPlatforms(s.all, platforms), nil
+}
+
+func filterAccountsForPlatforms(accounts []Account, platforms []string) []Account {
+	allowed := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		allowed[platform] = struct{}{}
+	}
+	out := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if _, ok := allowed[account.Platform]; ok {
+			out = append(out, account)
+		}
+	}
+	return out
 }
 
 func resetGatewayHotpathStatsForTest() {
@@ -509,12 +559,12 @@ func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) 
 
 	models1 := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
 	require.Equal(t, []string{"claude-3-5-haiku", "claude-3-5-sonnet"}, models1)
-	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+	require.Equal(t, int64(1), repo.listByGroupPlatformsCalls.Load())
 
 	// TTL 内再次请求应命中缓存，不回源。
 	models2 := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
 	require.Equal(t, models1, models2)
-	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+	require.Equal(t, int64(1), repo.listByGroupPlatformsCalls.Load())
 
 	// 更新仓储数据，但缓存未失效前应继续返回旧值。
 	repo.byGroup[groupID] = []Account{
@@ -530,12 +580,12 @@ func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) 
 	}
 	models3 := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
 	require.Equal(t, []string{"claude-3-5-haiku", "claude-3-5-sonnet"}, models3)
-	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+	require.Equal(t, int64(1), repo.listByGroupPlatformsCalls.Load())
 
 	svc.InvalidateAvailableModelsCache(&groupID, PlatformAnthropic)
 	models4 := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
 	require.Equal(t, []string{"claude-3-7-sonnet"}, models4)
-	require.Equal(t, int64(2), repo.listByGroupCalls.Load())
+	require.Equal(t, int64(2), repo.listByGroupPlatformsCalls.Load())
 
 	hit, miss, store := GatewayModelsListCacheStats()
 	require.Equal(t, int64(2), hit)
@@ -555,6 +605,10 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 		modelsListCacheTTL: time.Minute,
 	}
 	require.Nil(t, svcErr.GetAvailableModels(context.Background(), nil, ""))
+	models, useDefault, err := svcErr.GetAvailableModelsForDiscovery(context.Background(), nil, "")
+	require.Error(t, err)
+	require.Nil(t, models)
+	require.False(t, useDefault)
 
 	okRepo := &modelsListAccountRepoStub{
 		all: []Account{
@@ -583,9 +637,126 @@ func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 		modelsListCache:    gocache.New(time.Minute, time.Minute),
 		modelsListCacheTTL: time.Minute,
 	}
-	models := svcOK.GetAvailableModels(context.Background(), nil, "")
+	models = svcOK.GetAvailableModels(context.Background(), nil, "")
 	require.Equal(t, []string{"claude-3-5-sonnet", "gemini-2.5-pro"}, models)
 	require.Equal(t, int64(1), okRepo.listAllCalls.Load())
+}
+
+func TestGetAvailableModelsForDiscovery_DoesNotFallbackWhenNoAccounts(t *testing.T) {
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+	groupID := int64(9)
+
+	models, useDefault, err := svc.GetAvailableModelsForDiscovery(context.Background(), &groupID, PlatformAnthropic)
+	require.NoError(t, err)
+	require.Empty(t, models)
+	require.False(t, useDefault)
+}
+
+func TestGetAvailableModelsForDiscovery_FallbackOnlyWhenAccountsHaveNoMappings(t *testing.T) {
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			9: {{ID: 1, Platform: PlatformAnthropic}},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+	groupID := int64(9)
+
+	models, useDefault, err := svc.GetAvailableModelsForDiscovery(context.Background(), &groupID, PlatformAnthropic)
+	require.NoError(t, err)
+	require.Empty(t, models)
+	require.True(t, useDefault)
+}
+
+func TestGetAvailableModels_IncludesMixedAntigravityAccountsForNativeDiscovery(t *testing.T) {
+	groupID := int64(9)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: PlatformAnthropic,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"claude-3-5-sonnet": "claude-3-5-sonnet",
+						},
+					},
+				},
+				{
+					ID:       2,
+					Platform: PlatformAntigravity,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"claude-opus-4-7": "claude-opus-4-7",
+						},
+					},
+					Extra: map[string]any{"mixed_scheduling": true},
+				},
+				{
+					ID:       3,
+					Platform: PlatformAntigravity,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"claude-haiku-4-5": "claude-haiku-4-5",
+						},
+					},
+				},
+			},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	models := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
+	require.Equal(t, []string{"claude-3-5-sonnet", "claude-opus-4-7"}, models)
+	require.Equal(t, int64(1), repo.listByGroupPlatformsCalls.Load())
+}
+
+func TestGetAvailableModels_FiltersMixedAntigravityModelsByNativePlatform(t *testing.T) {
+	groupID := int64(9)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: PlatformAntigravity,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"claude-opus-4-7":     "claude-opus-4-7",
+							"gemini-3-flash":      "gemini-3-flash",
+							"gpt-oss-120b-medium": "gpt-oss-120b-medium",
+						},
+					},
+					Extra: map[string]any{"mixed_scheduling": true},
+				},
+			},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	anthropicModels := svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic)
+	require.Equal(t, []string{"claude-opus-4-7"}, anthropicModels)
+
+	svc.InvalidateAvailableModelsCache(&groupID, PlatformAnthropic)
+	geminiModels := svc.GetAvailableModels(context.Background(), &groupID, PlatformGemini)
+	require.Equal(t, []string{"gemini-3-flash"}, geminiModels)
 }
 
 func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
