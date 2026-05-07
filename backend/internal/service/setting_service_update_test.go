@@ -296,6 +296,19 @@ func TestSettingService_UpdateSettings_TablePreferences(t *testing.T) {
 	require.Equal(t, "[20,100]", repo.updates[SettingKeyTablePageSizeOptions])
 }
 
+func TestSettingService_UpdateSettings_AvailableCatalogFeatureSwitches(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		AvailableChannelsEnabled: true,
+		AvailableModelsEnabled:   false,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyAvailableChannelsEnabled])
+	require.Equal(t, "false", repo.updates[SettingKeyAvailableModelsEnabled])
+}
+
 func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
