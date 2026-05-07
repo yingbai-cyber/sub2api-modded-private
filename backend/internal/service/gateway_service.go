@@ -1390,83 +1390,107 @@ func mixedListingModelAllowed(groupPlatform, model string) bool {
 	return groupPlatform == PlatformGemini && isAntigravityGeminiModel(model)
 }
 
+type availableModelsQueryResult struct {
+	models             []string
+	useDefaultFallback bool
+}
+
+type availableModelsCacheEntry struct {
+	models             []string
+	useDefaultFallback bool
+}
+
+// GetAvailableModels returns the list of models available for a group.
+// It preserves the legacy /v1/models behavior: lookup errors, empty account sets,
+// and accounts without explicit model mappings all return nil so callers can fall
+// back to their historical default model catalog.
 func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	result, err := s.getAvailableModels(ctx, groupID, platform)
+	if err != nil {
+		return nil
+	}
+	return result.models
+}
+
+// GetAvailableModelsForDiscovery returns models for the user-facing discovery page.
+// The boolean return value is true only when accounts exist but none define a
+// model mapping, which is the only case where the UI should fall back to defaults.
+func (s *GatewayService) GetAvailableModelsForDiscovery(ctx context.Context, groupID *int64, platform string) ([]string, bool, error) {
+	result, err := s.getAvailableModels(ctx, groupID, platform)
+	if err != nil {
+		return nil, false, err
+	}
+	return result.models, result.useDefaultFallback, nil
+}
+
+func (s *GatewayService) getAvailableModels(ctx context.Context, groupID *int64, platform string) (availableModelsQueryResult, error) {
 	cacheKey := modelsListCacheKey(groupID, platform)
 	if s.modelsListCache != nil {
 		if cached, found := s.modelsListCache.Get(cacheKey); found {
+			if entry, ok := cached.(availableModelsCacheEntry); ok {
+				modelsListCacheHitTotal.Add(1)
+				return availableModelsQueryResult{
+					models:             cloneStringSlice(entry.models),
+					useDefaultFallback: entry.useDefaultFallback,
+				}, nil
+			}
 			if models, ok := cached.([]string); ok {
 				modelsListCacheHitTotal.Add(1)
-				return cloneStringSlice(models)
+				return availableModelsQueryResult{models: cloneStringSlice(models)}, nil
 			}
 		}
 	}
 	modelsListCacheMissTotal.Add(1)
 
-	var accounts []Account
-	var err error
-
-	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulable(ctx)
+	accounts, err := s.listAccountsForAvailableModels(ctx, groupID, platform)
+	if err != nil {
+		return availableModelsQueryResult{}, err
+	}
+	if len(accounts) == 0 {
+		return availableModelsQueryResult{}, nil
 	}
 
-	if err != nil || len(accounts) == 0 {
-		return nil
-	}
-
-	// Filter by platform if specified. Mixed scheduling (a gemini group routing
-	// to antigravity accounts) is honoured here as well, so the advertised list
-	// stays in sync with what the request path can actually serve.
-	if platform != "" {
-		filtered := make([]Account, 0)
-		for _, acc := range accounts {
-			if acc.Platform == platform || mixedListingAccountAllowed(platform, &acc) {
-				filtered = append(filtered, acc)
-			}
-		}
-		accounts = filtered
-	}
-
-	// Collect unique models from all accounts
+	// Collect unique models from all accounts.
 	modelSet := make(map[string]struct{})
 	hasAnyMapping := false
 
-	for _, acc := range accounts {
+	for i := range accounts {
 		// Passthrough routing accepts models independently of model_mapping. A stale
 		// mapping on any eligible passthrough account therefore cannot define the
-		// public whitelist; return nil so the handler uses its default model set.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+		// public whitelist; return empty so the handler uses its default model set.
+		if platform == PlatformOpenAI && accounts[i].IsOpenAIPassthroughEnabled() {
 			if s.modelsListCache != nil {
 				s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
 				modelsListCacheStoreTotal.Add(1)
 			}
-			return nil
+			return availableModelsQueryResult{}, nil
 		}
 
-		mapping := acc.GetModelMapping()
-		for model := range mapping {
-			// Accounts pulled in through mixed scheduling only contribute the
-			// models that belong to the listing platform (e.g. an antigravity
-			// account's claude-* mappings must not surface on a gemini group).
-			if platform != "" && acc.Platform != platform && !mixedListingModelAllowed(platform, model) {
-				continue
-			}
-			modelSet[model] = struct{}{}
+		mapping := accounts[i].GetModelMapping()
+		if len(mapping) > 0 {
 			hasAnyMapping = true
+			for model := range mapping {
+				if availableModelMatchesDiscoveryPlatform(accounts[i], platform, model) {
+					modelSet[model] = struct{}{}
+				}
+			}
 		}
 	}
 
-	// If no account has model_mapping, return nil (use default)
+	// If accounts exist but no account has a model_mapping, caller may use defaults.
 	if !hasAnyMapping {
 		if s.modelsListCache != nil {
-			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
+			s.modelsListCache.Set(cacheKey, availableModelsCacheEntry{useDefaultFallback: true}, s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
 		}
-		return nil
+		return availableModelsQueryResult{useDefaultFallback: true}, nil
 	}
 
-	// Convert to slice
+	if len(modelSet) == 0 {
+		return availableModelsQueryResult{}, nil
+	}
+
+	// Convert to slice.
 	models := make([]string, 0, len(modelSet))
 	for model := range modelSet {
 		models = append(models, model)
@@ -1478,10 +1502,68 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 
 	if s.modelsListCache != nil {
-		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
+		s.modelsListCache.Set(cacheKey, availableModelsCacheEntry{models: cloneStringSlice(models)}, s.modelsListCacheTTL)
 		modelsListCacheStoreTotal.Add(1)
 	}
-	return cloneStringSlice(models)
+	return availableModelsQueryResult{models: cloneStringSlice(models)}, nil
+}
+
+func availableModelMatchesDiscoveryPlatform(account Account, platform string, model string) bool {
+	normalizedPlatform := strings.TrimSpace(platform)
+	if normalizedPlatform == "" || account.Platform == normalizedPlatform {
+		return true
+	}
+	if mixedListingModelAllowed(normalizedPlatform, model) {
+		return true
+	}
+	if account.Platform != PlatformAntigravity {
+		return true
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch normalizedPlatform {
+	case PlatformAnthropic:
+		return strings.HasPrefix(model, "claude")
+	case PlatformGemini:
+		return strings.HasPrefix(model, "gemini")
+	default:
+		return true
+	}
+}
+
+func (s *GatewayService) listAccountsForAvailableModels(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
+	normalizedPlatform := strings.TrimSpace(platform)
+	if normalizedPlatform == "" {
+		if groupID != nil {
+			return s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
+		}
+		return s.accountRepo.ListSchedulable(ctx)
+	}
+
+	if normalizedPlatform == PlatformAnthropic || normalizedPlatform == PlatformGemini {
+		platforms := []string{normalizedPlatform, PlatformAntigravity}
+		var accounts []Account
+		var err error
+		if groupID != nil {
+			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+		} else {
+			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		}
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]Account, 0, len(accounts))
+		for _, acc := range accounts {
+			if acc.Platform == normalizedPlatform || mixedListingAccountAllowed(normalizedPlatform, &acc) || (acc.Platform == PlatformAntigravity && acc.IsMixedSchedulingEnabled()) {
+				filtered = append(filtered, acc)
+			}
+		}
+		return filtered, nil
+	}
+
+	if groupID != nil {
+		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, normalizedPlatform)
+	}
+	return s.accountRepo.ListSchedulableByPlatform(ctx, normalizedPlatform)
 }
 
 func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, groupID int64, model string) (CompositeModelOwnership, error) {
