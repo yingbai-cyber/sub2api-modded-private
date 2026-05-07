@@ -97,8 +97,12 @@ func (h *AvailableModelHandler) List(c *gin.Context) {
 		if platform == "" {
 			continue
 		}
-		models := h.gatewayService.GetAvailableModels(c.Request.Context(), &g.ID, platform)
-		if len(models) == 0 {
+		models, useDefaultFallback, err := h.gatewayService.GetAvailableModelsForDiscovery(c.Request.Context(), &g.ID, platform)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if len(models) == 0 && useDefaultFallback {
 			models = defaultModelIDsForPlatform(platform)
 		}
 		modelItems := toUserAvailableModels(platform, models)
