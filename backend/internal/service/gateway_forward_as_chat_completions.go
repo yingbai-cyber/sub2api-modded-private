@@ -123,78 +123,131 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		proxyURL = account.Proxy.URL()
 	}
 
-	// 10. Build upstream request
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
-	releaseUpstreamCtx()
-	if err != nil {
-		return nil, fmt.Errorf("build upstream request: %w", err)
-	}
+	// Extract reasoning effort once (input invariant across attempts)
+	reasoningEffort := extractCCReasoningEffortFromBody(body)
 
-	// 11. Send request
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
+	// 10-14: 发上游 + 读流的完整流程抽为闭包，外层做空流 retry。
+	// 空流场景下 handler 内部保证 HTTP headers 从未写出，因此 retry 对
+	// 客户端完全透明；其他错误（非空流失败、上游 4xx/5xx、failover）都
+	// 一次性返回，不进入 retry 路径。
+	attemptOnce := func(attemptCtx context.Context, attemptNum int) (*ForwardResult, error) {
+		// 10. Build upstream request
+		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(attemptCtx, reqStream)
+		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+		releaseUpstreamCtx()
+		if err != nil {
+			return nil, fmt.Errorf("build upstream request: %w", err)
 		}
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
-	}
-	defer func() { _ = resp.Body.Close() }()
 
-	// 12. Handle error response with failover
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
-		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
-		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		// 11. Send request
+		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		if err != nil {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
 				AccountName:        account.Name,
-				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "failover",
-				Message:            upstreamMsg,
+				UpstreamStatusCode: 0,
+				Kind:               "request_error",
+				Message:            safeErr,
 			})
-			if s.rateLimitService != nil {
-				s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream request failed")
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+		respClosed := false
+		defer func() {
+			if !respClosed {
+				_ = resp.Body.Close()
 			}
-			return nil, &UpstreamFailoverError{
-				StatusCode:   resp.StatusCode,
-				ResponseBody: respBody,
+		}()
+
+		// 12. Handle error response with failover
+		if resp.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			_ = resp.Body.Close()
+			respClosed = true
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+
+			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "failover",
+					Message:            upstreamMsg,
+				})
+				if s.rateLimitService != nil {
+					s.rateLimitService.HandleUpstreamError(attemptCtx, account, resp.StatusCode, resp.Header, respBody)
+				}
+				return nil, &UpstreamFailoverError{
+					StatusCode:   resp.StatusCode,
+					ResponseBody: respBody,
+				}
 			}
+
+			writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
+			return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 		}
 
-		writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
-		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+		// 13. Handle normal response
+		if clientStream {
+			return s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
+		}
+		return s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 	}
 
-	// 13. Extract reasoning effort from CC request body
-	reasoningEffort := extractCCReasoningEffortFromBody(body)
-
-	// 14. Handle normal response
-	// Read Anthropic SSE → convert to Responses events → convert to CC format
 	var result *ForwardResult
 	var handleErr error
-	if clientStream {
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
-	} else {
-		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+retryLoop:
+	for attempt := 1; attempt <= emptyStreamMaxAttempts; attempt++ {
+		result, handleErr = attemptOnce(ctx, attempt)
+
+		// 只有 ErrUpstreamEmptyStream 触发 retry；其他错误（含 failover）立即返回。
+		if !errors.Is(handleErr, ErrUpstreamEmptyStream) {
+			break
+		}
+
+		if attempt < emptyStreamMaxAttempts {
+			logger.L().Warn("forward_as_cc: upstream empty stream, retrying",
+				zap.Int64("account_id", account.ID),
+				zap.String("model", mappedModel),
+				zap.Int("attempt", attempt),
+				zap.Int("max_attempts", emptyStreamMaxAttempts),
+			)
+			select {
+			case <-time.After(emptyStreamRetryDelay):
+			case <-ctx.Done():
+				handleErr = ctx.Err()
+				break retryLoop
+			}
+			continue
+		}
+
+		// 重试耗尽：统一由外层写 502 + 记 ops_error。
+		logger.L().Warn("forward_as_cc: upstream empty stream after all retries",
+			zap.Int64("account_id", account.ID),
+			zap.String("model", mappedModel),
+			zap.Int("attempts", emptyStreamMaxAttempts),
+		)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: 200,
+			Kind:               "empty_stream",
+			Message:            "upstream returned empty stream after retries",
+		})
+		writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream returned empty stream")
+		handleErr = fmt.Errorf("upstream empty stream after %d attempts", emptyStreamMaxAttempts)
 	}
 
 	return result, handleErr
@@ -303,8 +356,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	}
 
 	if finalResp == nil {
-		writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
-		return nil, fmt.Errorf("upstream stream ended without response")
+		// 上游 200 但流里从未出现 message_start。不向客户端写任何错误，
+		// 交给外层 retry 循环决定是否重试；耗尽尝试次数后由外层统一写 502。
+		return nil, ErrUpstreamEmptyStream
 	}
 
 	// Update usage from accumulated delta
@@ -346,6 +400,10 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 // handleCCStreamingFromAnthropic reads Anthropic SSE events, converts each
 // to Responses events, then to Chat Completions chunks, and writes them.
+//
+// 关键不变量：HTTP 200 + SSE headers 的写入推迟到首个有效 CC chunk 生成之前。
+// 这样"上游 200 但整个流没有 message_start"的空回场景能干净返回
+// ErrUpstreamEmptyStream，外层 retry 时客户端还没收到任何字节，可以安全重试。
 func (s *GatewayService) handleCCStreamingFromAnthropic(
 	resp *http.Response,
 	c *gin.Context,
@@ -357,14 +415,23 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	if s.responseHeaderFilter != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	// 延迟到首个有效 chunk 才写 headers。headersWritten 作为单一事实来源，
+	// 判定"是否已对客户端承诺 200"；retry 窗口依赖它。
+	headersWritten := false
+	writeStreamHeadersOnce := func() {
+		if headersWritten {
+			return
+		}
+		headersWritten = true
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		}
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		c.Writer.WriteHeader(http.StatusOK)
 	}
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
 
 	// Use Anthropic→Responses state machine, then convert Responses→CC
 	anthState := apicompat.NewAnthropicEventToResponsesState()
@@ -402,6 +469,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if err != nil {
 			return false
 		}
+		// 首次确认要写业务 chunk → 提交 200 + SSE headers，之后 retry 窗口关闭。
+		writeStreamHeadersOnce()
 		// Reverse tool name mapping: fake → real, per-chunk bytes.Replace.
 		// c 可能持有请求侧注入的 ToolNameRewrite；无则仅做静态前缀还原。
 		out := string(reverseToolNamesIfPresent(c, []byte(sse)))
@@ -473,6 +542,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+
+	// 空流检测：整个循环没触发过任何业务 chunk（headers 从未写出），
+	// 上游实质性失败但返 200，交给外层 retry。外层耗尽尝试次数后写 502。
+	if !headersWritten {
+		return nil, ErrUpstreamEmptyStream
 	}
 
 	// Finalize both state machines
