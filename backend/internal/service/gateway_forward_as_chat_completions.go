@@ -100,6 +100,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 	if shouldMimicClaudeCode {
 		anthropicBody = s.applyClaudeCodeOAuthMimicryToBody(ctx, c, account, anthropicBody, anthropicReq.System, mappedModel)
+	} else {
+		// 非 mimicry 分支（如 APIKey 账号）：按 body 特征自动补缓存断点。
+		// Chat Completions → Anthropic 转换产出的 body 不含 cache_control，
+		// ensureCacheBreakpointsIfMissing 会补上标准断点，让 Anthropic prompt
+		// caching 在多轮 Chat Completions 请求间命中。
+		anthropicBody = s.ensureCacheBreakpointsIfMissing(c, anthropicBody)
 	}
 
 	// 7. Enforce cache_control block limit
