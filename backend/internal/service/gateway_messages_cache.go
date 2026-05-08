@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -158,4 +160,132 @@ func injectCacheControlOnLastContentBlock(body []byte, idx int, msg *gjson.Resul
 // 用于 sjson.SetRawBytes 场景下手工拼 JSON。
 func mustJSONString(s string) string {
 	return fmt.Sprintf("%q", s)
+}
+
+// hasAnyCacheControl 判断请求体是否已经带有任何 cache_control 断点。
+//
+// 用途：区分"自带完整缓存断点的真实 Claude Code 客户端"与"伪装成 Claude Code
+// 但不打断点的中继（如 kiro-go）"。前者代理不应再动 body；后者必须由代理补
+// 上断点，否则 Anthropic prompt caching 不会命中，成本是 cache_read 的 10 倍。
+//
+// 检测路径覆盖 Anthropic 文档允许放 cache_control 的所有位置：
+//   - $.cache_control                    （极少见，但 TTL override 用）
+//   - $.system.cache_control             （system 为 object 时）
+//   - $.system[*].cache_control          （system 为 array 时）
+//   - $.messages[*].content[*].cache_control
+//   - $.messages[*].content.cache_control（防御性：content 为 object 的异常形态）
+//   - $.tools[*].cache_control
+//
+// 返回 true 只要命中任意一处。为了性能，先用 bytes.Contains 做纯字节预筛：
+// 绝大多数 body 根本不含 "cache_control" 字符串，直接返回 false，避免 gjson
+// 解析开销。
+func hasAnyCacheControl(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	if !bytes.Contains(body, []byte(`"cache_control"`)) {
+		return false
+	}
+
+	if ccExists(gjson.GetBytes(body, "cache_control")) {
+		return true
+	}
+	if ccExists(gjson.GetBytes(body, "system.cache_control")) {
+		return true
+	}
+
+	sys := gjson.GetBytes(body, "system")
+	if sys.IsArray() {
+		hit := false
+		sys.ForEach(func(_, block gjson.Result) bool {
+			if ccExists(block.Get("cache_control")) {
+				hit = true
+				return false
+			}
+			return true
+		})
+		if hit {
+			return true
+		}
+	}
+
+	msgs := gjson.GetBytes(body, "messages")
+	if msgs.IsArray() {
+		hit := false
+		msgs.ForEach(func(_, msg gjson.Result) bool {
+			content := msg.Get("content")
+			if content.IsArray() {
+				content.ForEach(func(_, block gjson.Result) bool {
+					if ccExists(block.Get("cache_control")) {
+						hit = true
+						return false
+					}
+					return true
+				})
+			} else if content.IsObject() && ccExists(content.Get("cache_control")) {
+				hit = true
+			}
+			return !hit
+		})
+		if hit {
+			return true
+		}
+	}
+
+	tools := gjson.GetBytes(body, "tools")
+	if tools.IsArray() {
+		hit := false
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if ccExists(tool.Get("cache_control")) {
+				hit = true
+				return false
+			}
+			return true
+		})
+		if hit {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ccExists 只接受真正存在且非 null 的 cache_control 对象，避免 gjson 对
+// 不存在路径返回零值带来的误判。
+func ccExists(r gjson.Result) bool {
+	return r.Exists() && r.Raw != "" && r.Raw != "null"
+}
+
+// ensureCacheBreakpointsIfMissing 在"账号不走 OAuth mimicry 分支、但 body
+// 里没有任何 cache_control 断点"的情况下，代理帮客户端补上标准断点，使
+// Anthropic prompt caching 正常命中。
+//
+// 调用场景：
+//   - APIKey 账号（shouldMimicClaudeCode 为 false）
+//   - OAuth 账号 + 真实 Claude Code 客户端自己忘打断点（极少见但无副作用）
+//   - 任意"伪装成 Claude Code 但不打断点的中继"（如 kiro-go）
+//
+// 副作用：
+//   - 仅在 hasAnyCacheControl(body) == false 时动作，保证幂等
+//   - 与 mimicry 分支行为一致：strip → breakpoints → tool rewrite 或 tools[-1]
+//   - 工具名 rewrite 结果会写入 gin.Context，供响应侧反向还原
+//
+// 不做的事：
+//   - 不重写 system prompt、不注入 metadata.user_id（那是 OAuth mimicry 专属）
+//   - 不检查账号类型（调用方负责判断，这里只关心 body 是否已有断点）
+func (s *GatewayService) ensureCacheBreakpointsIfMissing(c *gin.Context, body []byte) []byte {
+	if len(body) == 0 || hasAnyCacheControl(body) {
+		return body
+	}
+	body = stripMessageCacheControl(body) // 幂等保险：极端情况下客户端只给 tools 打了但前面还有残留
+	body = addMessageCacheBreakpoints(body)
+	if rw := buildToolNameRewriteFromBody(body); rw != nil {
+		body = applyToolNameRewriteToBody(body, rw)
+		if c != nil {
+			c.Set(toolNameRewriteKey, rw)
+		}
+	} else {
+		body = applyToolsLastCacheBreakpoint(body)
+	}
+	return body
 }
