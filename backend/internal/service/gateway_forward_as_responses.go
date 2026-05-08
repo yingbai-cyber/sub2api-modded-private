@@ -105,6 +105,12 @@ func (s *GatewayService) ForwardAsResponses(
 
 	if shouldMimicClaudeCode {
 		anthropicBody = s.applyClaudeCodeOAuthMimicryToBody(ctx, c, account, anthropicBody, anthropicReq.System, mappedModel)
+	} else {
+		// 非 mimicry 分支（如 APIKey 账号）：按 body 特征自动补缓存断点。
+		// 这里的 anthropicBody 是 ResponsesToAnthropicRequest 新生成的，一定不含
+		// cache_control，所以 ensureCacheBreakpointsIfMissing 必然会补断点，使
+		// Anthropic prompt caching 能在多轮 Responses 请求之间命中。
+		anthropicBody = s.ensureCacheBreakpointsIfMissing(c, anthropicBody)
 	}
 
 	// 7. Enforce cache_control block limit

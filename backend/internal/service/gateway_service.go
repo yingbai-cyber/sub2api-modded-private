@@ -2200,6 +2200,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				return nil, err
 			}
 		}
+	} else {
+		// 非 mimicry 分支（APIKey 账号，或真实 Claude Code 客户端命中 OAuth）：
+		// 按 body 自身特征决定是否补断点。body 里若已有任何 cache_control（真实
+		// Claude Code 客户端必有），完全不动；没有则代理帮补上，使"伪装成 Claude
+		// Code 但不打断点的中继（如 kiro-go）"也能命中 Anthropic prompt caching。
+		// 见 ensureCacheBreakpointsIfMissing 的 godoc。
+		body = s.ensureCacheBreakpointsIfMissing(c, body)
 	}
 
 	// 客户端 dateline 归一化：仅对 Anthropic OAuth/SetupToken 账号生效。
@@ -7281,6 +7288,9 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 				return err
 			}
 		}
+	} else {
+		// 非 mimicry 分支：按 body 特征自动补缓存断点（见 /v1/messages 主路径注释）。
+		body = s.ensureCacheBreakpointsIfMissing(c, body)
 	}
 
 	// Antigravity 账户不支持 count_tokens，返回 404 让客户端 fallback 到本地估算。
