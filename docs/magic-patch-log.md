@@ -327,6 +327,44 @@
 - 补充修复 `8543f268` 覆盖 oversized image billing tier 边界：`3840x3840` 等双边超约束尺寸回退 `2K`，`3840x1024` / `4096x1024` 等长边大且短边不超过 1024 的宽屏/高屏尺寸按像素阈值归为 `4K`。
 - GitHub Actions 最终验证通过：`8543f268` 对应 `CI` success、`Build sub2api modded` success、`Security Scan` success；`Build sub2api modded` 已完成前端构建、嵌入式后端二进制构建、artifact 上传、远程部署、服务重启与健康检查。
 
+### 2026-05-12：跟进 upstream v0.1.124/v0.1.125 并保留本地补丁
+**类型**：上游同步 / rebase / 冲突处理
+
+**背景**：
+- 官方 `upstream/main` 从 `a1106e81` 更新到 `33db04fb`，包含 tag `v0.1.124`（`f3577bc6`）与 `v0.1.125`（`a466e80e`）及后续修复提交。
+- 本次官方更新包含 Codex image bridge 控制、OAuth 账号导入优化、登录注册条款确认、GitHub/Google 邮箱快捷登录、内容审计风控中心、thinking beta injection 默认关闭、Anthropic passthrough timeout 稳定性修复、模型白名单更新、CI 安全与 lint 修复等。
+- 本地分支包含 free OAuth 生图 web2api、图片尺寸计费分级、OAuth detach、TTFT trace、probe-models、available models、EasyPay ezfpy、GitHub Actions 部署适配等补丁，需要 rebase 到最新官方主线。
+- 当前仓库实际维护分支仍为 `main`；rebase 后本地 `main` 基于 `upstream/main=33db04fb`，39 个本地 commit 全部 replay。
+
+**影响文件（冲突解决）**：
+- `frontend/src/i18n/locales/en.ts`
+- `frontend/src/i18n/locales/zh.ts`
+- `frontend/src/stores/app.ts`
+- `frontend/src/views/admin/SettingsView.vue`
+- `backend/internal/server/api_contract_test.go`
+
+**改动摘要**：
+- 已 fetch upstream 并将本地 `main` rebase 到 `upstream/main=33db04fb`。
+- 解决 5 个文件的冲突，均为"两个新功能区块同位置插入"模式：官方新增 `availableModels` 功能区块与本地已有的 `riskControl` 区块在同一位置，两者都保留。
+- 冲突策略：i18n 文案、store 默认值、SettingsView card、api_contract_test 期望 JSON 中同时保留 `risk_control_enabled` 和 `available_models_enabled`。
+- 本地所有关键补丁（web2api 路由、size tier 计费、OAuth detach、probe-models、TTFT trace）经 rebase 后自动重放，无需手工修改。
+
+**与官方差异原因**：
+- 官方新增了 Codex image bridge、风控中心、邮箱快捷登录等功能，但本地仍需保留 free OAuth 生图 web2api、TTFT trace、图片尺寸计费分级、probe-models 等魔改。
+- 本地 `risk_control_enabled` 设置项来自官方本次更新的风控中心功能，与本地 `available_models_enabled` 并存无冲突。
+
+**rebase 风险点**：
+- 官方新增 `codex_image_generation_bridge` 控制（Codex image bridge toggle），后续需确认该开关与本地 free OAuth web2api 路由不互相覆盖；当前两者作用于不同账号类型（bridge 针对 Codex 账号，web2api 针对 free OAuth 账号）。
+- 官方 `stop default redact thinking beta injection` 修改了 gateway beta 参数注入逻辑，后续若继续调整 beta/thinking 参数，需确认不影响本地 TTFT trace 的 stage 覆盖。
+- 官方 OAuth 账号导入优化与本地 probe-models 功能同属 admin/account 路径，后续若继续调整 account handler/wire，需关注冲突。
+
+**验证结果**：
+- 已完成源码级 rebase，解决 5 个文件手工冲突。
+- 关键 grep 确认：web2api 路由、size tier 计费、OAuth detach、probe-models handler 均完好。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
