@@ -1240,6 +1240,44 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
+              <!-- Probe Models Button -->
+              <div v-if="apiKeyValue.trim() && form.platform !== 'gemini'" class="mb-3">
+                <button
+                  type="button"
+                  :disabled="probingModels"
+                  @click="handleProbeModels"
+                  class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/40"
+                >
+                  <svg
+                    v-if="!probingModels"
+                    class="mr-1.5 h-3.5 w-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    class="mr-1.5 h-3.5 w-3.5 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  {{ probingModels ? t('admin.accounts.probeModelsLoading') : t('admin.accounts.probeModels') }}
+                </button>
+                <span class="ml-2 text-xs text-gray-400 dark:text-gray-500">
+                  {{ t('admin.accounts.probeModelsHint') }}
+                </span>
+              </div>
+
               <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -3698,6 +3736,7 @@ const syncPreviewCredentials = computed(() => {
   }
 })
 
+const probingModels = ref(false)
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -4901,6 +4940,36 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
   const file = event.dataTransfer?.files?.[0]
   if (!file) return
   applyVertexServiceAccountJson(await file.text())
+}
+
+// 探测上游模型列表
+const handleProbeModels = async () => {
+  if (!apiKeyValue.value.trim()) return
+  probingModels.value = true
+  try {
+    const result = await adminAPI.accounts.probeModels({
+      platform: form.platform,
+      base_url: apiKeyBaseUrl.value.trim() || undefined,
+      api_key: apiKeyValue.value.trim(),
+      proxy_id: form.proxy_id || undefined
+    })
+    if (result.models && result.models.length > 0) {
+      // 合并到已有白名单（去重）
+      const existing = new Set(allowedModels.value)
+      for (const model of result.models) {
+        existing.add(model)
+      }
+      allowedModels.value = Array.from(existing)
+      appStore.showSuccess(t('admin.accounts.probeModelsSuccess', { count: result.models.length }))
+    } else {
+      appStore.showWarning(t('admin.accounts.probeModelsEmpty'))
+    }
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || e?.message || t('admin.accounts.probeModelsFailed')
+    appStore.showError(`${t('admin.accounts.probeModelsFailed')}: ${msg}`)
+  } finally {
+    probingModels.value = false
+  }
 }
 
 const handleSubmit = async () => {
