@@ -2731,6 +2731,217 @@ func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, domain.DefaultAntigravityModelMapping)
 }
 
+// ProbeModelsRequest 探测上游模型列表的请求
+type ProbeModelsRequest struct {
+	Platform string `json:"platform" binding:"required,oneof=anthropic openai gemini"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key" binding:"required"`
+	ProxyID  *int64 `json:"proxy_id"`
+}
+
+// ProbeModels 探测上游 API 的可用模型列表
+// POST /api/v1/admin/accounts/probe-models
+func (h *AccountHandler) ProbeModels(c *gin.Context) {
+	var req ProbeModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+
+	// 确定 base URL
+	baseURL := strings.TrimRight(req.BaseURL, "/")
+	if baseURL == "" {
+		switch req.Platform {
+		case "anthropic":
+			baseURL = "https://api.anthropic.com"
+		case "openai":
+			baseURL = "https://api.openai.com"
+		case "gemini":
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+	}
+
+	// 获取代理 URL
+	var proxyURL string
+	if req.ProxyID != nil && *req.ProxyID > 0 {
+		proxy, err := h.adminService.GetProxy(c.Request.Context(), *req.ProxyID)
+		if err != nil {
+			response.BadRequest(c, "failed to get proxy: "+err.Error())
+			return
+		}
+		proxyURL = proxy.URL()
+	}
+
+	// 构造 HTTP 客户端
+	client, err := service.NewProbeHTTPClient(proxyURL, 15*time.Second)
+	if err != nil {
+		response.InternalError(c, "failed to create http client: "+err.Error())
+		return
+	}
+
+	// 根据平台构造请求
+	var modelsURL string
+	var httpReq *http.Request
+
+	switch req.Platform {
+	case "anthropic":
+		modelsURL = baseURL + "/v1/models"
+		httpReq, err = http.NewRequestWithContext(c.Request.Context(), http.MethodGet, modelsURL, nil)
+		if err != nil {
+			response.InternalError(c, "failed to create request: "+err.Error())
+			return
+		}
+		httpReq.Header.Set("x-api-key", req.APIKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+		httpReq.Header.Set("Content-Type", "application/json")
+
+	case "openai":
+		modelsURL = baseURL + "/v1/models"
+		httpReq, err = http.NewRequestWithContext(c.Request.Context(), http.MethodGet, modelsURL, nil)
+		if err != nil {
+			response.InternalError(c, "failed to create request: "+err.Error())
+			return
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+	case "gemini":
+		// Gemini: GET /v1beta/models?key=API_KEY
+		modelsURL = baseURL + "/v1beta/models?key=" + req.APIKey
+		httpReq, err = http.NewRequestWithContext(c.Request.Context(), http.MethodGet, modelsURL, nil)
+		if err != nil {
+			response.InternalError(c, "failed to create request: "+err.Error())
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+
+	// 发起请求
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		response.InternalError(c, "failed to fetch models: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body := make([]byte, 1024)
+		n, _ := resp.Body.Read(body)
+		response.Error(c, resp.StatusCode, fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(body[:n])))
+		return
+	}
+
+	// 解析响应，提取模型 ID 列表
+	var models []string
+
+	switch req.Platform {
+	case "anthropic":
+		// Anthropic 格式: { "data": [{ "id": "...", "type": "model", ... }], "has_more": bool }
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			HasMore *bool   `json:"has_more"`
+			LastID  *string `json:"last_id"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			response.InternalError(c, "failed to parse response: "+err.Error())
+			return
+		}
+		for _, m := range result.Data {
+			if m.ID != "" {
+				models = append(models, m.ID)
+			}
+		}
+
+		// Anthropic 支持分页，继续获取
+		for result.HasMore != nil && *result.HasMore && result.LastID != nil {
+			nextURL := modelsURL + "?after_id=" + *result.LastID + "&limit=100"
+			nextReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, nextURL, nil)
+			if err != nil {
+				break
+			}
+			nextReq.Header.Set("x-api-key", req.APIKey)
+			nextReq.Header.Set("anthropic-version", "2023-06-01")
+			nextReq.Header.Set("Content-Type", "application/json")
+
+			nextResp, err := client.Do(nextReq)
+			if err != nil {
+				break
+			}
+			if nextResp.StatusCode != http.StatusOK {
+				nextResp.Body.Close()
+				break
+			}
+			result = struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+				HasMore *bool   `json:"has_more"`
+				LastID  *string `json:"last_id"`
+			}{}
+			if err := json.NewDecoder(nextResp.Body).Decode(&result); err != nil {
+				nextResp.Body.Close()
+				break
+			}
+			nextResp.Body.Close()
+			for _, m := range result.Data {
+				if m.ID != "" {
+					models = append(models, m.ID)
+				}
+			}
+		}
+
+	case "openai":
+		// OpenAI 格式: { "object": "list", "data": [{ "id": "...", "object": "model", ... }] }
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			response.InternalError(c, "failed to parse response: "+err.Error())
+			return
+		}
+		for _, m := range result.Data {
+			if m.ID != "" {
+				models = append(models, m.ID)
+			}
+		}
+
+	case "gemini":
+		// Gemini 格式: { "models": [{ "name": "models/gemini-pro", ... }] }
+		var result struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			response.InternalError(c, "failed to parse response: "+err.Error())
+			return
+		}
+		for _, m := range result.Models {
+			// Gemini 返回 "models/gemini-pro"，去掉前缀
+			name := m.Name
+			if strings.HasPrefix(name, "models/") {
+				name = strings.TrimPrefix(name, "models/")
+			}
+			if name != "" {
+				models = append(models, name)
+			}
+		}
+	}
+
+	if models == nil {
+		models = []string{}
+	}
+
+	response.Success(c, gin.H{
+		"models": models,
+		"count":  len(models),
+	})
+}
+
 // sanitizeExtraBaseRPM 对 extra map 中的 base_rpm 值进行范围校验和归一化。
 // 负值归零，超过 10000 截断为 10000。extra 为 nil 或不含 base_rpm 时无操作。
 func sanitizeExtraBaseRPM(extra map[string]any) {

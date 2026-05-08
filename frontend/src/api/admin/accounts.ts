@@ -636,6 +636,24 @@ export async function getAntigravityDefaultModelMapping(): Promise<Record<string
 }
 
 /**
+ * Probe upstream API for available models
+ * @param params - Platform, base URL, API key, and optional proxy ID
+ * @returns List of available model IDs
+ */
+export async function probeModels(params: {
+  platform: string
+  base_url?: string
+  api_key: string
+  proxy_id?: number | null
+}): Promise<{ models: string[]; count: number }> {
+  const { data } = await apiClient.post<{ models: string[]; count: number }>(
+    '/admin/accounts/probe-models',
+    params
+  )
+  return data
+}
+
+/**
  * Refresh OpenAI token using refresh token
  * @param refreshToken - The refresh token
  * @param proxyId - Optional proxy ID
@@ -849,7 +867,8 @@ export const accountsAPI = {
   revertProxyFallback,
   queryOpenAIQuota,
   resetOpenAIQuota,
-  createSparkShadow
+  createSparkShadow,
+  probeModels
 }
 
 export default accountsAPI
