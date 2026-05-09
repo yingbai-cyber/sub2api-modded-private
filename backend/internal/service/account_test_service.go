@@ -253,6 +253,20 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
 		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages?beta=true"
+	} else if account.Type == "kiro" {
+		// Kiro - use Bearer token via kiro-rs proxy
+		useBearer = true
+		authToken = account.GetCredential("api_key")
+
+		baseURL := account.GetCredential("base_url")
+		if baseURL == "" {
+			return s.sendErrorAndEnd(c, "No base_url configured for kiro account")
+		}
+		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+		if err != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+		}
+		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages"
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
