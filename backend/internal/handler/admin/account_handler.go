@@ -2297,7 +2297,7 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 		response.InternalError(c, "failed to fetch models: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body := make([]byte, 1024)
@@ -2345,7 +2345,7 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 				break
 			}
 			if nextResp.StatusCode != http.StatusOK {
-				nextResp.Body.Close()
+				_ = nextResp.Body.Close()
 				break
 			}
 			result = struct {
@@ -2356,10 +2356,10 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 				LastID  *string `json:"last_id"`
 			}{}
 			if err := json.NewDecoder(nextResp.Body).Decode(&result); err != nil {
-				nextResp.Body.Close()
+				_ = nextResp.Body.Close()
 				break
 			}
-			nextResp.Body.Close()
+			_ = nextResp.Body.Close()
 			for _, m := range result.Data {
 				if m.ID != "" {
 					models = append(models, m.ID)
@@ -2397,10 +2397,7 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 		}
 		for _, m := range result.Models {
 			// Gemini 返回 "models/gemini-pro"，去掉前缀
-			name := m.Name
-			if strings.HasPrefix(name, "models/") {
-				name = strings.TrimPrefix(name, "models/")
-			}
+			name := strings.TrimPrefix(m.Name, "models/")
 			if name != "" {
 				models = append(models, name)
 			}
