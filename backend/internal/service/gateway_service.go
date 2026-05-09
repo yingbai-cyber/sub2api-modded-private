@@ -541,13 +541,14 @@ type AccountSelectionResult struct {
 
 // ClaudeUsage 表示Claude API返回的usage信息
 type ClaudeUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
-	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
-	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreation5mTokens    int     // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
+	CacheCreation1hTokens    int     // 1小时缓存创建token（来自嵌套 cache_creation 对象）
+	ImageOutputTokens        int     `json:"image_output_tokens,omitempty"`
+	KiroCredits              float64 `json:"kiro_credits,omitempty"` // Kiro credits 消耗（kiro-rs 返回）
 }
 
 // ForwardResult 转发结果
@@ -1130,6 +1131,12 @@ func (s *GatewayService) GetAccessToken(ctx context.Context, account *Account) (
 		return apiKey, "apikey", nil
 	case AccountTypeBedrock:
 		return "", "bedrock", nil // Bedrock 使用 SigV4 签名或 API Key，由 forwardBedrock 处理
+	case AccountTypeKiro:
+		apiKey := account.GetCredential("api_key")
+		if apiKey == "" {
+			return "", "", errors.New("kiro account: api_key not found in credentials")
+		}
+		return apiKey, "kiro", nil
 	case AccountTypeServiceAccount:
 		if account.Platform != PlatformAnthropic {
 			return "", "", fmt.Errorf("unsupported service account platform: %s", account.Platform)
@@ -2030,6 +2037,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	if account != nil && account.IsBedrock() {
 		return s.forwardBedrock(ctx, c, account, parsed, startTime)
+	}
+
+	if account != nil && account.IsKiro() {
+		return s.forwardKiro(ctx, c, account, parsed, startTime)
 	}
 
 	// Beta policy: evaluate once; block check + cache filter set for buildUpstreamRequest.
@@ -3432,6 +3443,10 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 		if cached := usageNode.Get("cached_tokens").Int(); cached > 0 {
 			usage.CacheReadInputTokens = int(cached)
 		}
+	}
+	// Kiro credits（kiro-rs 返回的真实 credits 消耗）
+	if kc := usageNode.Get("kiro_credits").Float(); kc > 0 {
+		usage.KiroCredits = kc
 	}
 	return usage
 }
@@ -5801,6 +5816,8 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	kiroCredits              float64
+	hasKiroCredits           bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -5875,6 +5892,11 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		// Kiro credits（kiro-rs 在 message_delta 中返回）
+		if v, ok := usageObj["kiro_credits"].(float64); ok && v > 0 {
+			patch.kiroCredits = v
+			patch.hasKiroCredits = true
+		}
 		return patch
 	}
 
@@ -5903,6 +5925,9 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+	}
+	if patch.hasKiroCredits {
+		usage.KiroCredits = patch.kiroCredits
 	}
 }
 
@@ -6759,6 +6784,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts)
+
+	// Kiro credits 计费覆盖：用真实 credits 消耗换算 USD，替代 token 计费
+	if account.IsCreditsBasedBilling() && result.Usage.KiroCredits > 0 {
+		creditsPerDollar := account.GetCreditsPerDollar()
+		creditsCost := result.Usage.KiroCredits / creditsPerDollar
+		cost.TotalCost = creditsCost
+		cost.ActualCost = creditsCost * multiplier
+		cost.BillingMode = "credits"
+	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
