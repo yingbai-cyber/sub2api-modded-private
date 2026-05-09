@@ -594,7 +594,8 @@ type ClaudeUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
-	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	ImageOutputTokens        int     `json:"image_output_tokens,omitempty"`
+	KiroCredits              float64 `json:"kiro_credits,omitempty"` // Kiro credits 消耗（legacy kiro-rs / native Kiro 上游）
 }
 
 // ForwardResult 转发结果
