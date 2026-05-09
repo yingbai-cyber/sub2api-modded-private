@@ -2470,6 +2470,7 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 			return
 		}
 		httpReq.Header.Set("x-api-key", req.APIKey)
+		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 		httpReq.Header.Set("Content-Type", "application/json")
 
