@@ -325,6 +325,32 @@
             </div>
           </button>
 
+          <button
+            type="button"
+            @click="accountCategory = 'kiro'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'kiro'
+                ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/20'
+                : 'border-gray-200 hover:border-teal-300 dark:border-dark-600 dark:hover:border-teal-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'kiro'
+                  ? 'bg-teal-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="sparkles" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">Kiro</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">Credits</span>
+            </div>
+          </button>
+
         </div>
 
         <div
@@ -333,9 +359,14 @@
         >
           <p>{{ t('admin.accounts.vertexAnthropicHint') }}</p>
         </div>
-      </div>
 
-      <!-- Account Type Selection (OpenAI) -->
+        <div
+          v-if="accountCategory === 'kiro'"
+          class="mt-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800/40 dark:bg-teal-900/20 dark:text-teal-200"
+        >
+          <p>通过 kiro-rs 代理接入 Kiro IDE 账号，使用 credits 计费模式。需要先部署 kiro-rs 服务。</p>
+        </div>
+      </div>
       <div v-if="form.platform === 'openai'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
         <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
@@ -2098,9 +2129,44 @@
         </div>
       </div>
 
-      <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
+      <!-- Kiro credentials (only for Anthropic Kiro type) -->
+      <div v-if="form.platform === 'anthropic' && accountCategory === 'kiro'" class="space-y-4">
+        <div>
+          <label class="input-label">Base URL (kiro-rs)</label>
+          <input
+            v-model="kiroBaseUrl"
+            type="text"
+            class="input"
+            placeholder="http://127.0.0.1:8080"
+          />
+          <p class="input-hint">kiro-rs 代理地址</p>
+        </div>
+        <div>
+          <label class="input-label">API Key</label>
+          <input
+            v-model="kiroApiKey"
+            type="text"
+            class="input"
+            placeholder="kiro-rs 的 API Key（可选）"
+          />
+        </div>
+        <div>
+          <label class="input-label">Credits Per Dollar</label>
+          <input
+            v-model.number="kiroCreditsPerDollar"
+            type="number"
+            step="0.01"
+            min="0"
+            class="input"
+            placeholder="1 USD = ? credits（如 50）"
+          />
+          <p class="input-hint">1 USD 对应多少 Kiro credits，用于计费换算</p>
+        </div>
+      </div>
+
+      <!-- 配额控制 (Anthropic apikey/bedrock/kiro: 配额限制 + 亲和) -->
       <div
-        v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')"
+        v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock' || form.type === 'kiro')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="mb-3">
@@ -4071,7 +4137,7 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account' | 'kiro'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
@@ -4361,6 +4427,10 @@ const bedrockSessionToken = ref('')
 const bedrockRegion = ref('us-east-1')
 const bedrockForceGlobal = ref(false)
 const bedrockApiKeyValue = ref('')
+// Kiro
+const kiroBaseUrl = ref('http://127.0.0.1:8080')
+const kiroApiKey = ref('')
+const kiroCreditsPerDollar = ref<number>(50)
 const vertexServiceAccountFileInput = ref<HTMLInputElement | null>(null)
 const vertexServiceAccountJson = ref('')
 const vertexProjectId = ref('')
@@ -4688,6 +4758,11 @@ watch(
       form.type = 'bedrock' as AccountType
       return
     }
+    // Kiro 类型
+    if (form.platform === 'anthropic' && category === 'kiro') {
+      form.type = 'kiro' as AccountType
+      return
+    }
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
     } else if (category === 'oauth-based') {
@@ -4747,6 +4822,9 @@ watch(
       accountCategory.value = 'oauth-based'
     }
     if (newPlatform !== 'anthropic' && accountCategory.value === 'bedrock') {
+      accountCategory.value = 'oauth-based'
+    }
+    if (newPlatform !== 'anthropic' && accountCategory.value === 'kiro') {
       accountCategory.value = 'oauth-based'
     }
     // Reset Bedrock fields when switching platforms
@@ -5584,6 +5662,33 @@ const handleSubmit = async () => {
     return
   }
 
+  // For Kiro type, create directly
+  if (form.platform === 'anthropic' && accountCategory.value === 'kiro') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!kiroBaseUrl.value.trim()) {
+      appStore.showError('Please enter kiro-rs Base URL')
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      base_url: kiroBaseUrl.value.trim(),
+    }
+    if (kiroApiKey.value.trim()) {
+      credentials.api_key = kiroApiKey.value.trim()
+    }
+
+    const extra: Record<string, unknown> = {}
+    if (kiroCreditsPerDollar.value > 0) {
+      extra.credits_per_dollar = kiroCreditsPerDollar.value
+    }
+
+    await createAccountAndFinish('anthropic', 'kiro' as AccountType, credentials, extra)
+    return
+  }
+
   // For Antigravity upstream type, create directly
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     if (!form.name.trim()) {
@@ -5814,9 +5919,9 @@ const createAccountAndFinish = async (
   if (!applyTempUnschedConfig(credentials)) {
     return
   }
-  // Inject quota limits for apikey/bedrock accounts
+  // Inject quota limits for apikey/bedrock/kiro accounts
   let finalExtra = extra
-  if (type === 'apikey' || type === 'bedrock') {
+  if (type === 'apikey' || type === 'bedrock' || type === 'kiro') {
     const quotaExtra: Record<string, unknown> = { ...(extra || {}) }
     if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
       quotaExtra.quota_limit = editQuotaLimit.value

@@ -1269,7 +1269,23 @@ func (a *Account) IsBedrockAPIKey() bool {
 
 // IsAPIKeyOrBedrock 返回账号类型是否支持配额和池模式等特性
 func (a *Account) IsAPIKeyOrBedrock() bool {
-	return a.Type == AccountTypeAPIKey || a.Type == AccountTypeBedrock
+	return a.Type == AccountTypeAPIKey || a.Type == AccountTypeBedrock || a.Type == AccountTypeKiro
+}
+
+// IsKiro 检查是否为 Kiro 类型账号
+func (a *Account) IsKiro() bool {
+	return a.Type == AccountTypeKiro
+}
+
+// GetCreditsPerDollar 获取 Kiro credits/USD 换算比例（从 extra 字段）
+// 返回 0 表示未配置
+func (a *Account) GetCreditsPerDollar() float64 {
+	return a.getExtraFloat64("credits_per_dollar")
+}
+
+// IsCreditsBasedBilling 检查是否使用 Kiro credits 计费
+func (a *Account) IsCreditsBasedBilling() bool {
+	return a.IsKiro() && a.GetCreditsPerDollar() > 0
 }
 
 func (a *Account) IsOpenAI() bool {
