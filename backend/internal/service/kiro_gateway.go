@@ -13,7 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"sub2api-modded/internal/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 // forwardKiro 转发请求到 kiro-rs 代理（base_url + api_key 透传）
