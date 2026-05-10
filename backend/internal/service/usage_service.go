@@ -33,6 +33,7 @@ type CreateUsageLogRequest struct {
 	OutputCost            float64 `json:"output_cost"`
 	CacheCreationCost     float64 `json:"cache_creation_cost"`
 	CacheReadCost         float64 `json:"cache_read_cost"`
+	KiroCredits           float64 `json:"kiro_credits"`
 	TotalCost             float64 `json:"total_cost"`
 	ActualCost            float64 `json:"actual_cost"`
 	RateMultiplier        float64 `json:"rate_multiplier"`
@@ -109,6 +110,7 @@ func (s *UsageService) Create(ctx context.Context, req CreateUsageLogRequest) (*
 		OutputCost:            req.OutputCost,
 		CacheCreationCost:     req.CacheCreationCost,
 		CacheReadCost:         req.CacheReadCost,
+		KiroCredits:           req.KiroCredits,
 		TotalCost:             req.TotalCost,
 		ActualCost:            req.ActualCost,
 		RateMultiplier:        req.RateMultiplier,
