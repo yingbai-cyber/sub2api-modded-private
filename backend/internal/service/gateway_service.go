@@ -9714,6 +9714,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if account.IsCreditsBasedBilling() && result.Usage.KiroCredits > 0 {
 		creditsPerDollar := account.GetCreditsPerDollar()
 		creditsCost := result.Usage.KiroCredits / creditsPerDollar
+		cost.InputCost = 0
+		cost.OutputCost = 0
+		cost.CacheCreationCost = 0
+		cost.CacheReadCost = 0
+		cost.ImageOutputCost = 0
 		cost.TotalCost = creditsCost
 		cost.ActualCost = creditsCost * multiplier
 		cost.BillingMode = "credits"
@@ -9951,6 +9956,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
 		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		KiroCredits:           result.Usage.KiroCredits,
 		RateMultiplier:        multiplier,
 		AccountRateMultiplier: &accountRateMultiplier,
 		BillingType:           billingType,
