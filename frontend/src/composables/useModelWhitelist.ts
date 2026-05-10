@@ -540,3 +540,34 @@ export function buildModelMappingObject(
 
   return Object.keys(mapping).length > 0 ? mapping : null
 }
+
+/**
+ * 合并白名单 + 映射为统一的 model_mapping 对象。
+ * 白名单条目写为 from===to，映射条目写为 from→to。
+ * 映射优先级高于白名单（如果同一个 from 同时出现在两者中，以映射为准）。
+ */
+export function buildMergedModelMappingObject(
+  allowedModels: string[],
+  modelMappings: { from: string; to: string }[]
+): Record<string, string> | null {
+  const mapping: Record<string, string> = {}
+
+  // 先写入白名单（from === to）
+  for (const model of allowedModels) {
+    if (!model.includes('*')) {
+      mapping[model] = model
+    }
+  }
+
+  // 再写入映射（覆盖同名白名单条目）
+  for (const m of modelMappings) {
+    const from = m.from.trim()
+    const to = m.to.trim()
+    if (!from || !to) continue
+    if (!isValidWildcardPattern(from)) continue
+    if (to.includes('*')) continue
+    mapping[from] = to
+  }
+
+  return Object.keys(mapping).length > 0 ? mapping : null
+}

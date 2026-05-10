@@ -4053,6 +4053,7 @@ import {
   getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
+  buildMergedModelMappingObject,
   fetchAntigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
@@ -5856,10 +5857,8 @@ const handleSubmit = async () => {
       credentials.api_key = kiroApiKey.value.trim()
     }
 
-    // Model mapping
-    const modelMapping = buildModelMappingObject(
-      modelRestrictionMode.value, allowedModels.value, modelMappings.value
-    )
+    // Model mapping (kiro: merge whitelist + mappings simultaneously)
+    const modelMapping = buildMergedModelMappingObject(allowedModels.value, modelMappings.value)
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
