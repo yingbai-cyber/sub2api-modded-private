@@ -486,6 +486,7 @@ type UsageLog struct {
 	OutputCost        float64 `json:"output_cost"`
 	CacheCreationCost float64 `json:"cache_creation_cost"`
 	CacheReadCost     float64 `json:"cache_read_cost"`
+	KiroCredits       float64 `json:"kiro_credits"`
 	TotalCost         float64 `json:"total_cost"`
 	ActualCost        float64 `json:"actual_cost"`
 	RateMultiplier    float64 `json:"rate_multiplier"`
@@ -516,7 +517,7 @@ type UsageLog struct {
 	// Cache TTL Override 标记
 	CacheTTLOverridden bool `json:"cache_ttl_overridden"`
 
-	// BillingMode 计费模式：token/image
+	// BillingMode 计费模式：token/per_request/image/credits
 	BillingMode *string `json:"billing_mode,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
