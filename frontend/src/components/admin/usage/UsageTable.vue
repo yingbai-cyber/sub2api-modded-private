@@ -154,6 +154,9 @@
                 </div>
               </div>
             </div>
+            <div v-if="hasKiroCredits(row)" class="mt-0.5 text-[11px] font-medium text-cyan-600 dark:text-cyan-400">
+              {{ formatKiroCredits(row.kiro_credits) }} {{ t('usage.kiroCredits') }}
+            </div>
             <div v-if="row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
@@ -290,6 +293,12 @@
                 <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, tooltipData.output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
+            <template v-else-if="hasKiroCredits(tooltipData)">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
+                <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
+              </div>
+            </template>
             <!-- Per-request / image billing: show unit price -->
             <template v-else-if="tooltipData?.billing_mode === BILLING_MODE_IMAGE">
               <div class="flex items-center justify-between gap-4">
@@ -365,7 +374,7 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
-import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE } from '@/utils/billingMode'
+import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE, BILLING_MODE_CREDITS } from '@/utils/billingMode'
 
 /** Compute the account-billed cost for display: (account_stats_cost ?? total_cost) * rate_multiplier */
 function accountBilled(row: { total_cost?: number | null; account_stats_cost?: number | null; account_rate_multiplier?: number | null }): number {
@@ -379,6 +388,14 @@ function imageUnitPrice(row: AdminUsageLog | null): number {
   const total = row.total_cost ?? 0
   const price = total / row.image_count
   return Number.isFinite(price) ? price : 0
+}
+
+function hasKiroCredits(row: AdminUsageLog | null | undefined): boolean {
+  return row?.billing_mode === BILLING_MODE_CREDITS && (row.kiro_credits ?? 0) > 0
+}
+
+function formatKiroCredits(credits: number | null | undefined): string {
+  return (credits ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })
 }
 
 import DataTable from '@/components/common/DataTable.vue'
