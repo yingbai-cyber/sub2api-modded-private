@@ -272,6 +272,7 @@ export default {
     cacheTtlOverriddenLabel: 'TTL Override',
     cacheTtlOverridden5m: 'Billed as 5m',
     cacheTtlOverridden1h: 'Billed as 1h',
+    kiroCredits: 'Kiro Credits',
     totalRequests: 'Total Requests',
     totalTokens: 'Total Tokens',
     cacheTotal: 'Cache',
