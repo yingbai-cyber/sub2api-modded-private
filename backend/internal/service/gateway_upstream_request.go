@@ -58,9 +58,8 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	// 确定目标URL
 	targetURL := claudeAPIURL
-	baseURL := ""
-	if account.Type == AccountTypeAPIKey {
-		baseURL = getAnthropicGatewayBaseURL(account)
+	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeKiro {
+		baseURL := getAnthropicGatewayBaseURL(account)
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
