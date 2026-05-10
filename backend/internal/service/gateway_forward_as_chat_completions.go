@@ -55,6 +55,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
 	}
 
+	// 2.5. For kiro accounts, filter out web_search server tools when mixed with
+	// other tools. kiro-rs only supports web_search as the sole tool in a request.
+	if account.IsKiro() && len(anthropicReq.Tools) > 1 {
+		anthropicReq.Tools = filterOutWebSearchTools(anthropicReq.Tools)
+	}
+
 	// 3. Force upstream streaming
 	anthropicReq.Stream = true
 	reqStream := true
