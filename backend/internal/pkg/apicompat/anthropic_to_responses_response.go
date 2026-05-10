@@ -152,10 +152,19 @@ type AnthropicEventToResponsesState struct {
 
 	// For message output: accumulate text parts
 	ContentIndex int
+	// Accumulated text for current message item
+	CurrentText string
 
 	// For function_call: track per-output info
-	CurrentCallID string
-	CurrentName   string
+	CurrentCallID    string
+	CurrentName      string
+	CurrentArguments string
+
+	// For reasoning: accumulated summary text
+	CurrentSummaryText string
+
+	// Accumulated completed output items for response.completed
+	CompletedOutputs []ResponsesOutput
 
 	// Usage from message_start / message_delta. InputTokens here follows
 	// Anthropic semantics (excludes cached tokens); they are added back when
@@ -327,6 +336,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Text == "" {
 			return nil
 		}
+		state.CurrentText += evt.Delta.Text
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			ContentIndex: state.ContentIndex,
@@ -338,6 +348,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Thinking == "" {
 			return nil
 		}
+		state.CurrentSummaryText += evt.Delta.Thinking
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			SummaryIndex: 0,
@@ -349,6 +360,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.PartialJSON == "" {
 			return nil
 		}
+		state.CurrentArguments += evt.Delta.PartialJSON
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			Delta:       evt.Delta.PartialJSON,
@@ -457,21 +469,49 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	itemType := state.CurrentItemType
 	itemID := state.CurrentItemID
 
+	// Build completed output item for accumulation
+	completedItem := ResponsesOutput{
+		Type:   itemType,
+		ID:     itemID,
+		Status: "completed",
+	}
+	switch itemType {
+	case "message":
+		completedItem.Role = "assistant"
+		if state.CurrentText != "" {
+			completedItem.Content = []ResponsesContentPart{{
+				Type: "output_text",
+				Text: state.CurrentText,
+			}}
+		}
+	case "function_call":
+		completedItem.CallID = state.CurrentCallID
+		completedItem.Name = state.CurrentName
+		completedItem.Arguments = state.CurrentArguments
+	case "reasoning":
+		if state.CurrentSummaryText != "" {
+			completedItem.Summary = []ResponsesSummary{{
+				Type: "summary_text",
+				Text: state.CurrentSummaryText,
+			}}
+		}
+	}
+	state.CompletedOutputs = append(state.CompletedOutputs, completedItem)
+
 	// Reset
 	state.CurrentItemType = ""
 	state.CurrentItemID = ""
 	state.CurrentCallID = ""
 	state.CurrentName = ""
+	state.CurrentText = ""
+	state.CurrentArguments = ""
+	state.CurrentSummaryText = ""
 	state.OutputIndex++
 	state.ContentIndex = 0
 
 	return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 		OutputIndex: state.OutputIndex - 1, // Use the index before increment
-		Item: &ResponsesOutput{
-			Type:   itemType,
-			ID:     itemID,
-			Status: "completed",
-		},
+		Item:        &completedItem,
 	})}
 }
 
@@ -519,6 +559,11 @@ func makeResponsesCompletedEvent(
 		eventType = "response.incomplete"
 	}
 
+	output := state.CompletedOutputs
+	if output == nil {
+		output = []ResponsesOutput{}
+	}
+
 	return ResponsesStreamEvent{
 		Type:           eventType,
 		SequenceNumber: seq,
@@ -527,7 +572,7 @@ func makeResponsesCompletedEvent(
 			Object:            "response",
 			Model:             state.Model,
 			Status:            status,
-			Output:            []ResponsesOutput{},
+			Output:            output,
 			Usage:             usage,
 			IncompleteDetails: incompleteDetails,
 		},
