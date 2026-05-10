@@ -593,6 +593,7 @@ func TestAPIContracts(t *testing.T) {
 							"cache_read_cost": 0,
 						"total_cost": 0.5,
 						"actual_cost": 0.5,
+						"kiro_credits": 0,
 						"rate_multiplier": 1,
 						"billing_type": 0,
 							"stream": true,
