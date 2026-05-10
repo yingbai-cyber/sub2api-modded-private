@@ -65,6 +65,13 @@ func (s *GatewayService) ForwardAsResponses(
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
 	}
 
+	// 2.5. For kiro accounts, filter out web_search server tools when mixed with
+	// other tools. kiro-rs only supports web_search as the sole tool in a request;
+	// when mixed with function tools, the upstream Kiro/CodeWhisperer API rejects it.
+	if account.IsKiro() && len(anthropicReq.Tools) > 1 {
+		anthropicReq.Tools = filterOutWebSearchTools(anthropicReq.Tools)
+	}
+
 	// 3. Force upstream streaming (Anthropic works best with streaming)
 	anthropicReq.Stream = true
 	reqStream := true
@@ -649,4 +656,18 @@ func mapUpstreamStatusCode(code int) int {
 		return http.StatusBadGateway
 	}
 	return code
+}
+
+// filterOutWebSearchTools removes Anthropic server tools whose Type starts with
+// "web_search" from the tools slice. This is used for kiro accounts where the
+// upstream only supports web_search as the sole tool, not mixed with others.
+func filterOutWebSearchTools(tools []apicompat.AnthropicTool) []apicompat.AnthropicTool {
+	out := make([]apicompat.AnthropicTool, 0, len(tools))
+	for _, t := range tools {
+		if strings.HasPrefix(t.Type, "web_search") {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
