@@ -633,13 +633,9 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		default:
-			// Pass through unknown tool types
-			out = append(out, AnthropicTool{
-				Type:        t.Type,
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
-			})
+			// Skip tool types not supported by Anthropic (namespace, file_search,
+			// code_interpreter, etc.) to avoid upstream 422 errors.
+			continue
 		}
 	}
 	return out
