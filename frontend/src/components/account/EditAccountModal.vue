@@ -2260,6 +2260,7 @@ import {
   getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
+  buildMergedModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
@@ -2771,19 +2772,24 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (existingMappings && typeof existingMappings === 'object') {
       const entries = Object.entries(existingMappings)
 
-      // Detect if this is whitelist mode (all from === to) or mapping mode
-      const isWhitelistMode = entries.length > 0 && entries.every(([from, to]) => from === to)
-
-      if (isWhitelistMode) {
-        // Whitelist mode: populate allowedModels
-        modelRestrictionMode.value = 'whitelist'
-        allowedModels.value = entries.map(([from]) => from)
-        modelMappings.value = []
+      if (newAccount.type === 'kiro') {
+        // Kiro: split into whitelist (from===to) and mappings (from!==to) simultaneously
+        allowedModels.value = entries.filter(([from, to]) => from === to).map(([from]) => from)
+        modelMappings.value = entries.filter(([from, to]) => from !== to).map(([from, to]) => ({ from, to }))
+        modelRestrictionMode.value = 'whitelist' // default tab
       } else {
-        // Mapping mode: populate modelMappings
-        modelRestrictionMode.value = 'mapping'
-        modelMappings.value = entries.map(([from, to]) => ({ from, to }))
-        allowedModels.value = []
+        // Other types: detect mode (mutually exclusive)
+        const isWhitelistMode = entries.length > 0 && entries.every(([from, to]) => from === to)
+
+        if (isWhitelistMode) {
+          modelRestrictionMode.value = 'whitelist'
+          allowedModels.value = entries.map(([from]) => from)
+          modelMappings.value = []
+        } else {
+          modelRestrictionMode.value = 'mapping'
+          modelMappings.value = entries.map(([from, to]) => ({ from, to }))
+          allowedModels.value = []
+        }
       }
     } else {
       // No mappings: default to whitelist mode with empty selection (allow all)
@@ -3452,7 +3458,10 @@ const handleSubmit = async () => {
 
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）
       if (shouldApplyModelMapping) {
-        const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+        // Kiro 类型：白名单 + 映射合并保存（两者同时生效）
+        const modelMapping = props.account.type === 'kiro'
+          ? buildMergedModelMappingObject(allowedModels.value, modelMappings.value)
+          : buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
         if (modelMapping) {
           newCredentials.model_mapping = modelMapping
         } else {
