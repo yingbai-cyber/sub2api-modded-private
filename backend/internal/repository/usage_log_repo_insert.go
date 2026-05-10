@@ -87,6 +87,7 @@ var usageLogInsertArgTypes = [...]string{
 	"boolean",     // native_compaction_v2
 	"integer",     // cache_creation_30m_tokens
 	"integer",     // cache_creation_12h_tokens
+	"numeric",     // kiro_credits
 	"timestamptz", // created_at
 }
 
@@ -290,6 +291,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
@@ -297,7 +299,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -752,12 +754,13 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		) AS (VALUES `)
 
-	// Each batch row prepends the synthetic input_index before the 60
+	// Each batch row prepends the synthetic input_index before the
 	// usage-log column values.
-	args := make([]any, 0, len(keys)*61)
+	args := make([]any, 0, len(keys)*(len(usageLogInsertArgTypes)+1))
 	argPos := 1
 	for idx, key := range keys {
 		if idx > 0 {
@@ -849,6 +852,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				native_compaction_v2,
 				cache_creation_30m_tokens,
 				cache_creation_12h_tokens,
+				kiro_credits,
 				created_at
 			)
 			SELECT
@@ -915,6 +919,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				native_compaction_v2,
 				cache_creation_30m_tokens,
 				cache_creation_12h_tokens,
+				kiro_credits,
 				created_at
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
@@ -1021,10 +1026,11 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(preparedList)*60)
+	args := make([]any, 0, len(preparedList)*len(usageLogInsertArgTypes))
 	argPos := 1
 	for idx, prepared := range preparedList {
 		if idx > 0 {
@@ -1113,6 +1119,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		)
 		SELECT
@@ -1179,6 +1186,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
@@ -1253,6 +1261,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			native_compaction_v2,
 			cache_creation_30m_tokens,
 			cache_creation_12h_tokens,
+			kiro_credits,
 			created_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
@@ -1260,7 +1269,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1386,6 +1395,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			log.NativeCompactionV2,
 			log.CacheCreation30mTokens,
 			log.CacheCreation12hTokens,
+			log.KiroCredits, // kiro_credits
 			createdAt,
 		},
 	}

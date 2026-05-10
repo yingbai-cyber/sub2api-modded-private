@@ -104,6 +104,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.NativeCompactionV2,
 			log.CacheCreation30mTokens,
 			log.CacheCreation12hTokens,
+			log.KiroCredits,
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -201,6 +202,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.NativeCompactionV2,
 			log.CacheCreation30mTokens,
 			log.CacheCreation12hTokens,
+			log.KiroCredits,
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -966,6 +968,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false, // native_compaction_v2
 			0,     // cache_creation_30m_tokens
 			0,     // cache_creation_12h_tokens
+			0.0,   // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1048,6 +1051,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1113,6 +1117,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			true,              // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1179,6 +1184,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
