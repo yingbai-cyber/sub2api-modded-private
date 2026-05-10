@@ -521,6 +521,10 @@ func parseContentBlocks(raw json.RawMessage) []AnthropicContentBlock {
 
 // convertResponsesToAnthropicTools maps Responses API tools to Anthropic format.
 // Reverse of convertAnthropicToolsToResponses.
+//
+// web_search is converted to Anthropic's native web_search_20250305 server tool.
+// Other non-function tool types (file_search, code_interpreter, etc.) are skipped
+// as they have no Anthropic equivalent.
 func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 	var out []AnthropicTool
 	for _, t := range tools {
@@ -537,11 +541,19 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				Description: t.Description,
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
+		case "web_search":
+			// Convert OpenAI web_search to Anthropic's native server tool format.
+			// The official Anthropic API supports this; kiro-rs also supports it
+			// but only when it's the sole tool in the request.
+			out = append(out, AnthropicTool{
+				Type:        "web_search_20250305",
+				Name:        "web_search",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			})
 		default:
-			// Skip all non-function tool types (web_search, namespace, file_search,
-			// code_interpreter, etc.) — these are OpenAI platform-specific server-side
-			// tools that have no equivalent in Anthropic's tool_use protocol.
-			// Passing them through causes 422 from Anthropic/kiro-rs upstream.
+			// Skip other non-function tool types (namespace, file_search,
+			// code_interpreter, etc.) — these are OpenAI platform-specific
+			// server-side tools that have no equivalent in Anthropic's protocol.
 			continue
 		}
 	}
