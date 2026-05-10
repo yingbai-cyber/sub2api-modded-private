@@ -955,11 +955,14 @@ func (a *Account) ResolveCompactMappedModel(requestedModel string) (mappedModel 
 }
 
 func (a *Account) GetBaseURL() string {
-	if a.Type != AccountTypeAPIKey {
+	if a.Type != AccountTypeAPIKey && a.Type != AccountTypeKiro {
 		return ""
 	}
 	baseURL := a.GetCredential("base_url")
 	if baseURL == "" {
+		if a.Type == AccountTypeKiro {
+			return "" // Kiro 账号必须配置 base_url
+		}
 		return "https://api.anthropic.com"
 	}
 	if a.Platform == PlatformAntigravity {
