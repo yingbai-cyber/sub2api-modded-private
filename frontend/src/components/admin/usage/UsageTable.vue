@@ -154,6 +154,9 @@
                 </div>
               </div>
             </div>
+            <div v-if="hasKiroCredits(row)" class="mt-0.5 text-[11px] font-medium text-cyan-600 dark:text-cyan-400">
+              {{ formatKiroCredits(row.kiro_credits) }} {{ t('usage.kiroCredits') }}
+            </div>
             <div v-if="row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
@@ -279,7 +282,7 @@
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
               <span class="font-medium text-white">${{ tooltipData.output_cost.toFixed(6) }}</span>
             </div>
-            <!-- Token billing: show unit prices per 1M tokens -->
+            <!-- Per-image billing: show image metadata and unit price -->
             <template v-if="tooltipData && isImageUsage(tooltipData)">
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageCount') }}</span>
@@ -312,6 +315,12 @@
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageTotalPrice') }}</span>
                 <span class="font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
+              </div>
+            </template>
+            <template v-else-if="hasKiroCredits(tooltipData)">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
+                <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
               </div>
             </template>
             <template v-else-if="!tooltipData?.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN">
@@ -384,7 +393,7 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
-import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE } from '@/utils/billingMode'
+import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE, BILLING_MODE_CREDITS } from '@/utils/billingMode'
 import {
   formatImageBillingSize,
   formatImageInputSize,
@@ -416,6 +425,14 @@ function getDisplayBillingMode(row: Pick<AdminUsageLog, 'billing_mode' | 'image_
     return BILLING_MODE_IMAGE
   }
   return row?.billing_mode
+}
+
+function hasKiroCredits(row: AdminUsageLog | null | undefined): boolean {
+  return row?.billing_mode === BILLING_MODE_CREDITS && (row.kiro_credits ?? 0) > 0
+}
+
+function formatKiroCredits(credits: number | null | undefined): string {
+  return (credits ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })
 }
 
 import DataTable from '@/components/common/DataTable.vue'
