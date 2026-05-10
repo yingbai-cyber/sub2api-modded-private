@@ -2666,6 +2666,7 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
@@ -3586,6 +3587,13 @@ watch(
   },
   { immediate: true }
 )
+
+// Auto-fill related models when switching to whitelist mode with empty selection
+watch(modelRestrictionMode, (newMode) => {
+  if (newMode === 'whitelist' && allowedModels.value.length === 0 && props.account) {
+    allowedModels.value = [...getModelsByPlatform(props.account.platform)]
+  }
+})
 
 // Model mapping helpers
 const addModelMapping = () => {
