@@ -5369,6 +5369,12 @@ const handleSubmit = async () => {
       credentials.model_mapping = modelMapping
     }
 
+    // Pool mode
+    if (poolModeEnabled.value) {
+      credentials.pool_mode = true
+      credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+    }
+
     const extra: Record<string, unknown> = {}
     if (kiroCreditsPerDollar.value > 0) {
       extra.credits_per_dollar = kiroCreditsPerDollar.value
