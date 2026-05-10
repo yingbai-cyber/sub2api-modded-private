@@ -441,23 +441,27 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		if authAccount.Type == AccountTypeOAuth {
-			// 1. 失效缓存
-			if s.tokenCacheInvalidator != nil {
-				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
-					slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
+		// Kiro 账号也走临时冷却：kiro-rs 的 token 是动态刷新的，偶尔 401 是正常的。
+		if (authAccount.Type == AccountTypeOAuth && authAccount.Platform != PlatformAntigravity) || authAccount.Type == AccountTypeKiro {
+			if authAccount.Type != AccountTypeKiro {
+				// 1. 失效缓存
+				if s.tokenCacheInvalidator != nil {
+					if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
+						slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+					}
 				}
-			}
-			// 缺少 refresh_token 的 OAuth 账号无法在冷却期内自愈（后台刷新服务也会跳过），
-			// 直接走 SetError 永久禁用，避免冷却结束后再被选中产生一发无意义的 502。
-			if strings.TrimSpace(authAccount.GetCredential("refresh_token")) == "" {
-				msg := "Authentication failed (401): refresh_token missing, cannot recover"
-				if upstreamMsg != "" {
-					msg = "OAuth 401 (no refresh_token): " + upstreamMsg
+				// 缺少 refresh_token 的 OAuth 账号无法在冷却期内自愈（后台刷新服务也会跳过），
+				// 直接走 SetError 永久禁用，避免冷却结束后再被选中产生一发无意义的 502。
+				if strings.TrimSpace(authAccount.GetCredential("refresh_token")) == "" {
+					msg := "Authentication failed (401): refresh_token missing, cannot recover"
+					if upstreamMsg != "" {
+						msg = "OAuth 401 (no refresh_token): " + upstreamMsg
+					}
+					s.handleAuthError(ctx, authAccount, msg)
+					shouldDisable = true
+					break
 				}
-				s.handleAuthError(ctx, authAccount, msg)
-				shouldDisable = true
-				break
 			}
 			// 2. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）
 			// 注意：此处不再写回 account.Credentials/expires_at。
@@ -470,7 +474,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			// 冷却结束后由 token_provider 的 NeedsRefresh / token_refresh_service 走带分布式锁的正路刷新。
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
-				msg = "OAuth 401: " + upstreamMsg
+				if authAccount.Type == AccountTypeKiro {
+					msg = "Kiro 401: " + upstreamMsg
+				} else {
+					msg = "OAuth 401: " + upstreamMsg
+				}
 			}
 			if authAccount.Platform == PlatformAntigravity {
 				extraUpdates := antigravityForceTokenRefreshExtra("401_invalid")
