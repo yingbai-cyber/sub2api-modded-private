@@ -615,11 +615,6 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 	var out []AnthropicTool
 	for _, t := range tools {
 		switch t.Type {
-		case "web_search", "google_search", "web_search_20250305":
-			out = append(out, AnthropicTool{
-				Type: "web_search_20250305",
-				Name: "web_search",
-			})
 		case "function":
 			out = append(out, AnthropicTool{
 				Name:        t.Name,
@@ -633,8 +628,10 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
 		default:
-			// Skip tool types not supported by Anthropic (namespace, file_search,
-			// code_interpreter, etc.) to avoid upstream 422 errors.
+			// Skip all non-function tool types (web_search, namespace, file_search,
+			// code_interpreter, etc.) — these are OpenAI platform-specific server-side
+			// tools that have no equivalent in Anthropic's tool_use protocol.
+			// Passing them through causes 422 from Anthropic/kiro-rs upstream.
 			continue
 		}
 	}
