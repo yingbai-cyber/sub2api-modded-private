@@ -83,7 +83,7 @@ export interface CreateUsageCleanupTaskRequest {
 export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
   exact_total?: boolean
-  billing_mode?: string
+  billing_mode?: string | null
   upstream_model_mismatch?: boolean
   sort_by?: string
   sort_order?: 'asc' | 'desc'
@@ -125,6 +125,8 @@ export async function getStats(params: {
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null
+  billing_type?: number | null
+  billing_mode?: string | null
   upstream_model_mismatch?: boolean
   period?: string
   start_date?: string

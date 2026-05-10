@@ -546,6 +546,7 @@ export default {
       billingModePerRequest: 'Per Request',
       billingModeImage: 'Image',
       billingModeVideo: 'Video',
+      billingModeCredits: 'Credits',
       allBillingModes: 'All Billing Modes',
 	  upstreamModelAudit: 'Upstream model audit',
 	  allUpstreamModelAudit: 'All response model states',
