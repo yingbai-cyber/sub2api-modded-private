@@ -3870,7 +3870,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	// 确定目标URL
 	targetURL := claudeAPIURL
-	if account.Type == AccountTypeAPIKey {
+	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeKiro {
 		baseURL := account.GetBaseURL()
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)

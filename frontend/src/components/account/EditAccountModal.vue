@@ -27,7 +27,7 @@
       </div>
 
       <!-- API Key fields (only for apikey type) -->
-      <div v-if="account.type === 'apikey'" class="space-y-4">
+      <div v-if="account.type === 'apikey' || account.type === 'kiro'" class="space-y-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -3333,8 +3333,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   headerOverrideEnabled.value = false
   headerOverrideRows.value = []
 
-  // Initialize API Key fields for apikey type
-  if (newAccount.type === 'apikey' && newAccount.credentials) {
+  // Initialize API Key fields for apikey/kiro type
+  if ((newAccount.type === 'apikey' || newAccount.type === 'kiro') && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
     const platformDefaultUrl =
       newAccount.platform === 'openai'
@@ -3937,8 +3937,8 @@ const handleSubmit = async () => {
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
 
-    // For apikey type, handle credentials update
-    if (props.account.type === 'apikey') {
+    // For apikey/kiro type, handle credentials update
+    if (props.account.type === 'apikey' || props.account.type === 'kiro') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
