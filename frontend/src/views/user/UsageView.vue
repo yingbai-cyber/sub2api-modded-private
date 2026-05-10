@@ -315,25 +315,30 @@
           </template>
 
           <template #cell-cost="{ row }">
-            <div class="flex items-center gap-1.5 text-sm">
-              <span class="font-medium text-green-600 dark:text-green-400">
-                ${{ (row.actual_cost ?? 0).toFixed(6) }}
-              </span>
-              <!-- Cost Detail Tooltip -->
-              <div
-                class="group relative"
-                @mouseenter="showTooltip($event, row)"
-                @mouseleave="hideTooltip"
-              >
+            <div class="text-sm">
+              <div class="flex items-center gap-1.5">
+                <span class="font-medium text-green-600 dark:text-green-400">
+                  ${{ (row.actual_cost ?? 0).toFixed(6) }}
+                </span>
+                <!-- Cost Detail Tooltip -->
                 <div
-                  class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50"
+                  class="group relative"
+                  @mouseenter="showTooltip($event, row)"
+                  @mouseleave="hideTooltip"
                 >
-                  <Icon
-                    name="infoCircle"
-                    size="xs"
-                    class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400"
-                  />
+                  <div
+                    class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50"
+                  >
+                    <Icon
+                      name="infoCircle"
+                      size="xs"
+                      class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400"
+                    />
+                  </div>
                 </div>
+              </div>
+              <div v-if="hasKiroCredits(row)" class="mt-0.5 text-[11px] font-medium text-cyan-600 dark:text-cyan-400">
+                {{ formatKiroCredits(row.kiro_credits) }} {{ t('usage.kiroCredits') }}
               </div>
             </div>
           </template>
@@ -562,6 +567,12 @@
                 <span class="font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
               </div>
             </template>
+            <template v-else-if="hasKiroCredits(tooltipData)">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
+                <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
+              </div>
+            </template>
             <div v-else class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
               <span class="font-medium text-sky-300">${{ tooltipData?.total_cost?.toFixed(6) || '0.000000' }}</span>
@@ -629,6 +640,7 @@ import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
+  BILLING_MODE_CREDITS,
   BILLING_MODE_TOKEN,
   getBillingModeBadgeClass,
   getBillingModeLabel,
@@ -766,6 +778,14 @@ const formatDuration = (ms: number | null | undefined): string => {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
+
+const hasKiroCredits = (row: UsageLog | null | undefined): boolean => {
+  return row?.billing_mode === BILLING_MODE_CREDITS && (row.kiro_credits ?? 0) > 0
+}
+
+const formatKiroCredits = (credits: number | null | undefined): string => {
+  return (credits ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })
+}
 
 const formatUserAgent = (ua: string): string => {
   return ua
@@ -987,6 +1007,7 @@ const exportToCSV = async () => {
       'Rate Multiplier',
       'Billed Cost',
       'Original Cost',
+      'Kiro Credits',
       'First Token (ms)',
       'Duration (ms)'
     ]
@@ -1006,6 +1027,7 @@ const exportToCSV = async () => {
         log.rate_multiplier,
         (log.actual_cost ?? 0).toFixed(8),
         (log.total_cost ?? 0).toFixed(8),
+        log.kiro_credits ?? '',
         log.first_token_ms ?? '',
         log.duration_ms
       ].map(escapeCSVValue)

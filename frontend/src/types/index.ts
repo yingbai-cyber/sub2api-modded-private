@@ -1263,6 +1263,7 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+  kiro_credits?: number
 
   created_at: string
 
@@ -1654,6 +1655,7 @@ export interface UsageQueryParams {
   request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
+  billing_mode?: string | null
   start_date?: string
   end_date?: string
   sort_by?: string
