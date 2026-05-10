@@ -182,7 +182,6 @@
       />
     </div>
   </AppLayout>
-
 </template>
 
 <script setup lang="ts">
@@ -204,7 +203,7 @@ import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
-import { BILLING_MODE_IMAGE, getBillingModeLabel } from '@/utils/billingMode'
+import { BILLING_MODE_CREDITS, BILLING_MODE_IMAGE, getBillingModeLabel } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
   ApiKey,
@@ -321,6 +320,7 @@ const billingModeOptions = computed<SelectOption[]>(() => [
   { value: 'token', label: t('admin.usage.billingModeToken') },
   { value: 'per_request', label: t('admin.usage.billingModePerRequest') },
   { value: 'image', label: t('admin.usage.billingModeImage') },
+  { value: BILLING_MODE_CREDITS, label: t('usage.kiroCredits') },
 ])
 
 const apiKeys = ref<ApiKey[]>([])
@@ -539,7 +539,7 @@ const escapeCSVValue = (value: unknown): string => {
   if (value == null) return ''
   const str = String(value)
   const escaped = str.replace(/"/g, '""')
-  if (/^[=+\-@\t\r]/.test(str)) return `"\'${escaped}"`
+  if (/^[=+\-@\t\r]/.test(str)) return `"'${escaped}"`
   if (/[,"\n\r]/.test(str)) return `"${escaped}"`
   return str
 }
@@ -579,6 +579,7 @@ const exportToCSV = async () => {
       'Rate Multiplier',
       'Billed Cost',
       'Original Cost',
+      'Kiro Credits',
       'First Token (ms)',
       'Duration (ms)',
     ]
@@ -596,8 +597,9 @@ const exportToCSV = async () => {
       log.cache_read_tokens,
       log.cache_creation_tokens,
       log.rate_multiplier,
-      log.actual_cost.toFixed(8),
-      log.total_cost.toFixed(8),
+      (log.actual_cost ?? 0).toFixed(8),
+      (log.total_cost ?? 0).toFixed(8),
+      log.kiro_credits ?? '',
       log.first_token_ms ?? '',
       log.duration_ms ?? '',
     ].map(escapeCSVValue))
