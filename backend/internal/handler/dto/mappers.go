@@ -650,6 +650,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		OutputCost:                l.OutputCost,
 		CacheCreationCost:         l.CacheCreationCost,
 		CacheReadCost:             l.CacheReadCost,
+		KiroCredits:               l.KiroCredits,
 		TotalCost:                 l.TotalCost,
 		ActualCost:                l.ActualCost,
 		RateMultiplier:            l.RateMultiplier,

@@ -540,6 +540,7 @@ export default {
       billingModePerRequest: '按次',
       billingModeImage: '按次(图片)',
       billingModeVideo: '按次(视频)',
+      billingModeCredits: '按 Credit',
       allBillingModes: '全部计费模式',
       ipAddress: 'IP',
       clickToViewBalance: '点击查看充值记录',
