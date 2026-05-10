@@ -3626,6 +3626,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
     }
 
+    // Load credits_per_dollar for kiro type (stored in extra)
+    if (newAccount.type === 'kiro') {
+      const extra = (newAccount.extra as Record<string, unknown>) || {}
+      editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
+    }
+
     // Load custom error codes
     customErrorCodesEnabled.value = credentials.custom_error_codes_enabled === true
     const existingErrorCodes = credentials.custom_error_codes as number[] | undefined
