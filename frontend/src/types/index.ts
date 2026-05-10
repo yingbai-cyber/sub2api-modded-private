@@ -1376,6 +1376,7 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+  kiro_credits?: number
 
   created_at: string
 

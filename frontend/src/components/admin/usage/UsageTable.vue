@@ -179,6 +179,9 @@
                 </div>
               </div>
             </div>
+            <div v-if="hasKiroCredits(row)" class="mt-0.5 text-[11px] font-medium text-cyan-600 dark:text-cyan-400">
+              {{ formatKiroCredits(row.kiro_credits) }} {{ t('usage.kiroCredits') }}
+            </div>
             <div v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
@@ -331,7 +334,7 @@
               <span class="font-medium text-pink-300">${{ tooltipData.image_output_cost.toFixed(6) }}</span>
             </div>
             <!-- Token billing: show unit prices per 1M tokens -->
-            <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
+            <template v-if="tooltipData && (!getDisplayBillingMode(tooltipData) || getDisplayBillingMode(tooltipData) === BILLING_MODE_TOKEN)">
               <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
                 <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
@@ -345,6 +348,7 @@
                 <span class="font-medium text-pink-300">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
+            <!-- Per-image billing: show image metadata and unit price -->
             <template v-else-if="tooltipData && isImageUsage(tooltipData)">
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageCount') }}</span>
@@ -377,6 +381,12 @@
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageTotalPrice') }}</span>
                 <span class="font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
+              </div>
+            </template>
+            <template v-else-if="hasKiroCredits(tooltipData)">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
+                <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
               </div>
             </template>
             <div v-else class="flex items-center justify-between gap-4">
@@ -450,6 +460,7 @@ import {
   firstTokenSeverity,
 } from '@/utils/latencyHealth'
 import {
+  BILLING_MODE_CREDITS,
   BILLING_MODE_TOKEN,
   getBillingModeLabel,
   getBillingModeBadgeClass,
@@ -475,6 +486,14 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   return Number.isNaN(result) ? 0 : result
 }
 
+
+function hasKiroCredits(row: AdminUsageLog | null | undefined): boolean {
+  return row?.billing_mode === BILLING_MODE_CREDITS && (row.kiro_credits ?? 0) > 0
+}
+
+function formatKiroCredits(credits: number | null | undefined): string {
+  return (credits ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })
+}
 
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
