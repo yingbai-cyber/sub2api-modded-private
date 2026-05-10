@@ -110,6 +110,20 @@
           </div>
         </div>
 
+        <!-- Credits Per Dollar (kiro only) -->
+        <div v-if="account.type === 'kiro'">
+          <label class="input-label">Credits Per Dollar</label>
+          <input
+            v-model.number="editKiroCreditsPerDollar"
+            type="number"
+            step="0.01"
+            min="0"
+            class="input"
+            placeholder="1 USD = ? credits（如 50）"
+          />
+          <p class="input-hint">1 USD 对应多少 Kiro credits，用于计费换算</p>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -2765,6 +2779,7 @@ function formatPoolModeRetryStatusCodes(value: unknown): string {
   return out.sort((a, b) => a - b).join(', ')
 }
 const probingModels = ref(false)
+const editKiroCreditsPerDollar = ref<number>(50)
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
@@ -3463,6 +3478,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       Number(credentials.pool_mode_retry_count ?? DEFAULT_POOL_MODE_RETRY_COUNT)
     )
     poolModeRetryStatusCodesInput.value = formatPoolModeRetryStatusCodes(credentials.pool_mode_retry_status_codes)
+
+    // Load credits_per_dollar for kiro type (stored in extra)
+    if (newAccount.type === 'kiro') {
+      const extra = (newAccount.extra as Record<string, unknown>) || {}
+      editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
+    }
 
     // Load custom error codes
     customErrorCodesEnabled.value = credentials.custom_error_codes_enabled === true
@@ -4398,6 +4419,18 @@ const handleSubmit = async () => {
         newExtra.allow_overages = true
       } else {
         delete newExtra.allow_overages
+      }
+      updatePayload.extra = newExtra
+    }
+
+    // For Kiro accounts, handle credits_per_dollar in extra
+    if (props.account.platform === 'anthropic' && props.account.type === 'kiro') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (editKiroCreditsPerDollar.value > 0) {
+        newExtra.credits_per_dollar = editKiroCreditsPerDollar.value
+      } else {
+        delete newExtra.credits_per_dollar
       }
       updatePayload.extra = newExtra
     }
