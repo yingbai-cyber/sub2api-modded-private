@@ -76,6 +76,43 @@
             "
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+          <!-- Probe Models Button for Kiro -->
+          <div v-if="account.type === 'kiro' && editBaseUrl.trim()" class="mt-2">
+            <button
+              type="button"
+              :disabled="probingModels"
+              @click="handleKiroProbeModels"
+              class="inline-flex items-center rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 transition-all hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-teal-800 dark:bg-teal-900/20 dark:text-teal-400 dark:hover:bg-teal-900/40"
+            >
+              <svg
+                v-if="!probingModels"
+                class="mr-1.5 h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              <svg
+                v-else
+                class="mr-1.5 h-3.5 w-3.5 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              {{ probingModels ? t('admin.accounts.probeModelsLoading') : t('admin.accounts.probeModels') }}
+            </button>
+            <span class="ml-2 text-xs text-gray-400 dark:text-gray-500">
+              {{ t('admin.accounts.probeModelsHint') }}
+            </span>
+          </div>
         </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
@@ -2834,6 +2871,7 @@ function formatPoolModeRetryStatusCodes(value: unknown): string {
   }
   return out.sort((a, b) => a - b).join(', ')
 }
+const probingModels = ref(false)
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
@@ -3671,6 +3709,35 @@ watch(
 // Model mapping helpers
 const addModelMapping = () => {
   modelMappings.value.push({ from: '', to: '' })
+}
+
+// Probe Kiro upstream models
+const handleKiroProbeModels = async () => {
+  if (!editBaseUrl.value.trim()) return
+  probingModels.value = true
+  try {
+    const result = await adminAPI.accounts.probeModels({
+      platform: 'anthropic',
+      base_url: editBaseUrl.value.trim(),
+      api_key: editApiKey.value.trim() || (props.account?.credentials as Record<string, unknown>)?.api_key as string || '',
+      proxy_id: props.account?.proxy_id || undefined
+    })
+    if (result.models && result.models.length > 0) {
+      const existing = new Set(allowedModels.value)
+      for (const model of result.models) {
+        existing.add(model)
+      }
+      allowedModels.value = Array.from(existing)
+      appStore.showSuccess(t('admin.accounts.probeModelsSuccess', { count: result.models.length }))
+    } else {
+      appStore.showWarning(t('admin.accounts.probeModelsEmpty'))
+    }
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || e?.message || t('admin.accounts.probeModelsFailed')
+    appStore.showError(`${t('admin.accounts.probeModelsFailed')}: ${msg}`)
+  } finally {
+    probingModels.value = false
+  }
 }
 
 const removeModelMapping = (index: number) => {
