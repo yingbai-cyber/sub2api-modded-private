@@ -33,11 +33,20 @@ func (s *GatewayService) forwardKiro(
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
+	// 应用模型映射（请求方向）
+	body := parsed.Body
+	originalModel := parsed.Model
+	mappedModel := account.GetMappedModel(originalModel)
+	if mappedModel != originalModel {
+		body = s.replaceModelInBody(body, mappedModel)
+		logger.LegacyPrintf("service.gateway", "[Kiro] Model mapping applied: %s -> %s (account=%s)", originalModel, mappedModel, account.Name)
+	}
+
 	// 构建上游请求 URL
 	upstreamURL := baseURL + "/v1/messages"
 
 	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(parsed.Body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("kiro: create request: %w", err)
 	}
@@ -89,19 +98,19 @@ func (s *GatewayService) forwardKiro(
 	var clientDisconnect bool
 
 	if parsed.Stream {
-		// 流式响应：透传并提取 usage
+		// 流式响应：透传并提取 usage，回写模型名
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 
-		streamRes := s.streamKiroResponse(c, resp, startTime)
+		streamRes := s.streamKiroResponse(c, resp, startTime, originalModel, mappedModel)
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
 	} else {
-		// 非流式响应：直接透传
+		// 非流式响应：透传并回写模型名
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("kiro: read response: %w", err)
@@ -111,6 +120,11 @@ func (s *GatewayService) forwardKiro(
 		parsedUsage := parseClaudeUsageFromResponseBody(respBody)
 		if parsedUsage != nil {
 			usage = *parsedUsage
+		}
+
+		// 模型名回写（响应方向）
+		if originalModel != mappedModel {
+			respBody = s.replaceModelInResponseBody(respBody, mappedModel, originalModel)
 		}
 
 		c.Header("Content-Type", resp.Header.Get("Content-Type"))
@@ -140,10 +154,12 @@ type kiroStreamResult struct {
 }
 
 // streamKiroResponse 透传 kiro-rs 的 SSE 流并提取 usage（含 kiro_credits）
-func (s *GatewayService) streamKiroResponse(c *gin.Context, resp *http.Response, startTime time.Time) *kiroStreamResult {
+// 如果 originalModel != mappedModel，会回写响应中的模型名
+func (s *GatewayService) streamKiroResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel, mappedModel string) *kiroStreamResult {
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	clientDisconnected := false
+	needModelReplace := originalModel != mappedModel
 
 	flusher, _ := c.Writer.(http.Flusher)
 
@@ -167,8 +183,14 @@ func (s *GatewayService) streamKiroResponse(c *gin.Context, resp *http.Response,
 		// 尝试从 SSE data 行提取 usage（含 kiro_credits）
 		extractKiroSSEUsage(line, usage)
 
+		// 模型名回写（响应方向）：替换 SSE data 中的 model 字段
+		outputLine := line
+		if needModelReplace && strings.HasPrefix(line, "data: ") {
+			outputLine = replaceModelInSSELine(line, mappedModel, originalModel)
+		}
+
 		// 透传行到客户端
-		if _, err := fmt.Fprintf(c.Writer, "%s\n", line); err != nil {
+		if _, err := fmt.Fprintf(c.Writer, "%s\n", outputLine); err != nil {
 			clientDisconnected = true
 			// 继续读取上游以获取完整 usage 用于计费
 			for scanner.Scan() {
@@ -186,6 +208,38 @@ func (s *GatewayService) streamKiroResponse(c *gin.Context, resp *http.Response,
 		firstTokenMs:     firstTokenMs,
 		clientDisconnect: clientDisconnected,
 	}
+}
+
+// replaceModelInSSELine 替换 SSE data 行中的 model 字段
+func replaceModelInSSELine(line, fromModel, toModel string) string {
+	dataStr := strings.TrimPrefix(line, "data: ")
+	var event map[string]any
+	if json.Unmarshal([]byte(dataStr), &event) != nil {
+		return line
+	}
+
+	changed := false
+	// 顶层 model 字段
+	if model, ok := event["model"].(string); ok && model == fromModel {
+		event["model"] = toModel
+		changed = true
+	}
+	// message.model 字段（message_start 事件）
+	if msg, ok := event["message"].(map[string]any); ok {
+		if model, ok := msg["model"].(string); ok && model == fromModel {
+			msg["model"] = toModel
+			changed = true
+		}
+	}
+
+	if !changed {
+		return line
+	}
+	newData, err := json.Marshal(event)
+	if err != nil {
+		return line
+	}
+	return "data: " + string(newData)
 }
 
 // extractKiroSSEUsage 从 SSE data 行中提取 usage（含 kiro_credits）
