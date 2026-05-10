@@ -115,7 +115,7 @@ type UsageLog struct {
 	ModelMappingChain *string
 	// BillingTier 计费层级标签（per_request/image 模式）
 	BillingTier *string
-	// BillingMode 计费模式：token/image
+	// BillingMode 计费模式：token/per_request/image/credits
 	BillingMode *string
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string
@@ -143,6 +143,8 @@ type UsageLog struct {
 	ImageInputCost    float64
 	ImageOutputTokens int
 	ImageOutputCost   float64
+	// KiroCredits records the raw credits consumed by Kiro accounts before USD conversion.
+	KiroCredits float64
 
 	InputCost                 float64
 	OutputCost                float64
