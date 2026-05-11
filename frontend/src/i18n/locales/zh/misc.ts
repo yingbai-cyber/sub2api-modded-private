@@ -85,8 +85,8 @@ export default {
 
   // Announcements Page
   announcements: {
-    title: '公告',
-    description: '查看系统公告',
+    title: '公告中心',
+    description: '查看未过期且对您可见的系统公告',
     unreadOnly: '仅显示未读',
     markRead: '标记已读',
     markAllRead: '全部已读',
@@ -312,7 +312,8 @@ export default {
     title: '充值/订阅',
     amountLabel: '充值金额',
     paymentAmount: '支付金额',
-    creditedBalance: '到账余额',
+    creditedBalance: '到账 U',
+    estimatedCredit: '预计到账',
     quickAmounts: '快捷金额',
     customAmount: '自定义金额',
     enterAmount: '输入金额',
@@ -415,7 +416,7 @@ export default {
     amountTooLow: '最低金额为 {min}',
     amountTooHigh: '最高金额为 {max}',
     amountNoMethod: '该金额没有可用的支付方式',
-    rechargeRatePreview: '当前倍率：1 CNY = {usd} USD',
+    rechargeRatePreview: '到账规则：1 RMB = {u} U',
     refundReason: '退款原因',
     refundReasonPlaceholder: '请描述您的退款原因',
     stripeLoadFailed: '支付组件加载失败，请刷新页面重试',
