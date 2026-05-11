@@ -89,8 +89,8 @@ export default {
 
   // Announcements Page
   announcements: {
-    title: 'Announcements',
-    description: 'View system announcements',
+    title: 'Announcement Center',
+    description: 'View active system announcements visible to you',
     unreadOnly: 'Show unread only',
     markRead: 'Mark as read',
     markAllRead: 'Mark all as read',
@@ -290,7 +290,8 @@ export default {
     title: 'Recharge / Subscription',
     amountLabel: 'Amount',
     paymentAmount: 'Payment Amount',
-    creditedBalance: 'Credited Balance',
+    creditedBalance: 'Credited U',
+    estimatedCredit: 'Estimated credit',
     quickAmounts: 'Quick Amounts',
     customAmount: 'Custom Amount',
     enterAmount: 'Enter amount',
@@ -394,7 +395,7 @@ export default {
     amountTooLow: 'Minimum amount is {min}',
     amountTooHigh: 'Maximum amount is {max}',
     amountNoMethod: 'No payment method available for this amount',
-    rechargeRatePreview: 'Current rate: 1 {currency} = {usd} USD',
+    rechargeRatePreview: 'Credit rule: 1 RMB = {u} U',
     refundReason: 'Refund Reason',
     refundReasonPlaceholder: 'Please describe your refund reason',
     stripeLoadFailed: 'Failed to load payment component. Please refresh and try again.',
