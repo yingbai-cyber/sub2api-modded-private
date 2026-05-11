@@ -39,7 +39,7 @@
             <div class="card p-5">
               <p class="text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</p>
               <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
-              <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
+              <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }} U</p>
             </div>
             <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
@@ -52,6 +52,15 @@
                 :min="globalMinAmount"
                 :max="globalMaxAmount"
               />
+              <div v-if="validAmount > 0" class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/60 dark:bg-emerald-900/20">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-sm font-medium text-emerald-700 dark:text-emerald-300">{{ t('payment.estimatedCredit') }}</span>
+                  <span class="text-lg font-bold text-emerald-700 dark:text-emerald-300">{{ creditedAmount.toFixed(2) }} U</span>
+                </div>
+                <p class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2) }) }}
+                </p>
+              </div>
               <p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
                 {{ t('payment.trialRechargeHint') }}
               </p>
@@ -78,12 +87,12 @@
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
                   <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
                 </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
+                <div class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
-                  <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
+                  <span class="text-gray-900 dark:text-white">{{ creditedAmount.toFixed(2) }} U</span>
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                <p class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
+                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
             </div>
