@@ -88,7 +88,8 @@ func (s *GatewayService) forwardKiro(
 		_, _ = c.Writer.Write(respBody)
 
 		return &ForwardResult{
-			Model: parsed.Model,
+			Model:  parsed.Model,
+			Stream: parsed.Stream,
 		}, nil
 	}
 
