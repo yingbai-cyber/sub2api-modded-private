@@ -365,6 +365,49 @@
 
 ---
 
+### 2026-07-22：Rebase 到 upstream v0.1.126（18790386）
+**类型**：上游同步 / rebase
+
+**背景**：
+- 上游从 `33db04fb` 推进到 `18790386`（tag `v0.1.126`），约 20+ 提交
+- 本地 67 个魔改提交需要 replay
+
+**上游主要变化**：
+- `cache_control` 改写默认关闭，新增 `rewriteMessageCacheControlIfEnabled` 配置开关
+- OpenAI unpriced model 记录零成本（`isUsagePricingUnavailableError`）
+- OpenAI 429 plan type 同步（`syncPlanTypeFromUsageLimitError`）
+- OpenAI messages multi-tool continuation 保留多工具上下文
+- Antigravity UA 可配置版本
+- tool name 改写测试完善
+- Airwallex 支付 + 多币种支持
+- deploy docker-compose 移除宿主机端口映射
+- 前端大量重构（删除 AvailableModelsView、AnnouncementsView 等）
+- `collectCacheControlPaths` 新增 `toolPaths` 返回值，`enforceCacheControlLimit` 优先移除工具断点
+
+**冲突文件与解决策略**：
+1. `backend/internal/service/setting_service.go`
+   - 冲突原因：上游在 `GetAvailableChannelsRuntime` 后加了 `GetAntigravityUserAgentVersion`，我们在同位置加了 `AvailableModelsRuntime`
+   - 解决：保留两者，上游的 `GetAntigravityUserAgentVersion` 在前，我们的 `AvailableModelsRuntime` 在后
+2. `backend/internal/service/gateway_messages_cache.go`
+   - 冲突原因：上游加了 `"context"` import，我们加了 `"bytes"` import
+   - 解决：两个 import 都保留
+
+**本地补丁影响评估**：
+- kiro_gateway.go：不受影响（纯本地文件，上游无此文件）
+- openai_images_web2api.go：不受影响（纯本地文件）
+- openai_images_capability.go：不受影响（纯本地文件）
+- openai_first_token_trace.go：不受影响（纯本地文件）
+- 非 mimicry 路径 prompt caching 补丁：不受影响（我们直接调用 `stripMessageCacheControl` + `addMessageCacheBreakpoints`，不经过上游新增的配置开关）
+- OAuth context detach：确认保留（`detachUpstreamContext` 仍在 openai_gateway_service.go 中）
+- web2api 路由分支：确认保留（`shouldUseOpenAIImagesWeb2API` / `shouldFailoverOpenAIImagesOAuthResponse` 仍在）
+
+**验证结果**：
+- 源码级 rebase 完成，67 个提交全部成功 replay，仅 2 个冲突已手工解决
+- 关键 grep 确认：kiro stream fix、web2api 路由、OAuth detach、images capability 均完好
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
