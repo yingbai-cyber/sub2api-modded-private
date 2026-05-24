@@ -2068,20 +2068,6 @@ func (s *AccountTestService) runOpenAIAPIKeyMetadataProbeBackground(ctx context.
 	return buildScheduledProbeResult(startedAt, "OpenAI API key metadata probe succeeded", "")
 }
 
-func buildOpenAIModelsURL(base string) string {
-	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
-	if strings.HasSuffix(normalized, "/models") {
-		return normalized
-	}
-	if strings.HasSuffix(normalized, "/responses") {
-		return strings.TrimSuffix(normalized, "/responses") + "/models"
-	}
-	if strings.HasSuffix(normalized, "/v1") {
-		return normalized + "/models"
-	}
-	return normalized + "/v1/models"
-}
-
 func (s *AccountTestService) persistOpenAIProbeExtra(ctx context.Context, account *Account, updates map[string]any) {
 	if s == nil || s.accountRepo == nil || account == nil || len(updates) == 0 {
 		return
