@@ -408,6 +408,36 @@
 
 ---
 
+### 2026-05-24：跟进 upstream v0.1.127-v0.1.130 并保留本地补丁
+**类型**：上游同步 / rebase / 冲突处理
+
+**背景**：
+- 官方 `upstream/main` 从 `18790386` 推进到 `63b0631a`，最新 tag 为 `v0.1.130`。
+- 官方更新包含：OpenAI/Codex UA 与 Responses 路由修复、OpenAI 账号 cooldown 调度、Chat Completions 测试路径、风险控制按模型生效、邮箱白名单通配符、邮件模板/通知、渠道监控 API 模式、Bedrock Claude Code 兼容、用户用量按平台/日明细、OpenAI Images `n` 参数与图片错误透传、反代真实 IP/ACL、依赖安全修复等。
+- 本地 `main` 的 69 个魔改提交需要继续 replay 到官方主线。
+
+**冲突文件与解决策略**：
+- OpenAI Images / web2api / 图片计费：保留本地 free OAuth 非流式文生图默认走 `web2api`；采用 upstream 新的统一图片计费 helper 入口，但恢复本地语义：只有官方 `1024x1024` 算 `1K`，自定义/未知有效尺寸最低 `2K`，超过 `2560*1440` 像素或超宽/超高边界按 `4K`，非法/双边超约束回退 `2K`。
+- OpenAI TTFT trace：保留本地 `openai.ttft_trace` 埋点；合并 upstream 在 account slot 释放上的 defer 语义，避免重复释放；保留 stream 首 SSE、首 chat chunk、forward_ms 等 trace 字段。
+- OpenAI OAuth legacy `/responses`：确认继续保留 upstream detached upstream context 语义，避免客户端断开影响上游收尾/计费。
+- Account scheduled test：同时保留 upstream APIKey 不支持 Responses 时的 Chat Completions 测试路径，以及本地 OAuth 定时轻量探测 `wham/usage` 语义。
+- `setting_service.go`：同时保留 upstream OpenAI Codex UA 设置缓存和本地 Available Models runtime 开关。
+- Kiro 相关：保留 Kiro 401 临时冷却、OpenAI 格式端点兼容、白名单+映射同时生效、credits 用量记录与展示；合并 upstream 用量表图片尺寸字段和本地 `kiro_credits` 字段。
+
+**本地补丁影响评估**：
+- `openai_images_web2api.go`、`shouldUseOpenAIImagesWeb2API`、`shouldFailoverOpenAIImagesOAuthResponse` 语义需在 Actions 后重点确认。
+- `NormalizeImageBillingTierOrDefault` 现在是 OpenAI Images 与其他图片路径共用入口；后续 upstream 若继续改图片尺寸分级，要优先保护本地 1K/2K/4K 分级规则。
+- `openai_first_token_trace.go` 与 handler/service trace 埋点仍为本地排障能力；后续 OpenAI gateway 冲突需继续防止丢失。
+- Kiro credits 迁移 `backend/migrations/136_add_usage_log_kiro_credits.sql` 与 usage log 50 列插入/扫描顺序需要由 CI/Actions 验证。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=63b0631a` 已成为当前 `main` 祖先。
+- 已执行轻量检查：`gofmt` 处理手工合并过的 Go 文件；`git diff --check` 通过；backend/frontend 源码未发现真实冲突标记。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或 `systemctl restart`。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
