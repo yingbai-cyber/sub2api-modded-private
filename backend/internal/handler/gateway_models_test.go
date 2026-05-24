@@ -79,6 +79,44 @@ func (s *gatewayModelsAccountRepoStub) ListModelAvailabilityCandidates(ctx conte
 	return s.ListSchedulableByGroupID(ctx, *groupID)
 }
 
+func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]service.Account, error) {
+	accounts, err := s.ListSchedulableByGroupID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	platformSet := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		platformSet[platform] = struct{}{}
+	}
+	out := make([]service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if _, ok := platformSet[account.Platform]; ok {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
+func (s *gatewayModelsAccountRepoStub) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]service.Account, error) {
+	platformSet := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		platformSet[platform] = struct{}{}
+	}
+	out := make([]service.Account, 0)
+	for groupID := range s.byGroup {
+		accounts, err := s.ListSchedulableByGroupID(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		for _, account := range accounts {
+			if _, ok := platformSet[account.Platform]; ok {
+				out = append(out, account)
+			}
+		}
+	}
+	return out, nil
+}
+
 func newGatewayModelsHandlerForTest(repo service.AccountRepository) *GatewayHandler {
 	return &GatewayHandler{
 		gatewayService: service.NewGatewayService(
