@@ -228,9 +228,6 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuthWeb2API(
 	}
 
 	convReq := buildOpenAIImageConversationRequest(parsed, parentMessageID, uploads)
-	if parsedContent, err := json.Marshal(convReq); err == nil {
-		setOpsUpstreamRequestBody(c, parsedContent)
-	}
 	convHeaders := cloneHTTPHeader(headers)
 	convHeaders.Set("Accept", "text/event-stream")
 	convHeaders.Set("Content-Type", "application/json")
