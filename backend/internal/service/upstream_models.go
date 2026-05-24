@@ -388,8 +388,11 @@ func buildV1ModelsURL(base string) string {
 
 func buildOpenAIModelsURL(base string) string {
 	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
-	if strings.HasSuffix(normalized, "/v1/models") {
+	if strings.HasSuffix(normalized, "/v1/models") || strings.HasSuffix(normalized, "/models") {
 		return normalized
+	}
+	if strings.HasSuffix(normalized, "/responses") {
+		return strings.TrimSuffix(normalized, "/responses") + "/models"
 	}
 	if strings.HasSuffix(normalized, "/v1") {
 		return normalized + "/models"
