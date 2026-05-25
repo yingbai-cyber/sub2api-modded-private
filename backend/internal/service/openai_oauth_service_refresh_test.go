@@ -55,12 +55,12 @@ func makeOpenAITestJWT(t *testing.T, planType string) string {
 	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
-func newOpenAITestReqJSONClient(status int, body string, seenReq **http.Request) *req.Client {
+func newOpenAITestReqJSONClient(status int, body string, seenReqs *[]*http.Request) *req.Client {
 	client := req.C()
 	client.GetTransport().WrapRoundTripFunc(func(_ http.RoundTripper) req.HttpRoundTripFunc {
 		return func(r *http.Request) (*http.Response, error) {
-			if seenReq != nil {
-				*seenReq = r
+			if seenReqs != nil {
+				*seenReqs = append(*seenReqs, r)
 			}
 			return &http.Response{
 				StatusCode: status,
@@ -73,7 +73,7 @@ func newOpenAITestReqJSONClient(status int, body string, seenReq **http.Request)
 }
 
 func TestOpenAIOAuthService_RefreshTokenWithClientID_WhamUsageOverridesJWTPlan(t *testing.T) {
-	var seenReq *http.Request
+	var seenReqs []*http.Request
 	client := &openaiOAuthClientRefreshStub{tokenResp: &openai.TokenResponse{
 		AccessToken:  "access-token",
 		RefreshToken: "refresh-token-new",
@@ -82,15 +82,22 @@ func TestOpenAIOAuthService_RefreshTokenWithClientID_WhamUsageOverridesJWTPlan(t
 	}}
 	svc := NewOpenAIOAuthService(nil, client)
 	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
-		return newOpenAITestReqJSONClient(http.StatusOK, `{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false}}`, &seenReq), nil
+		return newOpenAITestReqJSONClient(http.StatusOK, `{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false}}`, &seenReqs), nil
 	})
 
 	info, err := svc.RefreshTokenWithClientID(context.Background(), "refresh-token", "", openai.ClientID)
 	require.NoError(t, err)
 	require.Equal(t, "plus", info.PlanType)
-	require.NotNil(t, seenReq)
-	require.Equal(t, "/backend-api/wham/usage", seenReq.URL.Path)
-	require.Equal(t, "acct-test", seenReq.Header.Get("chatgpt-account-id"))
+
+	var whamReq *http.Request
+	for _, seenReq := range seenReqs {
+		if seenReq.URL.Path == "/backend-api/wham/usage" {
+			whamReq = seenReq
+			break
+		}
+	}
+	require.NotNil(t, whamReq)
+	require.Equal(t, "acct-test", whamReq.Header.Get("chatgpt-account-id"))
 }
 
 func TestOpenAIOAuthService_RefreshTokenWithClientID_WhamFailureKeepsJWTPlan(t *testing.T) {
