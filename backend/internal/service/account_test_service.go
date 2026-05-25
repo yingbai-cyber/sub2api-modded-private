@@ -1977,6 +1977,9 @@ func (s *AccountTestService) runOpenAIWhamUsageProbeBackground(ctx context.Conte
 		if whamUpdates := buildCodexUsageExtraUpdates(openAIWhamUsageToCodexSnapshot(usage, now), now); len(whamUpdates) > 0 {
 			updates = mergeExtraUpdates(updates, whamUpdates)
 		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			persistOpenAIObservedPlanType(ctx, s.accountRepo, account, usage.PlanType, "wham_usage")
+		}
 	}
 	s.persistOpenAIProbeExtra(ctx, account, updates)
 
