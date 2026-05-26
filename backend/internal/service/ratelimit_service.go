@@ -1540,7 +1540,37 @@ func parseOpenAIRateLimitPlanType(body []byte) string {
 }
 
 func persistOpenAI429PlanType(ctx context.Context, repo AccountRepository, account *Account, body []byte) {
-	persistOpenAIObservedPlanType(ctx, repo, account, parseOpenAIRateLimitPlanType(body), "429")
+	if repo == nil || account == nil || account.Platform != PlatformOpenAI {
+		return
+	}
+	// Spark 影子账号恒不持凭据：即便收到带 plan_type 的 429，也不能把 plan_type 写进影子 credentials。
+	// plan_type 由凭据 owner（母账号）在自己的请求上维护，影子跳过。
+	if account.IsCredentialShadow() {
+		return
+	}
+
+	planType := parseOpenAIRateLimitPlanType(body)
+	if planType == "" {
+		return
+	}
+
+	current := strings.TrimSpace(account.GetCredential("plan_type"))
+	if strings.EqualFold(current, planType) {
+		return
+	}
+
+	if _, err := repo.BulkUpdate(ctx, []int64{account.ID}, AccountBulkUpdate{
+		Credentials: map[string]any{"plan_type": planType},
+	}); err != nil {
+		slog.Warn("openai_429_plan_type_sync_failed", "account_id", account.ID, "plan_type", planType, "error", err)
+		return
+	}
+
+	if account.Credentials == nil {
+		account.Credentials = make(map[string]any, 1)
+	}
+	account.Credentials["plan_type"] = planType
+	slog.Info("openai_429_plan_type_synced", "account_id", account.ID, "previous_plan_type", current, "plan_type", planType)
 }
 
 // handle529 处理529过载错误

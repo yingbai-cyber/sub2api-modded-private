@@ -609,11 +609,10 @@ func TestAccountTestService_RunTestBackgroundOpenAIOAuthUsesWhamUsage(t *testing
 		Credentials: map[string]any{
 			"access_token":       "test-token",
 			"chatgpt_account_id": "acct-test",
-			"plan_type":          "free",
 		},
 	}
 	resp := newJSONResponse(http.StatusOK, `{
-		"plan_type":"plus",
+		"plan_type":"free",
 		"rate_limit":{
 			"allowed":true,
 			"limit_reached":false,
@@ -641,12 +640,9 @@ func TestAccountTestService_RunTestBackgroundOpenAIOAuthUsesWhamUsage(t *testing
 	require.Equal(t, "/backend-api/wham/usage", upstream.requests[0].URL.Path)
 	require.Equal(t, "acct-test", upstream.requests[0].Header.Get("chatgpt-account-id"))
 	require.NotContains(t, upstream.requests[0].URL.Path, "/responses")
-	require.Equal(t, "plus", repo.updatedExtra["openai_usage_probe_plan_type"])
+	require.Equal(t, "free", repo.updatedExtra["openai_usage_probe_plan_type"])
 	require.Equal(t, 12.0, repo.updatedExtra["codex_5h_used_percent"])
 	require.Equal(t, 34.0, repo.updatedExtra["codex_7d_used_percent"])
-	require.Equal(t, []int64{account.ID}, repo.bulkUpdatedIDs)
-	require.Equal(t, "plus", repo.bulkUpdatedPayload.Credentials["plan_type"])
-	require.Equal(t, "plus", account.Credentials["plan_type"])
 	require.Zero(t, repo.setErrorID)
 }
 
@@ -686,7 +682,7 @@ func TestAccountTestService_RunTestBackgroundOpenAIOAuthWhamLimitReachedSetsRate
 		Type:        AccountTypeOAuth,
 		Status:      StatusActive,
 		Concurrency: 1,
-		Credentials: map[string]any{"access_token": "test-token", "plan_type": "plus"},
+		Credentials: map[string]any{"access_token": "test-token"},
 	}
 	resp := newJSONResponse(http.StatusOK, `{
 		"plan_type":"plus",
@@ -714,6 +710,5 @@ func TestAccountTestService_RunTestBackgroundOpenAIOAuthWhamLimitReachedSetsRate
 	require.Equal(t, account.ID, repo.rateLimitedID)
 	require.NotNil(t, repo.rateLimitedAt)
 	require.True(t, repo.updatedExtra["openai_usage_probe_limit_reached"].(bool))
-	require.Empty(t, repo.bulkUpdatedIDs)
 	require.Zero(t, repo.setErrorID)
 }
