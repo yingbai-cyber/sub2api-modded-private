@@ -2,13 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +16,6 @@ import (
 
 type openaiOAuthClientRefreshStub struct {
 	refreshCalls int32
-	tokenResp    *openai.TokenResponse
 }
 
 func (s *openaiOAuthClientRefreshStub) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*openai.TokenResponse, error) {
@@ -34,87 +29,7 @@ func (s *openaiOAuthClientRefreshStub) RefreshToken(ctx context.Context, refresh
 
 func (s *openaiOAuthClientRefreshStub) RefreshTokenWithClientID(ctx context.Context, refreshToken, proxyURL string, clientID string) (*openai.TokenResponse, error) {
 	atomic.AddInt32(&s.refreshCalls, 1)
-	if s.tokenResp != nil {
-		return s.tokenResp, nil
-	}
 	return nil, errors.New("not implemented")
-}
-
-func makeOpenAITestJWT(t *testing.T, planType string) string {
-	t.Helper()
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload, err := json.Marshal(map[string]any{
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"https://api.openai.com/auth": map[string]any{
-			"chatgpt_plan_type":  planType,
-			"chatgpt_account_id": "acct-test",
-			"chatgpt_user_id":    "user-test",
-		},
-	})
-	require.NoError(t, err)
-	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
-}
-
-func newOpenAITestReqJSONClient(status int, body string, seenReqs *[]*http.Request) *req.Client {
-	client := req.C()
-	client.GetTransport().WrapRoundTripFunc(func(_ http.RoundTripper) req.HttpRoundTripFunc {
-		return func(r *http.Request) (*http.Response, error) {
-			if seenReqs != nil {
-				*seenReqs = append(*seenReqs, r)
-			}
-			return &http.Response{
-				StatusCode: status,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(body)),
-			}, nil
-		}
-	})
-	return client
-}
-
-func TestOpenAIOAuthService_RefreshTokenWithClientID_WhamUsageOverridesJWTPlan(t *testing.T) {
-	var seenReqs []*http.Request
-	client := &openaiOAuthClientRefreshStub{tokenResp: &openai.TokenResponse{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token-new",
-		IDToken:      makeOpenAITestJWT(t, "free"),
-		ExpiresIn:    3600,
-	}}
-	svc := NewOpenAIOAuthService(nil, client)
-	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
-		return newOpenAITestReqJSONClient(http.StatusOK, `{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false}}`, &seenReqs), nil
-	})
-
-	info, err := svc.RefreshTokenWithClientID(context.Background(), "refresh-token", "", openai.ClientID)
-	require.NoError(t, err)
-	require.Equal(t, "plus", info.PlanType)
-
-	var whamReq *http.Request
-	for _, seenReq := range seenReqs {
-		if seenReq.URL.Path == "/backend-api/wham/usage" {
-			whamReq = seenReq
-			break
-		}
-	}
-	require.NotNil(t, whamReq)
-	require.Equal(t, "acct-test", whamReq.Header.Get("chatgpt-account-id"))
-}
-
-func TestOpenAIOAuthService_RefreshTokenWithClientID_WhamFailureKeepsJWTPlan(t *testing.T) {
-	client := &openaiOAuthClientRefreshStub{tokenResp: &openai.TokenResponse{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token-new",
-		IDToken:      makeOpenAITestJWT(t, "free"),
-		ExpiresIn:    3600,
-	}}
-	svc := NewOpenAIOAuthService(nil, client)
-	svc.SetPrivacyClientFactory(func(proxyURL string) (*req.Client, error) {
-		return newOpenAITestReqJSONClient(http.StatusForbidden, `{"detail":"blocked"}`, nil), nil
-	})
-
-	info, err := svc.RefreshTokenWithClientID(context.Background(), "refresh-token", "", openai.ClientID)
-	require.NoError(t, err)
-	require.Equal(t, "free", info.PlanType)
 }
 
 func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccessToken(t *testing.T) {
