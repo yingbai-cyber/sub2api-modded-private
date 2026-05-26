@@ -290,8 +290,6 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 		}
 	}
 
-	s.enrichTokenInfoFromWhamUsage(ctx, tokenInfo, proxyURL)
-
 	// 尝试设置隐私（关闭训练数据共享），best-effort
 	tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
 }
@@ -311,22 +309,6 @@ func resolveChatGPTSubscriptionAccountID(tokenInfo *OpenAITokenInfo, orgID strin
 		}
 	}
 	return ""
-}
-
-func (s *OpenAIOAuthService) enrichTokenInfoFromWhamUsage(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
-	if tokenInfo == nil || strings.TrimSpace(tokenInfo.AccessToken) == "" || s.privacyClientFactory == nil {
-		return
-	}
-
-	usage, err := fetchOpenAIWhamUsageWithReqClient(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL, tokenInfo.ChatGPTAccountID)
-	if err != nil {
-		slog.Debug("openai_wham_usage_plan_probe_failed", "error", err.Error())
-		return
-	}
-	if planType := normalizeOpenAIPlanType(usage.PlanType); planType != "" {
-		tokenInfo.PlanType = planType
-	}
-}
 }
 
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
