@@ -284,8 +284,6 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 		}
 	}
 
-	s.enrichTokenInfoFromWhamUsage(ctx, tokenInfo, proxyURL)
-
 	// 尝试设置隐私（关闭训练数据共享），best-effort
 	tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
 }
@@ -316,7 +314,6 @@ func (s *OpenAIOAuthService) enrichTokenInfoFromWhamUsage(ctx context.Context, t
 	if planType := normalizeOpenAIPlanType(usage.PlanType); planType != "" {
 		tokenInfo.PlanType = planType
 	}
-}
 }
 
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
