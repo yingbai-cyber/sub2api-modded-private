@@ -438,6 +438,43 @@
 
 ---
 
+### 2026-06-07：Rebase 到 upstream v0.1.133 (aa69e394)
+**类型**：upstream 跟进
+
+**背景**：
+- 上游从 v0.1.130 (f7ac5e59) 推进到 v0.1.133 (aa69e394)，约 60 个 first-parent 提交
+- 主要变化：Codex Responses ↔ Chat Completions 桥接重构、WS Codex 生图桥接修复、OpenAI OOM 处理、failover 请求体重映射、WS usage dedup、OAuth refresh enrichment (#2881)、添加账号时同步上游模型、用量窗口/tooltip 修复、Claude Code count_tokens 修复、admin usage 优化、platform quota 连接优化、Gemini 消息工具排序修复、账号配额阈值自动暂停、定价元数据更新
+- 上游还做了大量 gateway 重构：introduce request body refs、remove parsed request object graphs、introduce OpenAI request view、defer request map decoding、snapshot usage worker inputs
+
+**冲突解决摘要**：
+- `gateway.go` 路由：保留本地 embeddings 路由 + 采纳上游 `/images/capability` 路由
+- `openai_images.go`：采纳上游 `RequiredCapability` 检查，保留本地 `requestModel` 变量
+- `openai_account_scheduler.go`：保留本地 native→basic 回退逻辑（free OAuth web2api 所需）
+- `openai_images_test.go`：保留双方测试（error body read limit + capability unsupported params）
+- `openai_chat_completions.go` / `openai_gateway_handler.go`：合并上游 `QuotaPlatform` 签名 + 本地 TTFT trace 计时
+- `openai_gateway_service.go`：只保留 TTFT trace timing，去掉已被上游重构废弃的 body re-serialize 块
+- `setting_service.go`：保留双方（本地 Codex plugin 缓存 + 上游 Available Models runtime）
+- `CreateAccountModal.vue`：保留 probe-models button + 本地 `:sync-credentials` prop
+- `EditAccountModal.vue`：保留 pool mode retry status codes 解析 + probingModels ref
+- `ratelimit_service.go`：保留上游详细注释 + handleAuthError/break + 本地 Kiro 类型判断
+- `openai_oauth_service.go` / `wire.go`：保留 `resolveChatGPTSubscriptionAccountID` + `enrichTokenInfoFromWhamUsage` + `ProvideOpenAIOAuthService`
+
+**跳过的本地补丁**：
+- `fix(gateway): retry once on upstream empty stream for Responses/CC paths` — 上游对 gateway forward 做了 request body refs 重构，旧的 `attemptOnce` 闭包实现与新代码结构不兼容。需要在新上游代码结构上重新实现。
+
+**待办**：
+- [ ] 在新上游代码结构上重新实现 empty stream retry（检测空流→同账号重试一次→对客户端透明）
+- [ ] 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=aa69e394` 已成为当前 `main` 祖先
+- 本地 83 个补丁 commit 在 upstream/main 之上
+- 源码无残留冲突标记
+- 未在服务器本机执行构建/测试/重启
+- 待 GitHub Actions 验证
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
