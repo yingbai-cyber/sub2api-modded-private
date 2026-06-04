@@ -429,7 +429,7 @@ func initializeOpenAIImageConversation(ctx context.Context, client *req.Client, 
 		return err
 	}
 	if !resp.IsSuccessState() {
-		return newOpenAIImageStatusError(resp, "conversation init failed")
+		return newOpenAIImageStatusError(resp, "conversation init failed", openAIUpstreamErrorBodyReadLimit)
 	}
 	return nil
 }
@@ -469,7 +469,7 @@ func fetchOpenAIChatRequirements(ctx context.Context, client *req.Client, header
 		if resp.IsSuccessState() && strings.TrimSpace(result.Token) != "" {
 			return &result, nil
 		}
-		lastErr = newOpenAIImageStatusError(resp, "chat-requirements failed")
+		lastErr = newOpenAIImageStatusError(resp, "chat-requirements failed", openAIUpstreamErrorBodyReadLimit)
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("chat-requirements failed")
@@ -533,7 +533,7 @@ func prepareOpenAIImageConversation(
 		return "", err
 	}
 	if !resp.IsSuccessState() {
-		return "", newOpenAIImageStatusError(resp, "conversation prepare failed")
+		return "", newOpenAIImageStatusError(resp, "conversation prepare failed", openAIUpstreamErrorBodyReadLimit)
 	}
 	return strings.TrimSpace(result.ConduitToken), nil
 }
@@ -574,7 +574,7 @@ func uploadOpenAIImageFiles(ctx context.Context, client *req.Client, headers htt
 			return nil, err
 		}
 		if !resp.IsSuccessState() || strings.TrimSpace(created.FileID) == "" || strings.TrimSpace(created.UploadURL) == "" {
-			return nil, newOpenAIImageStatusError(resp, "create upload slot failed")
+			return nil, newOpenAIImageStatusError(resp, "create upload slot failed", openAIUpstreamErrorBodyReadLimit)
 		}
 
 		uploadHeaders := map[string]string{
@@ -598,7 +598,7 @@ func uploadOpenAIImageFiles(ctx context.Context, client *req.Client, headers htt
 			_ = putResp.Body.Close()
 		}
 		if putResp.StatusCode < 200 || putResp.StatusCode >= 300 {
-			return nil, newOpenAIImageStatusError(putResp, "upload image bytes failed")
+			return nil, newOpenAIImageStatusError(putResp, "upload image bytes failed", openAIUpstreamErrorBodyReadLimit)
 		}
 
 		uploadedResp, err := client.R().
@@ -610,7 +610,7 @@ func uploadOpenAIImageFiles(ctx context.Context, client *req.Client, headers htt
 			return nil, err
 		}
 		if !uploadedResp.IsSuccessState() {
-			return nil, newOpenAIImageStatusError(uploadedResp, "mark upload complete failed")
+			return nil, newOpenAIImageStatusError(uploadedResp, "mark upload complete failed", openAIUpstreamErrorBodyReadLimit)
 		}
 
 		results = append(results, openAIUploadedImage{
@@ -923,7 +923,7 @@ func pollOpenAIImageConversation(ctx context.Context, client *req.Client, header
 					return pointers, nil
 				}
 			} else {
-				statusErr := newOpenAIImageStatusError(resp, "conversation poll failed")
+				statusErr := newOpenAIImageStatusError(resp, "conversation poll failed", openAIUpstreamErrorBodyReadLimit)
 				if isOpenAIImageTransientConversationNotFoundError(statusErr) {
 					lastErr = statusErr
 					goto waitNextPoll
@@ -991,7 +991,7 @@ func detachOpenAIImageLifecycleContext(ctx context.Context, timeout time.Duratio
 }
 
 func handleOpenAIImageBackendError(resp *req.Response) error {
-	return newOpenAIImageStatusError(resp, "backend-api request failed")
+	return newOpenAIImageStatusError(resp, "backend-api request failed", openAIUpstreamErrorBodyReadLimit)
 }
 
 func newOpenAIImageSyntheticStatusError(statusCode int, message string, requestURL string) *openAIImageStatusError {
