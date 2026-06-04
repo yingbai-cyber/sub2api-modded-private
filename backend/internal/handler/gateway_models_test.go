@@ -52,6 +52,36 @@ func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupID(ctx context.Cont
 	return out, nil
 }
 
+func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]service.Account, error) {
+	accounts, err := s.ListSchedulableByGroupID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Platform == platform {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
+func (s *gatewayModelsAccountRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
+	out := make([]service.Account, 0)
+	for groupID := range s.byGroup {
+		accounts, err := s.ListSchedulableByGroupID(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		for _, account := range accounts {
+			if account.Platform == platform {
+				out = append(out, account)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *gatewayModelsAccountRepoStub) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]service.Account, error) {
 	accounts, err := s.ListSchedulableByGroupID(ctx, groupID)
 	if err != nil {
