@@ -1414,7 +1414,6 @@ func (s *SettingService) GetAvailableModelsRuntime(ctx context.Context) Availabl
 		Enabled: !isFalseSettingValue(vals[SettingKeyAvailableModelsEnabled]),
 	}
 }
-}
 
 // SetOnUpdateCallback sets a callback function to be called when settings are updated
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
