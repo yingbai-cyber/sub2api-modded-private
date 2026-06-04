@@ -959,7 +959,7 @@ func buildOpenAIImageResponse(
 	}
 	items := make([]responseItem, 0, len(pointers))
 	for _, pointer := range pointers {
-		data, err := resolveOpenAIImageBytes(ctx, client, headers, conversationID, pointer)
+		data, err := resolveOpenAIImageBytes(ctx, client, headers, conversationID, pointer, openAIUpstreamErrorBodyReadLimit)
 		if err != nil {
 			return nil, 0, err
 		}
