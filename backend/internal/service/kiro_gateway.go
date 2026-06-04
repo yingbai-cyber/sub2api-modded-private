@@ -38,7 +38,7 @@ func (s *GatewayService) forwardKiro(
 	originalModel := parsed.Model
 	mappedModel := account.GetMappedModel(originalModel)
 	if mappedModel != originalModel {
-		body = s.replaceModelInBody(body, mappedModel)
+		body.Replace(s.replaceModelInBody(body.Bytes(), mappedModel))
 		logger.LegacyPrintf("service.gateway", "[Kiro] Model mapping applied: %s -> %s (account=%s)", originalModel, mappedModel, account.Name)
 	}
 
@@ -46,7 +46,7 @@ func (s *GatewayService) forwardKiro(
 	upstreamURL := baseURL + "/v1/messages"
 
 	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("kiro: create request: %w", err)
 	}
