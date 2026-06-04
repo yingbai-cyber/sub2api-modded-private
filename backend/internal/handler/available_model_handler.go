@@ -157,36 +157,6 @@ func toUserAvailableModels(platform string, modelIDs []string) []userAvailableMo
 	return out
 }
 
-func defaultModelIDsForPlatform(platform string) []string {
-	switch platform {
-	case service.PlatformOpenAI:
-		ids := make([]string, 0, len(openai.DefaultModels))
-		for _, m := range openai.DefaultModels {
-			ids = append(ids, m.ID)
-		}
-		return ids
-	case service.PlatformGemini:
-		ids := make([]string, 0, len(geminicli.DefaultModels))
-		for _, m := range geminicli.DefaultModels {
-			ids = append(ids, m.ID)
-		}
-		return ids
-	case service.PlatformAntigravity:
-		models := antigravity.DefaultModels()
-		ids := make([]string, 0, len(models))
-		for _, m := range models {
-			ids = append(ids, m.ID)
-		}
-		return ids
-	default:
-		ids := make([]string, 0, len(claude.DefaultModels))
-		for _, m := range claude.DefaultModels {
-			ids = append(ids, m.ID)
-		}
-		return ids
-	}
-}
-
 func displayNameForModel(platform, name string) string {
 	switch platform {
 	case service.PlatformOpenAI:
