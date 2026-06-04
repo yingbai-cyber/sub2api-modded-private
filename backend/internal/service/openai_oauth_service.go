@@ -301,21 +301,6 @@ func resolveChatGPTSubscriptionAccountID(tokenInfo *OpenAITokenInfo, orgID strin
 	return ""
 }
 
-func (s *OpenAIOAuthService) enrichTokenInfoFromWhamUsage(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
-	if tokenInfo == nil || strings.TrimSpace(tokenInfo.AccessToken) == "" || s.privacyClientFactory == nil {
-		return
-	}
-
-	usage, err := fetchOpenAIWhamUsageWithReqClient(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL, tokenInfo.ChatGPTAccountID)
-	if err != nil {
-		slog.Debug("openai_wham_usage_plan_probe_failed", "error", err.Error())
-		return
-	}
-	if planType := normalizeOpenAIPlanType(usage.PlanType); planType != "" {
-		tokenInfo.PlanType = planType
-	}
-}
-
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
 func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
 	if account.Platform != PlatformOpenAI {
