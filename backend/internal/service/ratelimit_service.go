@@ -278,9 +278,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 				} else {
 					slog.Info("oauth_401_force_refresh_set", "account_id", account.ID, "platform", account.Platform)
 				}
-				s.handleAuthError(ctx, account, msg)
-				shouldDisable = true
-				break
 			}
 			// 2. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）
 			// 注意：此处不再写回 account.Credentials/expires_at。
