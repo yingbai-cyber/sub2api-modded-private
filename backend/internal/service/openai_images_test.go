@@ -467,7 +467,6 @@ func TestBasicOpenAIImagesUnsupportedParams_AllowsUploadReferences(t *testing.T)
 	require.Contains(t, unsupported, "input_image_urls")
 	require.Contains(t, unsupported, "edits")
 }
-}
 
 func TestAccountSupportsOpenAIImageCapability_OAuthSupportsNative(t *testing.T) {
 	account := &Account{
