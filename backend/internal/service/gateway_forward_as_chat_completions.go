@@ -138,87 +138,52 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		proxyURL = account.Proxy.URL()
 	}
 
-	// 10. Build and send the request, recovering a concurrent token rotation once.
-	var upstreamReq *http.Request
-	var forwardedBody []byte
-	var resp *http.Response
-	for retriedRotatedToken := false; ; {
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-		upstreamReq, forwardedBody, err = s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
-		releaseUpstreamCtx()
-		if err != nil {
-			return nil, fmt.Errorf("build upstream request: %w", err)
-		}
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-		if err != nil {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
-				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
-			})
-		}
-		if resp.StatusCode == http.StatusUnauthorized && !retriedRotatedToken {
-			if rotatedToken := s.rotatedClaudeAccessToken(ctx, account, token); rotatedToken != "" {
-				_ = resp.Body.Close()
-				token = rotatedToken
-				retriedRotatedToken = true
-				continue
-			}
-		}
-		break
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Bill the final Anthropic effort after conversion and account normalization.
-	// For example, OpenAI xhigh is forwarded as output_config.effort=max.
-	reasoningEffort := NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
-	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
-
-	// 12. Handle error response with failover
-	if resp.StatusCode >= 400 {
-		respBody, _ := s.readUpstreamErrorBody(resp)
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
-		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
-		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-
-		// Apply account policies even for statuses outside the default failover list.
-		shouldDisable := false
-		if s.rateLimitService != nil {
-			shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
-		}
-		if shouldDisable || s.shouldFailoverUpstreamError(resp.StatusCode) {
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				ProxyID:            opsUpstreamProxyID(account),
-				ProxyName:          opsUpstreamProxyName(account),
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "failover",
-				Message:            upstreamMsg,
-			})
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-			}
-		}
-
-		writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
-		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
-	}
-
-	// 13. Handle normal response
-	// Read Anthropic SSE → convert to Responses events → convert to CC format
-	var result *ForwardResult
-	var handleErr error
+	// Streaming clients cannot retry after headers are written. Recover one
+	// concurrent token rotation, and keep upstream SSE error failover.
+	var reasoningEffort *string
 	if clientStream {
+		var upstreamReq *http.Request
+		var forwardedBody []byte
+		var resp *http.Response
+		for retriedRotatedToken := false; ; {
+			upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+			var buildErr error
+			upstreamReq, forwardedBody, buildErr = s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+			releaseUpstreamCtx()
+			if buildErr != nil {
+				return nil, fmt.Errorf("build upstream request: %w", buildErr)
+			}
+			reasoningEffort = NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
+			reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
+
+			var reqErr error
+			resp, reqErr = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+			if reqErr != nil {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, s.handleUpstreamTransportError(ctx, c, account, reqErr, OpsUpstreamErrorEvent{
+					UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
+				})
+			}
+			if resp.StatusCode == http.StatusUnauthorized && !retriedRotatedToken {
+				if rotatedToken := s.rotatedClaudeAccessToken(ctx, account, token); rotatedToken != "" {
+					_ = resp.Body.Close()
+					token = rotatedToken
+					retriedRotatedToken = true
+					continue
+				}
+			}
+			break
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode >= 400 {
+			return s.handleCCUpstreamError(ctx, c, resp, account, mappedModel)
+		}
+
 		writerSizeBeforeStream := c.Writer.Size()
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr := s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 		var sseErr *sseStreamErrorEventError
 		switch {
 		case errors.As(handleErr, &sseErr):
@@ -226,11 +191,118 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		case errors.Is(handleErr, errAnthropicNativeStreamIdle) && s.rateLimitService != nil:
 			s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 		}
-	} else {
-		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		return result, handleErr
 	}
 
-	return result, handleErr
+	// Buffered path: retry on empty stream.
+	for attempt := 0; attempt <= maxEmptyStreamRetries; attempt++ {
+		var upstreamReq *http.Request
+		var forwardedBody []byte
+		var resp *http.Response
+		for retriedRotatedToken := false; ; {
+			upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+			var buildErr error
+			upstreamReq, forwardedBody, buildErr = s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+			releaseUpstreamCtx()
+			if buildErr != nil {
+				return nil, fmt.Errorf("build upstream request: %w", buildErr)
+			}
+			if attempt == 0 && !retriedRotatedToken {
+				reasoningEffort = NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
+				reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
+			}
+
+			var reqErr error
+			resp, reqErr = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+			if reqErr != nil {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return nil, s.handleUpstreamTransportError(ctx, c, account, reqErr, OpsUpstreamErrorEvent{
+					UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
+				})
+			}
+			if resp.StatusCode == http.StatusUnauthorized && !retriedRotatedToken {
+				if rotatedToken := s.rotatedClaudeAccessToken(ctx, account, token); rotatedToken != "" {
+					_ = resp.Body.Close()
+					token = rotatedToken
+					retriedRotatedToken = true
+					continue
+				}
+			}
+			break
+		}
+
+		if resp.StatusCode >= 400 {
+			result, fErr := s.handleCCUpstreamError(ctx, c, resp, account, mappedModel)
+			_ = resp.Body.Close()
+			return result, fErr
+		}
+
+		result, handleErr := s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		_ = resp.Body.Close()
+
+		if handleErr != nil || !isEmptyStreamResult(result) {
+			return result, handleErr
+		}
+
+		// Empty stream detected; log and retry.
+		logger.L().Warn("forward_as_chat_completions: empty stream detected, retrying",
+			zap.Int64("account_id", account.ID),
+			zap.Int("attempt", attempt+1),
+		)
+	}
+
+	// All retries exhausted with empty stream — return empty result.
+	return &ForwardResult{
+		Model:         originalModel,
+		UpstreamModel: mappedModel,
+		Stream:        false,
+		Duration:      time.Since(startTime),
+	}, nil
+}
+
+// handleCCUpstreamError processes a 4xx/5xx response from upstream for the
+// Chat Completions path, either triggering failover or returning a formatted error.
+func (s *GatewayService) handleCCUpstreamError(
+	ctx context.Context,
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	mappedModel string,
+) (*ForwardResult, error) {
+	respBody, _ := s.readUpstreamErrorBody(resp)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+
+	shouldDisable := false
+	if s.rateLimitService != nil {
+		shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
+	}
+	if shouldDisable || s.shouldFailoverUpstreamError(resp.StatusCode) {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            upstreamMsg,
+		})
+		return nil, &UpstreamFailoverError{
+			StatusCode:             resp.StatusCode,
+			ResponseBody:           respBody,
+			RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+		}
+	}
+
+	writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
+	return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 }
 
 // extractCCReasoningEffortFromBody reads reasoning effort from a Chat Completions
