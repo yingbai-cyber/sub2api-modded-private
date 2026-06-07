@@ -334,16 +334,17 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 }
 
 type easyPayOrderQueryPayload struct {
-	Code        int             `json:"code"`
-	Msg         string          `json:"msg"`
-	PID         string          `json:"pid"`
-	Status      int             `json:"status"`
-	TradeStatus string          `json:"trade_status"`
-	Money       string          `json:"money"`
-	TradeNo     string          `json:"trade_no"`
-	OutTradeNo  string          `json:"out_trade_no"`
-	OrderNo     string          `json:"order_no"`
-	Data        json.RawMessage `json:"data"`
+	Code           int             `json:"code"`
+	Msg            string          `json:"msg"`
+	PID            string          `json:"pid"`
+	Status         int             `json:"status"`
+	TradeStatus    string          `json:"trade_status"`
+	HasTradeStatus bool            `json:"-"`
+	Money          string          `json:"money"`
+	TradeNo        string          `json:"trade_no"`
+	OutTradeNo     string          `json:"out_trade_no"`
+	OrderNo        string          `json:"order_no"`
+	Data           json.RawMessage `json:"data"`
 }
 
 func (e *EasyPay) queryOrderLegacy(ctx context.Context, outTradeNo string) (*payment.QueryOrderResponse, error) {
@@ -382,9 +383,8 @@ func (e *EasyPay) parseOrderQueryResponse(body []byte, queryRef string) (*paymen
 	}
 
 	status := payment.ProviderStatusPending
-	tradeStatus := strings.TrimSpace(payload.TradeStatus)
-	if tradeStatus != "" {
-		if strings.EqualFold(tradeStatus, tradeStatusSuccess) {
+	if payload.HasTradeStatus {
+		if strings.EqualFold(strings.TrimSpace(payload.TradeStatus), tradeStatusSuccess) {
 			status = payment.ProviderStatusPaid
 		}
 	} else if payload.Status == easypayStatusPaid {
@@ -411,10 +411,15 @@ func (e *EasyPay) parseOrderQueryResponse(body []byte, queryRef string) (*paymen
 }
 
 func parseEasyPayOrderQueryPayload(body []byte, queryRef string) (*easyPayOrderQueryPayload, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
 	var root easyPayOrderQueryPayload
 	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, fmt.Errorf("easypay parse query: %w", err)
 	}
+	_, root.HasTradeStatus = raw["trade_status"]
 	if data := strings.TrimSpace(string(root.Data)); data != "" && data != "null" {
 		if nested, ok := parseEasyPayNestedOrderPayload(root.Data, queryRef); ok {
 			mergeEasyPayOrderQueryPayload(&root, nested)
@@ -424,14 +429,27 @@ func parseEasyPayOrderQueryPayload(body []byte, queryRef string) (*easyPayOrderQ
 }
 
 func parseEasyPayNestedOrderPayload(data []byte, queryRef string) (*easyPayOrderQueryPayload, bool) {
+	var nestedRaw map[string]json.RawMessage
 	var nested easyPayOrderQueryPayload
-	if err := json.Unmarshal(data, &nested); err == nil {
-		return &nested, true
+	if err := json.Unmarshal(data, &nestedRaw); err == nil {
+		if err := json.Unmarshal(data, &nested); err == nil {
+			_, nested.HasTradeStatus = nestedRaw["trade_status"]
+			return &nested, true
+		}
 	}
 
+	var rowRaws []map[string]json.RawMessage
 	var rows []easyPayOrderQueryPayload
+	if err := json.Unmarshal(data, &rowRaws); err != nil {
+		return nil, false
+	}
 	if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 {
 		return nil, false
+	}
+	for i := range rows {
+		if i < len(rowRaws) {
+			_, rows[i].HasTradeStatus = rowRaws[i]["trade_status"]
+		}
 	}
 	queryRef = strings.TrimSpace(queryRef)
 	for i := range rows {
@@ -458,8 +476,9 @@ func mergeEasyPayOrderQueryPayload(dst, src *easyPayOrderQueryPayload) {
 	if src.Status != 0 {
 		dst.Status = src.Status
 	}
-	if src.TradeStatus != "" {
+	if src.HasTradeStatus {
 		dst.TradeStatus = src.TradeStatus
+		dst.HasTradeStatus = true
 	}
 	if src.Money != "" {
 		dst.Money = src.Money
