@@ -475,6 +475,39 @@
 
 ---
 
+### 2026-06-07：Rebase 到 upstream v0.1.134 (f868f7cb)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 上游从 `v0.1.133` (`aa69e394`) 推进到 `v0.1.134` (`f868f7cb`)，first-parent 约 43 个提交。
+- 主要变化包括：Go patch version bump 到 `1.26.4`、Responses/Chat Completions stream lifecycle 修复、OpenAI image upstream error passthrough、OpenAI image ratelimit cooldown failover、OpenAI Messages terminal event failover、DeepSeek/CC Responses bridge、sticky account / scheduler snapshot sync、usage cache token split、usage error requests、proxy quality pass、DB pool/leader lock/Postgres DSN 修复、Redis replicate commands 兼容、CWE stored XSS/key oracle 修复等。
+- 本地需要在新上游基础上继续保留：free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy /responses detached upstream context、TTFT trace、Kiro/Antigravity/available models/usage credits、empty stream retry 与 GitHub Actions 部署流程。
+
+**冲突解决摘要**：
+- `backend/internal/payment/provider/easypay.go`：合并上游 query 响应解析增强与本地 ezfpy findorder/code_url 兼容，保留 fallback 查询与 metadata pid。
+- `openai_chat_completions.go` / `openai_gateway_handler.go`：保留上游严格 `stream` 字段类型校验，并补回本地 `MaybeStartOpenAITTFTTrace`。
+- `openai_gateway_chat_completions.go` / `openai_gateway_service.go`：合并上游 stream failover/terminal event 语义与本地 TTFT trace 标记，保留空流/failed event failover 与模型替换、图片输出归一化。
+- `frontend/src/stores/app.ts` / `frontend/src/types/index.ts`：同时保留上游 `service_quota_enabled` 与本地 `available_models_enabled` public setting 字段。
+- `UsageTable.vue` / `UsageView.vue`：合并上游图片/Token 计费 tooltip 与本地 Kiro credits 展示、CSV 导出、空值安全。
+- `backend/cmd/server/wire_gen.go`：解决 token refresh 补丁与当前 OpenAI OAuth provider 构造冲突，保留单一 `ProvideOpenAIOAuthService(..., privacyClientFactory)`。
+- `backend/internal/service/wire.go`：rebase 后补正 provider set，使用 `ProvideOpenAIOAuthService` 替代直接 `NewOpenAIOAuthService`，避免未来重新生成 wire 时丢失 privacy factory 注入。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 路由仍在：`shouldUseOpenAIImagesWeb2API(account, parsed)` 仍接入 OAuth images 分支，`plan_type=free` 与 `openai_images_transport` 覆盖项保留。
+- 图片尺寸计费分级仍在：`normalizeOpenAIImageSizeTier` / `NormalizeImageBillingTierOrDefault` 与相关 size tier 测试仍存在。
+- OAuth legacy `/responses` detached upstream context 仍在：OAuth 账号路径保留 `detachUpstreamContext(ctx)`，防止客户端 cancel 影响上游计费语义。
+- Empty stream retry 已保留在新结构：`gateway_forward_as_responses.go` 与 `gateway_forward_as_chat_completions.go` 的 buffered path 继续在空流时同账号重试一次。
+- 文生图适配代码未被本次冲突直接破坏；上游新增 image error passthrough / ratelimit cooldown failover 与本地 web2api 路由并存。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=f868f7cb` 已成为当前 `main` 祖先。
+- 已执行 `git diff --check` 通过。
+- 本地定向 Go 测试尝试未作为验证依据：上游 `go.mod` 已 bump 到 `go 1.26.4`，当前服务器未缓存对应 toolchain，`go test` 下载 toolchain 超时；按 playbook 仍交由 GitHub Actions 完成全量验证。
+- 未在服务器本机执行前端构建、后端全量测试、后端构建或手动重启。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
