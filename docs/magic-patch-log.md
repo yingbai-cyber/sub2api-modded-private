@@ -502,9 +502,11 @@
 **验证结果**：
 - 源码级 rebase 已完成，`upstream/main=f868f7cb` 已成为当前 `main` 祖先。
 - 已执行 `git diff --check` 通过。
-- 本地定向 Go 测试尝试未作为验证依据：上游 `go.mod` 已 bump 到 `go 1.26.4`，当前服务器未缓存对应 toolchain，`go test` 下载 toolchain 超时；按 playbook 仍交由 GitHub Actions 完成全量验证。
+- 本地定向 Go 测试尝试未作为验证依据：上游 `go.mod` 已 bump 到 `go 1.26.4`，当前服务器未缓存对应 toolchain，`go test` 下载/编译多次超时；按 playbook 交由 GitHub Actions 完成全量验证。
+- GitHub Actions 首轮/二轮发现并修复 rebase 语义错位：EasyPay 查询状态优先级、billing token breakdown 测试 helper。
+- GitHub Actions 第三轮验证已通过：`CI` success（frontend、unit tests、integration tests、golangci-lint）、`Build sub2api modded` success（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）、`Security Scan` success。
 - 未在服务器本机执行前端构建、后端全量测试、后端构建或手动重启。
-- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、远程部署与健康检查。
+- 部署：`workflow_dispatch deploy=true` 因当前 GitHub token 权限不足返回 HTTP 403；改用 `[deploy]` 提交触发 build workflow 的受控部署路径。
 
 ---
 
