@@ -1974,10 +1974,6 @@ func (s *BillingService) computeTokenBreakdownForModel(
 	return bd
 }
 
-func (s *BillingService) computeTokenBreakdown(pricing *ModelPricing, tokens UsageTokens, rateMultiplier float64, serviceTier string, applyLongCtx bool) *CostBreakdown {
-	return s.computeTokenBreakdownForModel("", pricing, tokens, rateMultiplier, serviceTier, applyLongCtx)
-}
-
 // computeCacheCreationCost handles OpenAI 30m/12h, Anthropic 5m/1h, or aggregate writes.
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
 func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
