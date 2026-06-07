@@ -507,6 +507,7 @@
 - GitHub Actions 第三轮验证已通过：`CI` success（frontend、unit tests、integration tests、golangci-lint）、`Build sub2api modded` success（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）、`Security Scan` success。
 - 未在服务器本机执行前端构建、后端全量测试、后端构建或手动重启。
 - 部署：`workflow_dispatch deploy=true` 因当前 GitHub token 权限不足返回 HTTP 403；改用 `[deploy]` 提交触发 build workflow 的受控部署路径。
+- GitHub Actions deploy run `27084212652` 已成功：`Detect changed areas`、`Build embedded Linux binary`、`Deploy built binary to server` 全部 success；artifact `sub2api-linux-amd64-3252167f3af8066a12624c3a4da1d5aa5083339f` 上传成功，远端安装后 `systemctl is-active sub2api-modded.service` 返回 `active`，宿主机 health 与 `npm-app` 回源 health 均通过 workflow 判定。
 
 ---
 
