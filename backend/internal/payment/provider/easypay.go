@@ -382,7 +382,12 @@ func (e *EasyPay) parseOrderQueryResponse(body []byte, queryRef string) (*paymen
 	}
 
 	status := payment.ProviderStatusPending
-	if payload.Status == easypayStatusPaid || strings.EqualFold(strings.TrimSpace(payload.TradeStatus), tradeStatusSuccess) {
+	tradeStatus := strings.TrimSpace(payload.TradeStatus)
+	if tradeStatus != "" {
+		if strings.EqualFold(tradeStatus, tradeStatusSuccess) {
+			status = payment.ProviderStatusPaid
+		}
+	} else if payload.Status == easypayStatusPaid {
 		status = payment.ProviderStatusPaid
 	}
 	amount, _ := strconv.ParseFloat(payload.Money, 64)
