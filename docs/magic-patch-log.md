@@ -511,6 +511,34 @@
 
 ---
 
+### 2026-06-15：Rebase 到 upstream v0.1.136 (e34ad2b1)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 上游从 `v0.1.134` (`f868f7cb`) 推进到 `v0.1.136` (`e34ad2b1`)，first-parent 24 个提交。
+- 主要变化包括：`v0.1.135`/`v0.1.136` 版本同步、admin compliance acknowledgement gate、账号分组调度索引、OpenAI body replacement 预计算修复、idempotency UTF-8 截断、gateway upstream error double-write 修复、debug log loop 优化、Bedrock beta token/error passthrough 修复、Claude Fable 5、admin users 按 API key 分组过滤、非流式响应 Content-Type 修复、5h ResetsAt 同步、代理有效期与失败回退、exclusive group access/sticky group 校验、OpenAI 跨组 previous_response_id 保护、prompt cache key 传递等。
+- 本地需要继续保留：OpenAI free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy `/responses` detached upstream context、empty stream retry、TTFT trace、Kiro credits、available models、GitHub Actions 构建与受控部署流程。
+
+**冲突解决摘要**：
+- `frontend/src/api/admin/accounts.ts`：本地 `probeModels` 导出与上游 `revertProxyFallback` 导出在 `accountsAPI` 对象末尾冲突；合并策略为同时保留两者，避免丢失本地模型探测入口或上游代理回退入口。
+- 其余提交自动重放；未发现未解决冲突文件。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 仍在：`shouldUseOpenAIImagesWeb2API(account, parsed)` 继续接入 OAuth images 分支；`plan_type=free` 默认走 web2api，`openai_images_transport=web2api/responses` 覆盖项仍生效；API key、team/plus/pro 与流式/高级参数请求继续走原链路。
+- web2api failover 仍在：`shouldFailoverOpenAIImagesOAuthResponse` 继续识别 `Tool choice 'image_generation' not found in 'tools' parameter.` 类错误并触发 failover。
+- 图片尺寸计费分级仍在：`ClassifyImageBillingTier` / `NormalizeImageBillingTierOrDefault` 继续保持本地语义，仅 `1024x1024` 为 `1K`，自定义有效尺寸最低 `2K`，超过 `2560*1440` 像素为 `4K`，非法尺寸回退 `2K` 且不阻断 passthrough。
+- OAuth legacy `/responses` detached upstream context 仍在：OAuth 上游请求继续使用 `detachUpstreamContext(ctx)`；TTFT `build_upstream_ms` 埋点仍围绕构建上游请求设置。
+- Empty stream retry 仍在：`gateway_forward_as_responses.go` 与 `gateway_forward_as_chat_completions.go` 的 buffered path 仍会在空流时同账号重试一次，streaming client path 不重试。
+- Kiro / usage / available models / TTFT trace 仍在：`AccountTypeKiro`、`credits_per_dollar`、`usage_logs.kiro_credits` 迁移与 repository insert/scan、usage DTO/前端 Kiro credits 展示与 CSV 导出、available models 页面/侧栏/public flag、`openai.ttft_trace` 与 `first_token_ms` 链路均静态复核存在。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=e34ad2b1` 已成为当前 `main` 祖先。
+- 已执行轻量检查：`git diff --check` 通过；backend/frontend/docs 源码未发现真实冲突标记；`frontend/src/api/admin/accounts.ts` 已确认同时导出 `revertProxyFallback` 与 `probeModels`。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或 `systemctl restart`。
+- 待 GitHub Actions 验证：`CI`、`Build sub2api modded`（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）、`Security Scan`、部署 workflow 与远端健康检查。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
