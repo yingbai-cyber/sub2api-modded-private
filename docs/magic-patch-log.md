@@ -534,8 +534,10 @@
 **验证结果**：
 - 源码级 rebase 已完成，`upstream/main=e34ad2b1` 已成为当前 `main` 祖先。
 - 已执行轻量检查：`git diff --check` 通过；backend/frontend/docs 源码未发现真实冲突标记；`frontend/src/api/admin/accounts.ts` 已确认同时导出 `revertProxyFallback` 与 `probeModels`。
-- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或 `systemctl restart`。
-- 待 GitHub Actions 验证：`CI`、`Build sub2api modded`（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）、`Security Scan`、部署 workflow 与远端健康检查。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`；生产部署通过 GitHub Actions `[deploy]` 提交触发完成。
+- GitHub Actions 已通过：`Security Scan` run `27524175751` success（backend-security / frontend-security）；`CI` run `27524175740` success（frontend / test / golangci-lint）；`Build sub2api modded` run `27524175765` success（Detect changed areas / Build embedded Linux binary / Deploy built binary to server）。
+- Build workflow 已执行 `pnpm --dir frontend install --frozen-lockfile`、`pnpm --dir frontend run build`（embed 前端产物 `backend/internal/web/dist/index.html` 验证通过）、`go test ./...`、`go build -tags embed -trimpath -ldflags "-s -w"`，并上传 artifact `sub2api-linux-amd64-a625edd3fc6fa75ce567baaddf8b386ae84c8b83`（artifact ID `7629231569`，size `27923229` bytes，zip digest `sha256:fad104a9a4ad7d4db7f03f0a5d9a8989be4ca03843caa5117f291cbc73ce3a8b`）。
+- Deploy job 下载该 artifact 后安装到远端并重启 `sub2api-modded.service`；日志显示服务状态 `active`。宿主机 `http://172.19.0.1:18081/health` 与 `npm-app` 容器回源 health 均在 workflow 脚本中作为硬性条件通过，否则 job 会回滚并失败；本次 deploy job success，可判定远端健康检查通过。
 
 ---
 
