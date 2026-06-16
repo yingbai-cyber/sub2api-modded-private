@@ -3551,7 +3551,8 @@ const handleKiroProbeModels = async () => {
     const result = await adminAPI.accounts.probeModels({
       platform: 'anthropic',
       base_url: editBaseUrl.value.trim(),
-      api_key: editApiKey.value.trim() || (props.account?.credentials as Record<string, unknown>)?.api_key as string || '',
+      api_key: editApiKey.value.trim() || ((props.account?.credentials as Record<string, unknown>)?.api_key as string | undefined),
+      account_id: props.account?.id,
       proxy_id: props.account?.proxy_id || undefined
     })
     if (result.models && result.models.length > 0) {
