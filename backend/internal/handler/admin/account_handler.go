@@ -2733,10 +2733,28 @@ func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 
 // ProbeModelsRequest 探测上游模型列表的请求
 type ProbeModelsRequest struct {
-	Platform string `json:"platform" binding:"required,oneof=anthropic openai gemini"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key" binding:"required"`
-	ProxyID  *int64 `json:"proxy_id"`
+	Platform  string `json:"platform" binding:"required,oneof=anthropic openai gemini"`
+	BaseURL   string `json:"base_url"`
+	APIKey    string `json:"api_key"`
+	ProxyID   *int64 `json:"proxy_id"`
+	AccountID *int64 `json:"account_id"`
+}
+
+func normalizeProbeModelsBaseURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func defaultProbeModelsBaseURL(platform string) string {
+	switch platform {
+	case "anthropic":
+		return "https://api.anthropic.com"
+	case "openai":
+		return "https://api.openai.com"
+	case "gemini":
+		return "https://generativelanguage.googleapis.com"
+	default:
+		return ""
+	}
 }
 
 // ProbeModels 探测上游 API 的可用模型列表
@@ -2748,17 +2766,50 @@ func (h *AccountHandler) ProbeModels(c *gin.Context) {
 		return
 	}
 
-	// 确定 base URL
-	baseURL := strings.TrimRight(req.BaseURL, "/")
-	if baseURL == "" {
-		switch req.Platform {
-		case "anthropic":
-			baseURL = "https://api.anthropic.com"
-		case "openai":
-			baseURL = "https://api.openai.com"
-		case "gemini":
-			baseURL = "https://generativelanguage.googleapis.com"
+	var accountForSavedKey *service.Account
+	usingSavedKey := false
+	req.APIKey = strings.TrimSpace(req.APIKey)
+	if req.APIKey == "" && req.AccountID != nil && *req.AccountID > 0 {
+		account, err := h.adminService.GetAccount(c.Request.Context(), *req.AccountID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
 		}
+		if account.Platform != "" && account.Platform != req.Platform {
+			response.BadRequest(c, "account platform does not match probe platform")
+			return
+		}
+		req.APIKey = strings.TrimSpace(account.GetCredential("api_key"))
+		if req.APIKey != "" {
+			accountForSavedKey = account
+			usingSavedKey = true
+		}
+	}
+	if req.APIKey == "" {
+		response.BadRequest(c, "api_key is required")
+		return
+	}
+
+	// 确定 base URL
+	baseURL := normalizeProbeModelsBaseURL(req.BaseURL)
+	if usingSavedKey && accountForSavedKey != nil {
+		accountBaseURL := normalizeProbeModelsBaseURL(accountForSavedKey.GetCredential("base_url"))
+		if accountBaseURL == "" {
+			if accountForSavedKey.Type == service.AccountTypeKiro {
+				response.BadRequest(c, "account base_url is required when using saved api_key")
+				return
+			}
+			accountBaseURL = defaultProbeModelsBaseURL(req.Platform)
+		}
+		if baseURL == "" {
+			baseURL = accountBaseURL
+		} else if accountBaseURL != "" && baseURL != accountBaseURL {
+			response.BadRequest(c, "api_key is required when probing a different base_url")
+			return
+		}
+	}
+	if baseURL == "" {
+		baseURL = defaultProbeModelsBaseURL(req.Platform)
 	}
 
 	// 获取代理 URL
