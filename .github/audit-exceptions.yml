@@ -42,3 +42,10 @@ exceptions:
     mitigation: "No zero-size custom generators in codebase; upgrade when nanoid releases fix"
     expires_on: "2026-10-13"
     owner: "security@your-domain"
+  - package: form-data
+    advisory: "GHSA-hmw2-7cc7-3qxx"
+    severity: high
+    reason: "Transitive axios/jsdom dependency; browser admin UI does not use Node form-data multipart construction with untrusted field names"
+    mitigation: "Keep form-data out of runtime request paths; upgrade transitive dependency to patched form-data release when lockfile update is staged"
+    expires_on: "2026-07-16"
+    owner: "security@your-domain"
