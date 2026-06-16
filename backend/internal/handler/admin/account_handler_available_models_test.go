@@ -37,6 +37,14 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 	return router
 }
 
+func setupProbeModelsRouter(adminSvc service.AdminService) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router.POST("/api/v1/admin/accounts/probe-models", handler.ProbeModels)
+	return router
+}
+
 type syncUpstreamHTTPUpstream struct {
 	resp      *http.Response
 	responses []*http.Response
@@ -328,6 +336,151 @@ func TestAccountHandlerGetAvailableModels_GeminiGoogleOneUsesConservativeCatalog
 	require.ElementsMatch(t, []string{"gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"}, ids)
 	require.NotContains(t, ids, "gemini-3.5-flash")
 	require.NotContains(t, ids, "gemini-2.5-flash-image")
+}
+
+func TestAccountHandlerProbeModels_UsesProvidedAPIKey(t *testing.T) {
+	const explicitKey = "explicit-probe-key"
+	var gotXAPIKey string
+	var gotAuthorization string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		gotXAPIKey = r.Header.Get("x-api-key")
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-test-model"}],"has_more":false}`))
+	}))
+	defer upstream.Close()
+
+	router := setupProbeModelsRouter(newStubAdminService())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/probe-models", strings.NewReader(`{"platform":"anthropic","base_url":"`+upstream.URL+`","api_key":"  `+explicitKey+`  "}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, explicitKey, gotXAPIKey)
+	require.Equal(t, "Bearer "+explicitKey, gotAuthorization)
+	require.NotContains(t, rec.Body.String(), explicitKey)
+	require.Contains(t, rec.Body.String(), "claude-test-model")
+}
+
+func TestAccountHandlerProbeModels_FallsBackToAccountCredentialAPIKey(t *testing.T) {
+	const savedKey = "saved-kiro-key"
+	var gotXAPIKey string
+	var gotAuthorization string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		gotXAPIKey = r.Header.Get("x-api-key")
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-opus-4.8-thinking"}],"has_more":false}`))
+	}))
+	defer upstream.Close()
+
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       81,
+			Name:     "kiro",
+			Platform: service.PlatformAnthropic,
+			Type:     service.AccountTypeKiro,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key":  savedKey,
+				"base_url": upstream.URL,
+			},
+		},
+	}
+	router := setupProbeModelsRouter(svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/probe-models", strings.NewReader(`{"platform":"anthropic","base_url":"`+upstream.URL+`","account_id":81}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, savedKey, gotXAPIKey)
+	require.Equal(t, "Bearer "+savedKey, gotAuthorization)
+	require.NotContains(t, rec.Body.String(), savedKey)
+	require.Contains(t, rec.Body.String(), "claude-opus-4.8-thinking")
+}
+
+func TestAccountHandlerProbeModels_SavedAPIKeyCannotProbeDifferentBaseURL(t *testing.T) {
+	const savedKey = "saved-kiro-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("saved account api key must not be sent to a different probe base_url")
+	}))
+	defer upstream.Close()
+
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       82,
+			Name:     "kiro",
+			Platform: service.PlatformAnthropic,
+			Type:     service.AccountTypeKiro,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key":  savedKey,
+				"base_url": "https://saved-kiro.example",
+			},
+		},
+	}
+	router := setupProbeModelsRouter(svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/probe-models", strings.NewReader(`{"platform":"anthropic","base_url":"`+upstream.URL+`","account_id":82}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "api_key is required when probing a different base_url")
+	require.NotContains(t, rec.Body.String(), savedKey)
+}
+
+func TestAccountHandlerProbeModels_KiroSavedAPIKeyRequiresAccountBaseURL(t *testing.T) {
+	const savedKey = "saved-kiro-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("kiro saved api key must not be sent to default Anthropic base URL or request base_url")
+	}))
+	defer upstream.Close()
+
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       83,
+			Name:     "kiro",
+			Platform: service.PlatformAnthropic,
+			Type:     service.AccountTypeKiro,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"api_key": savedKey,
+			},
+		},
+	}
+	router := setupProbeModelsRouter(svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/probe-models", strings.NewReader(`{"platform":"anthropic","base_url":"`+upstream.URL+`","account_id":83}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "account base_url is required when using saved api_key")
+	require.NotContains(t, rec.Body.String(), savedKey)
+}
+
+func TestAccountHandlerProbeModels_MissingAPIKeyReturnsBadRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("probe should fail validation before calling upstream")
+	}))
+	defer upstream.Close()
+
+	router := setupProbeModelsRouter(newStubAdminService())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/probe-models", strings.NewReader(`{"platform":"anthropic","base_url":"`+upstream.URL+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "api_key is required")
 }
 
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {
