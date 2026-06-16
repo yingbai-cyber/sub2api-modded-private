@@ -691,8 +691,9 @@ export async function getAntigravityDefaultModelMapping(): Promise<Record<string
 export async function probeModels(params: {
   platform: string
   base_url?: string
-  api_key: string
+  api_key?: string
   proxy_id?: number | null
+  account_id?: number
 }): Promise<{ models: string[]; count: number }> {
   const { data } = await apiClient.post<{ models: string[]; count: number }>(
     '/admin/accounts/probe-models',
