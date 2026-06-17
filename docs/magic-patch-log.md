@@ -568,7 +568,11 @@
 - 已执行只读自检：全仓 tracked 文件无整行冲突标记（`<<<<<<<`/`>>>>>>>` 均无命中；`=======` 唯一命中为 antigravity 提示词模板字符串字面量，非冲突标记）；上述 3 个冲突文件已确认无残留标记；所有关键本地补丁 commit 在 rebase 后历史中完整保留。
 - 已创建备份分支 `backup/pre-rebase-v0.1.137-20260616` 指向 rebase 前的 `main`。
 - 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
-- **待 GitHub Actions 验证**：CI（frontend / test / golangci-lint）、Build sub2api modded（embed 前端构建 + `go test ./...` + `go build -tags embed` + 受控部署 + 远端健康检查）、Security Scan 结果待推送后回填。
+- **GitHub Actions 验证（commit `9303c092`，无 `[deploy]`，仅验证）**：
+  - `Security Scan` run `27659367368` success（form-data advisory 由上游 bump 到 >=4.0.6 + 本地 audit 例外双重消除）。
+  - `CI` run `27659367398` success（frontend / test / golangci-lint，`go test ./...` 通过，证明 rebase 后合并语义正确）。
+  - `Build sub2api modded` run `27659367353` success：`Detect changed areas` success、`Build embedded Linux binary` success（embed 前端构建 + `go build -tags embed`，artifact `sub2api-linux-amd64-9303c0922fd801380951f5ef825e0dd59efcd021`，id `7683902110`，size `28010500` bytes）、`Deploy built binary to server` skipped（未带 `[deploy]`，生产未变更）。
+- **部署触发**：随后以带 `[deploy]` 的提交推送，由 Build workflow 的 deploy job 下载 artifact、安装到远端并重启 `sub2api-modded.service`，宿主机 `http://172.19.0.1:18081/health` 与 `npm-app` 容器回源 health 作为硬性条件校验，失败则自动回滚。
 
 ---
 
