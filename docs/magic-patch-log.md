@@ -541,6 +541,37 @@
 
 ---
 
+### 2026-06-16：Rebase 到 upstream v0.1.137 (4a5665da)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 上游从 `v0.1.136` (`e34ad2b1`) 推进到 `v0.1.137` (`4a5665da`)，本次 diff 涉及 176 个文件、约 11000 行新增。
+- 主要变化包括：国产 LLM 兜底定价（GLM / Kimi / MiniMax、DeepSeek V4 Pro/Flash、kimi-for-coding、doubao-embedding-vision 图文差别）、thinking-protocol 协议感知的 thinking-block 过滤、国产模型 `thinking.type=enabled` 自动填充 `reasoning_effort` 默认值、DeepSeek `reasoning_effort` `max`→`xhigh` 归一化、OpenAI 账号配额查询/重置（`openai_quota_service` + 前端 `OpenAIQuotaResetCell`）、`cyber_policy` 硬阻断全链路透传/审计/计费、`cyber_session_block` 开关、渠道监控检测间隔随机抖动、scheduler outbox dedup_key 去重与清理、token refresh 重试退避、上游 zstd 响应体解压、non-JSON 2xx failover、账号列表展示 account id、Claude OAuth system prompt blocks 配置、OpenAI `/responses` 能力探测增加工具调用校验、Anthropic 429 窗口冷却保留、antigravity system role 合并、IP ACL 拒绝消息含 client ip、`form-data` 依赖 bump 等。
+- 本地需要继续保留：OpenAI free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy `/responses` detached upstream context、empty stream retry、TTFT trace、Kiro 账号类型/credits 计费、Kiro probe-models + account_id 保存凭据探测、available models、GitHub Actions 构建与受控部署流程。
+
+**冲突解决摘要**（本次仅 3 个文件产生文本冲突，其余 98 个提交自动重放）：
+- `backend/internal/server/api_contract_test.go`：上游新增 `cyber_session_block_enabled` / `cyber_session_block_ttl_seconds` 字段与本地 `available_models_enabled` 字段在公开设置契约 JSON 中相邻冲突；该断言使用 `require.JSONEq`（字段集合比较，顺序无关），合并策略为三字段全部保留，与 `settings_view.go` 中同一结构体的实际序列化字段集合一致。
+- `frontend/src/api/admin/accounts.ts`：`accountsAPI` 导出对象末尾，上游新增 `queryOpenAIQuota` / `resetOpenAIQuota` 与本地 `probeModels` 冲突；合并策略为三者同时保留，函数定义本身（probeModels:631、queryOpenAIQuota:783、resetOpenAIQuota:791）由自动合并保留。
+- `backend/internal/service/gateway_forward_as_chat_completions.go`：上游 `a05d9e87`（国产模型 thinking-enabled 填充默认 `reasoning_effort`）在原单一执行路径插入 `extractCCReasoningEffortFromBody` + `ApplyThinkingEnabledFallback`，与本地 `480d9142`（empty stream retry 把 buffered path 包成重试循环、并将路径拆为 streaming/buffered）结构冲突。合并策略：将 `ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)` 上移到两条路径共享的 `reasoningEffort` 声明处（第 134/138 行），使 streaming 与 buffered 路径都受益于国产模型默认 effort 补充；冲突区只保留本地 buffered 重试循环，去掉上游重复的 `reasoningEffort` 声明。对应的 `gateway_forward_as_responses.go` 由自动合并正确保留了上游 `ApplyThinkingEnabledFallback`（第 83 行）与本地 empty stream retry（第 172 行）共存。
+
+**关键本地补丁复核**（rebase 后只读源码自检，7 项全部存在且语义正确）：
+- OpenAI free OAuth 生图 web2api 仍在：`shouldUseOpenAIImagesWeb2API`（openai_images_web2api.go:38）transport 覆盖优先、回退 `isOpenAIFreePlan`；`shouldFailoverOpenAIImagesOAuthResponse`（openai_images_responses.go:1327）仍按 400 + `tool choice`/`image_generation`/`not found`/`tools` 子串组合识别并 failover。
+- 图片尺寸计费分级仍在：`ClassifyImageBillingTier` / `NormalizeImageBillingTierOrDefault`（image_billing_size.go）保持本地语义——仅 `1024x1024` 为 `1K`，官方白名单 2K/4K，自定义有效尺寸最低 `2K`，超过 `2560*1440` 像素为 `4K`，宽屏超长边（longSide≥3840 且 shortSide≤1024）按 oversize 归 `4K`，非法尺寸回退 `2K` 且不阻断 passthrough。（注：原 patch log 提及的 `parseOpenAIImageSizeDimensions` 标识符已是历史名，等价实现为 `parseImageBillingDimensions`，功能完整。）
+- OAuth legacy `/responses` detached upstream context 仍在：`openai_gateway_service.go` OAuth 分支继续使用 `detachUpstreamContext(ctx)`（:2978）；`openai_oauth_passthrough_test.go` 的 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 仍在。
+- Empty stream retry 仍在：`gateway_forward_empty_stream.go`（`maxEmptyStreamRetries`、`isEmptyStreamResult`）被 responses/CC 两路 buffered path 使用，streaming client path 不重试。
+- Kiro probe-models + account_id 修复仍在：`ProbeModelsRequest.APIKey` 已取消 `binding:"required"` 并新增 `AccountID`；api_key 为空时按 account_id 读 `account.GetCredential("api_key")`；安全约束：使用保存 key 时 Kiro 账号无保存 base_url 直接 400、不回退默认 Anthropic URL，请求 base_url 与账号 base_url 不一致也 400；成功响应只返回 `{models,count}` 不回传 key；测试 `account_handler_available_models_test.go` 覆盖 provided key / account 凭据回退 / 跨 base_url 拒绝 / Kiro 无 base_url 拒绝 / 缺 key 400，并 `NotContains` 校验不泄露 key。
+- Kiro 账号类型/计费仍在：`AccountTypeKiro`（domain/constants.go:35）、credits-based billing、前端 `EditAccountModal.vue` Kiro 探测传 `account_id`、`types/index.ts` AccountType union 含 `'kiro'`。
+- available models 页面/侧栏/public flag 仍在（契约测试已含 `available_models_enabled`）。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=4a5665da`（v0.1.137）已成为当前 `main` 祖先，`backend/cmd/server/VERSION=0.1.137`。
+- 已执行只读自检：全仓 tracked 文件无整行冲突标记（`<<<<<<<`/`>>>>>>>` 均无命中；`=======` 唯一命中为 antigravity 提示词模板字符串字面量，非冲突标记）；上述 3 个冲突文件已确认无残留标记；所有关键本地补丁 commit 在 rebase 后历史中完整保留。
+- 已创建备份分支 `backup/pre-rebase-v0.1.137-20260616` 指向 rebase 前的 `main`。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
+- **待 GitHub Actions 验证**：CI（frontend / test / golangci-lint）、Build sub2api modded（embed 前端构建 + `go test ./...` + `go build -tags embed` + 受控部署 + 远端健康检查）、Security Scan 结果待推送后回填。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
