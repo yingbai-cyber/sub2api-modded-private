@@ -622,8 +622,12 @@
 - 需要保留 `frontend/src/i18n/index.ts` 对 `locales/modded/*` overlay 的加载合并逻辑；后续本地文案优先放 overlay，避免反复改 `zh.ts` / `en.ts`。
 
 **验证结果**：
-- 待 GitHub Actions 验证：前端 build、embed build、`go test ./...` 与部署健康检查均不在服务器交互会话执行。
+- GitHub Actions 验证提交：`5520e6d7 feat(admin): add account cleanup page`。
+- Security Scan run `27745348424` success：`frontend-security`、`backend-security` 均通过。
+- CI run `27745348427` success：`frontend`、`test`、`golangci-lint` 均通过。
+- Build run `27745348431` success：`Build embedded Linux binary` 通过，`Deploy built binary to server` 因提交未带 `[deploy]` 被跳过。
 - 交互会话中误触发的本地 Go 定向测试/编译已停止或超时，无有效验证结果，不作为本补丁验收依据。
+- 生产可见性需要后续带 `[deploy]` 的 GitHub Actions 部署提交完成远端部署与健康检查。
 
 ---
 
