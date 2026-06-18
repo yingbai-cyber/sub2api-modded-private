@@ -12,8 +12,32 @@ const localeLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages 
   zh: () => import('./locales/zh')
 }
 
+// Local modded overlay keeps custom features out of the large upstream locale files,
+// making future upstream rebases less likely to conflict.
+const moddedLocaleLoaders: Record<LocaleCode, () => Promise<{ default: LocaleMessages }>> = {
+  en: () => import('./locales/modded/en'),
+  zh: () => import('./locales/modded/zh')
+}
+
 function isLocaleCode(value: string): value is LocaleCode {
   return value === 'en' || value === 'zh'
+}
+
+function isPlainObject(value: unknown): value is LocaleMessages {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function mergeLocaleMessages(base: LocaleMessages, overlay: LocaleMessages): LocaleMessages {
+  const merged: LocaleMessages = { ...base }
+  for (const [key, value] of Object.entries(overlay)) {
+    const existing = merged[key]
+    if (isPlainObject(value) && isPlainObject(existing)) {
+      merged[key] = mergeLocaleMessages(existing, value)
+    } else {
+      merged[key] = value
+    }
+  }
+  return merged
 }
 
 function getDefaultLocale(): LocaleCode {
@@ -49,7 +73,8 @@ export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
 
   const loader = localeLoaders[locale]
   const module = await loader()
-  i18n.global.setLocaleMessage(locale, module.default)
+  const moddedModule = await moddedLocaleLoaders[locale]()
+  i18n.global.setLocaleMessage(locale, mergeLocaleMessages(module.default, moddedModule.default))
   loadedLocales.add(locale)
 }
 
