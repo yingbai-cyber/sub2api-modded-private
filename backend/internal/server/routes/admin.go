@@ -331,6 +331,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
 		accounts.POST("/batch-clear-error", h.Admin.Account.BatchClearError)
 		accounts.POST("/batch-refresh", h.Admin.Account.BatchRefresh)
+		registerAccountCleanupRoutes(accounts, h)
 
 		// 探测上游模型列表
 		accounts.POST("/probe-models", h.Admin.Account.ProbeModels)
