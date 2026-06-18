@@ -160,6 +160,9 @@ func (s *adminServiceImpl) ExecuteAccountCleanup(ctx context.Context, input *Acc
 	if err != nil {
 		return nil, err
 	}
+	if skipped == nil {
+		skipped = make([]AccountCleanupSkippedItem, 0)
+	}
 
 	result := &AccountCleanupExecuteResult{
 		Total:        len(accounts),
