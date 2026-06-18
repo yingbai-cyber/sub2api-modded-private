@@ -1,8 +1,7 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
-      <template #filters>
-        <div class="space-y-4">
+    <div class="space-y-4 pb-8">
+      <div class="space-y-4">
           <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
             <div class="font-semibold">{{ t('admin.accountCleanup.warningTitle') }}</div>
             <div class="mt-1">{{ t('admin.accountCleanup.warningDescription') }}</div>
@@ -103,10 +102,8 @@
             </div>
           </div>
         </div>
-      </template>
 
-      <template #table>
-        <div class="space-y-4">
+      <div class="space-y-4">
           <div v-if="previewResult" class="grid gap-3 md:grid-cols-4">
             <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
               <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountCleanup.matched') }}</div>
@@ -156,7 +153,7 @@
             </div>
           </div>
 
-          <div class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
+          <div class="account-cleanup-table overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
             <DataTable :columns="columns" :data="previewItems" :loading="previewLoading" row-key="id">
               <template #empty>
                 <div class="flex flex-col items-center py-8 text-gray-500 dark:text-gray-400">
@@ -212,9 +209,8 @@
             />
           </div>
 
-        </div>
-      </template>
-    </TablePageLayout>
+      </div>
+    </div>
   </AppLayout>
 
   <BaseDialog :show="confirmVisible" :title="confirmTitle" width="normal" @close="confirmVisible = false">
@@ -240,7 +236,6 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Select from '@/components/common/Select.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -451,7 +446,10 @@ const handleExecute = async () => {
     } else {
       appStore.showSuccess(t('admin.accountCleanup.executeCompleted', { success: result.success }))
     }
-    await handlePreview(false)
+    // Avoid immediate re-preview after execution: it can race with dialog/layout
+    // teardown and make the virtualized table read a zero height. Clear the stale
+    // preview and keep the execution result visible; admins can preview again.
+    previewResult.value = null
   } catch (error: any) {
     appStore.showError(error?.message || t('admin.accountCleanup.executeFailed'))
   } finally {
@@ -531,3 +529,17 @@ onMounted(() => {
   loadGroups()
 })
 </script>
+
+<style scoped>
+.account-cleanup-table :deep(.table-wrapper) {
+  height: min(62vh, 640px);
+  min-height: 420px;
+}
+
+@media (max-width: 1023px) {
+  .account-cleanup-table :deep(.table-wrapper) {
+    height: auto;
+    min-height: 0;
+  }
+}
+</style>
