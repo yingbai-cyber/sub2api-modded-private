@@ -89,6 +89,16 @@
                 <button type="button" class="btn btn-primary" :disabled="previewLoading" @click="() => handlePreview()">
                   {{ previewLoading ? t('admin.accountCleanup.previewing') : t('admin.accountCleanup.preview') }}
                 </button>
+                <button
+                  v-if="previewResult"
+                  type="button"
+                  class="btn"
+                  :class="form.action === 'delete' ? 'btn-danger' : 'btn-primary'"
+                  :disabled="!canExecute || executing"
+                  @click="openConfirm"
+                >
+                  {{ executing ? t('admin.accountCleanup.executing') : executeButtonText }}
+                </button>
               </div>
             </div>
           </div>
@@ -202,17 +212,6 @@
             />
           </div>
 
-          <div class="flex justify-end">
-            <button
-              type="button"
-              class="btn"
-              :class="form.action === 'delete' ? 'btn-danger' : 'btn-primary'"
-              :disabled="!canExecute || executing"
-              @click="openConfirm"
-            >
-              {{ executing ? t('admin.accountCleanup.executing') : executeButtonText }}
-            </button>
-          </div>
         </div>
       </template>
     </TablePageLayout>
