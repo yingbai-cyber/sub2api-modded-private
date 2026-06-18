@@ -576,6 +576,57 @@
 
 ---
 
+### 2026-06-18：管理员账号清理页面
+**类型**：功能 / 管理员工具 / 本地魔改
+
+**背景**：
+- 需要管理员在 Sub2API 左侧平级菜单进入“账号清理”页面。
+- 管理员可指定源分组，并自行选择需要清理的账号状态。
+- 清理动作支持删除账号，或将账号移动到指定目标分组；移动时按本地需求覆盖账号全部原分组，仅保留目标分组。
+
+**影响文件**：
+- 新增后端隔离文件：
+  - `backend/internal/service/account_cleanup.go`
+  - `backend/internal/handler/admin/account_cleanup_handler.go`
+  - `backend/internal/server/routes/account_cleanup.go`
+- 最小后端接入：
+  - `backend/internal/server/routes/admin.go`
+- 新增前端隔离文件：
+  - `frontend/src/api/admin/accountCleanup.ts`
+  - `frontend/src/views/admin/AccountCleanupView.vue`
+  - `frontend/src/i18n/locales/modded/zh.ts`
+  - `frontend/src/i18n/locales/modded/en.ts`
+- 最小前端接入：
+  - `frontend/src/api/admin/index.ts`
+  - `frontend/src/router/index.ts`
+  - `frontend/src/components/layout/AppSidebar.vue`
+  - `frontend/src/i18n/index.ts`
+
+**改动摘要**：
+- 新增 `/api/v1/admin/accounts/cleanup/preview` 和 `/api/v1/admin/accounts/cleanup`。
+- 预览接口按源分组、账号状态、平台、类型、搜索条件匹配账号，并返回分页列表与状态/平台统计。
+- 执行接口支持 `delete` 与 `move`；删除要求 `confirm_text=DELETE`；移动使用 `BindGroups(accountID, []targetGroupID)` 覆盖原有全部分组。
+- 后端没有扩展 `AdminService` 主接口，而是新增窄接口 `AccountCleanupService` 并由 handler 类型断言调用，避免大量测试 stub 跟随修改。
+- 前端新增管理员平级菜单“账号清理”和独立页面；页面强制先预览，再确认执行。
+- 本地新增 i18n overlay，避免直接修改巨大 upstream locale 文件。
+
+**与官方差异原因**：
+- 官方未提供管理员按分组与状态批量清理上游账号的工作流。
+- 当前本地运营需要快速隔离或删除不可用账号，并明确允许移动时覆盖账号原分组。
+
+**rebase 风险点**：
+- 主要逻辑集中在新增文件，后续 rebase 通常不应与 upstream 冲突。
+- 需要保留 `routes/admin.go` 中 `registerAccountCleanupRoutes(accounts, h)` 这一行本地插桩。
+- 需要保留 `AppSidebar.vue` 的 `/admin/account-cleanup` 平级菜单项。
+- 需要保留 `router/index.ts` 的 `AdminAccountCleanup` route block。
+- 需要保留 `frontend/src/i18n/index.ts` 对 `locales/modded/*` overlay 的加载合并逻辑；后续本地文案优先放 overlay，避免反复改 `zh.ts` / `en.ts`。
+
+**验证结果**：
+- 待 GitHub Actions 验证：前端 build、embed build、`go test ./...` 与部署健康检查均不在服务器交互会话执行。
+- 交互会话中误触发的本地 Go 定向测试/编译已停止或超时，无有效验证结果，不作为本补丁验收依据。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
