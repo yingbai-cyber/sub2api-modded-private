@@ -549,6 +549,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/account-cleanup',
+    name: 'AdminAccountCleanup',
+    component: () => import('@/views/admin/AccountCleanupView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Account Cleanup',
+      titleKey: 'admin.accountCleanup.title',
+      descriptionKey: 'admin.accountCleanup.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),
