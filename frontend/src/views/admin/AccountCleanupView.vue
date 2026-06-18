@@ -141,13 +141,13 @@
               <span class="text-rose-600 dark:text-rose-300">{{ t('admin.accountCleanup.failedCount', { count: executeResult.failed }) }}</span>
               <span class="text-amber-600 dark:text-amber-300">{{ t('admin.accountCleanup.skippedCount', { count: executeResult.skipped }) }}</span>
             </div>
-            <div v-if="executeResult.failed_items.length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-rose-50 p-3 text-xs text-rose-700 dark:bg-rose-900/20 dark:text-rose-200">
-              <div v-for="item in executeResult.failed_items" :key="item.account_id">
+            <div v-if="executeFailedItems.length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-rose-50 p-3 text-xs text-rose-700 dark:bg-rose-900/20 dark:text-rose-200">
+              <div v-for="item in executeFailedItems" :key="item.account_id">
                 #{{ item.account_id }} {{ item.name || '-' }} — {{ item.error }}
               </div>
             </div>
-            <div v-if="executeResult.skipped_items.length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-amber-50 p-3 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
-              <div v-for="item in executeResult.skipped_items" :key="item.account_id">
+            <div v-if="executeSkippedItems.length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-amber-50 p-3 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+              <div v-for="item in executeSkippedItems" :key="item.account_id">
                 #{{ item.account_id }} {{ item.name || '-' }} — {{ item.reason }}
               </div>
             </div>
@@ -351,6 +351,8 @@ const statusOptions = computed<Array<{ value: AccountCleanupStatus; label: strin
 ])
 
 const previewItems = computed<AccountCleanupPreviewItem[]>(() => previewResult.value?.items || [])
+const executeFailedItems = computed(() => executeResult.value?.failed_items || [])
+const executeSkippedItems = computed(() => executeResult.value?.skipped_items || [])
 const canExecute = computed(() => !!previewResult.value && previewResult.value.matched > 0 && form.statuses.length > 0)
 const executeButtonText = computed(() => form.action === 'delete' ? t('admin.accountCleanup.executeDelete') : t('admin.accountCleanup.executeMove'))
 const confirmTitle = computed(() => form.action === 'delete' ? t('admin.accountCleanup.deleteConfirmTitle') : t('admin.accountCleanup.moveConfirmTitle'))
@@ -435,10 +437,16 @@ const handleExecute = async () => {
   if (!validateForm()) return
   executing.value = true
   try {
-    executeResult.value = await adminAPI.accountCleanup.execute({
+    const rawResult = await adminAPI.accountCleanup.execute({
       ...buildPayload(false),
       confirm_text: form.action === 'delete' ? deleteConfirmText.value.trim() : undefined
     })
+    executeResult.value = {
+      ...rawResult,
+      success_ids: rawResult.success_ids || [],
+      failed_items: rawResult.failed_items || [],
+      skipped_items: rawResult.skipped_items || []
+    }
     confirmVisible.value = false
     const result = executeResult.value
     if (result.failed > 0 || result.skipped > 0) {
