@@ -631,6 +631,37 @@
 
 ---
 
+### 2026-06-23：Rebase 到 upstream v0.1.138 (85a3b122)
+**类型**：upstream 跟进 / rebase / 源码级复核
+
+**背景**：
+- 上游从 `v0.1.137` (`4a5665da`) 推进到 `upstream/main=85a3b122`，官方 tag `v0.1.138` 位于 `69366878`，head 还包含 VERSION 同步与 sponsors 更新。
+- 本次上游更新重点包括：图片生成 `response.incomplete` 软失败识别与 failover、Gemini tool schema 清理、Vertex Anthropic beta 过滤、OpenAI chat-only API key upstream endpoint 日志、Claude Code 新 CLI billing block 识别、GLM reasoning effort 映射、auto mode Claude Code IDE entrypoint 识别、usage cache token tooltip、邮箱绑定后缀白名单、订阅邀请返利、promo 过期时间清空、prefer soonest reset 调度选项、Docker SELinux bind mount label、Node 24/pnpm workflow 调整等。
+- 本地需要继续保留：OpenAI free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy `/responses` detached upstream context、empty stream retry、TTFT trace、Kiro 账号类型/credits 计费、Kiro probe-models + account_id 保存凭据探测、available models、管理员账号清理页面、GitHub Actions embed 构建与受控部署流程。
+
+**rebase 结果**：
+- 已 fetch upstream，并将本地 `main` rebase 到 `upstream/main=85a3b122`；本轮 108 个本地提交自动重放，无文本冲突。
+- 已创建 rebase 前备份分支：`backup/main-before-upstream-0.1.138-20260622-235646`。
+- 上游删除/调整的官方 workflow 与文档文件没有覆盖本地部署工作流；`.github/workflows/build.yml` 仍保留 `workflow_dispatch deploy` 与 push commit message `[deploy]` 触发部署规则。
+- `backend/cmd/server/VERSION` 已随上游为 `0.1.138`。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 仍在：`openai_images_web2api.go`、`shouldUseOpenAIImagesWeb2API(...)`、`openai_images_transport` override、free plan 非流式 generation 路由与相关测试均存在。
+- 上游新增的图片 `response.incomplete` 识别已与本地 web2api/Responses failover 共存：`openai_images_responses.go` 中 `response.incomplete`、`summarizeOpenAIImagesNoOutputBody` 和 `openai_images_incomplete_test.go` 均存在。
+- 图片尺寸计费分级仍在：`normalizeOpenAIImageSizeTier` / `NormalizeImageBillingTierOrDefault` 与 `TestResolveOpenAIResponsesImageBillingConfigSupportsOfficialAndCustomSizes` 等测试仍存在。
+- OAuth legacy `/responses` detached upstream context 仍在：OAuth 分支继续使用 `detachUpstreamContext(ctx)`，`TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 仍存在。
+- 管理员账号清理页面仍在：后端 `account_cleanup` handler/service/routes、`registerAccountCleanupRoutes(accounts, h)`、前端 `/admin/account-cleanup` route、左侧平级菜单与 `locales/modded/*` i18n overlay 均存在。
+- Kiro probe-models、available models public flag、Kiro 账号类型/credits 计费等长期本地补丁仍可在源码中定位。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=85a3b122` 已成为当前 `main` 祖先。
+- 已执行轻量源码检查：全仓 tracked 文件无整行冲突标记；`git diff --check` 通过。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
+- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、Security Scan、按需部署与远端健康检查。
+- 当前 rebase 后历史尚未推送；如需触发 Actions，需要将本记录提交后推送到 `origin/main`。由于 rebase 后本地 `main` 与 `origin/main` 历史分叉，推送需使用安全的 `--force-with-lease` 策略。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
