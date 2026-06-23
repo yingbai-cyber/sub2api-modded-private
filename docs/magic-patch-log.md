@@ -662,7 +662,12 @@
   - `CI` run `28002083804` success：`frontend`、`test`、`golangci-lint` 均通过。
   - `Build sub2api modded` run `28002083802` success：`Detect changed areas` 与 `Build embedded Linux binary` 均通过，`Deploy built binary to server` 因提交未带 `[deploy]` 被跳过。
   - Build artifact：`sub2api-linux-amd64-fc159b20895924228f2647cfd84dcb4dfccf5739`，artifact id `7811501249`，size `28038729` bytes，digest `sha256:0878c11416e6fac1663a6d69a02aa21327a44529158e87664fee93eeb7b6b961`。
-- **部署触发**：随后以带 `[deploy]` 的文档提交推送，由 Build workflow 重新构建并执行受控部署；deploy job 会安装二进制、重启 `sub2api-modded.service`，并校验宿主机 `/health` 与 `npm-app` 容器回源 health，失败则自动回滚。
+- **部署提交（commit `2df198f8`，带 `[deploy]`）**：
+  - `Security Scan` run `28002455916` success：`backend-security`、`frontend-security` 均通过。
+  - `CI` run `28002455988` success：`frontend`、`test`、`golangci-lint` 均通过。
+  - `Build sub2api modded` run `28002455935` success：`Detect changed areas`、`Build embedded Linux binary`、`Deploy built binary to server` 全部通过。
+  - Deploy artifact：`sub2api-linux-amd64-2df198f809193d9f1022b1635efdffca000e09af`，artifact id `7811560486`，size `28038732` bytes，digest `sha256:1eb5fc672cb1d6b0e0cc254b1f3df7d840a0016b7158abae9db1c517b3430cd6`。
+  - Deploy job `82877807728` 的 `Install, restart and verify` step success；按 workflow 硬性校验，远端二进制已安装并重启 `sub2api-modded.service`，宿主机 `/health` 与 `npm-app` 容器回源 health 均通过，否则该 job 会失败并回滚。
 
 ---
 
