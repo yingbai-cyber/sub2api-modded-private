@@ -657,8 +657,12 @@
 - 源码级 rebase 已完成，`upstream/main=85a3b122` 已成为当前 `main` 祖先。
 - 已执行轻量源码检查：全仓 tracked 文件无整行冲突标记；`git diff --check` 通过。
 - 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
-- 待 GitHub Actions 验证：前端 embed 构建、`go test ./...`、后端 Linux 二进制构建、Security Scan、按需部署与远端健康检查。
-- 当前 rebase 后历史尚未推送；如需触发 Actions，需要将本记录提交后推送到 `origin/main`。由于 rebase 后本地 `main` 与 `origin/main` 历史分叉，推送需使用安全的 `--force-with-lease` 策略。
+- **GitHub Actions 验证（commit `fc159b20`，无 `[deploy]`，仅验证）**：
+  - `Security Scan` run `28002083800` success：`frontend-security`、`backend-security` 均通过。
+  - `CI` run `28002083804` success：`frontend`、`test`、`golangci-lint` 均通过。
+  - `Build sub2api modded` run `28002083802` success：`Detect changed areas` 与 `Build embedded Linux binary` 均通过，`Deploy built binary to server` 因提交未带 `[deploy]` 被跳过。
+  - Build artifact：`sub2api-linux-amd64-fc159b20895924228f2647cfd84dcb4dfccf5739`，artifact id `7811501249`，size `28038729` bytes，digest `sha256:0878c11416e6fac1663a6d69a02aa21327a44529158e87664fee93eeb7b6b961`。
+- **部署触发**：随后以带 `[deploy]` 的文档提交推送，由 Build workflow 重新构建并执行受控部署；deploy job 会安装二进制、重启 `sub2api-modded.service`，并校验宿主机 `/health` 与 `npm-app` 容器回源 health，失败则自动回滚。
 
 ---
 
