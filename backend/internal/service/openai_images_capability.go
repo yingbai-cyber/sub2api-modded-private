@@ -90,7 +90,7 @@ func (s *OpenAIGatewayService) GetOpenAIImagesCapabilityForAPIKey(ctx context.Co
 		return info, nil
 	}
 
-	accounts, err := s.listSchedulableAccounts(ctx, apiKey.GroupID)
+	accounts, err := s.listSchedulableAccounts(ctx, apiKey.GroupID, PlatformOpenAI)
 	if err != nil {
 		return nil, err
 	}
