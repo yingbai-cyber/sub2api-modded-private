@@ -612,13 +612,21 @@ func parseContentBlocks(raw json.RawMessage) []AnthropicContentBlock {
 // convertResponsesToAnthropicTools maps Responses API tools to Anthropic format.
 // Reverse of convertAnthropicToolsToResponses.
 //
-// web_search is converted to Anthropic's native web_search_20250305 server tool.
-// Other non-function tool types (file_search, code_interpreter, etc.) are skipped
-// as they have no Anthropic equivalent.
+// web_search/google_search tools are converted to Anthropic's native
+// web_search_20250305 server tool. Custom and unknown tool types are normalized
+// to valid Anthropic tool shapes so downstream account-specific filters can
+// decide whether to keep or drop server tools.
 func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 	var out []AnthropicTool
 	for _, t := range tools {
 		switch t.Type {
+		case "web_search", "google_search", "web_search_20250305":
+			// Anthropic server tools carry type/name only; adding input_schema makes
+			// the request fail validation on Anthropic-compatible upstreams.
+			out = append(out, AnthropicTool{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			})
 		case "function":
 			out = append(out, AnthropicTool{
 				Name:        t.Name,
@@ -631,20 +639,13 @@ func convertResponsesToAnthropicTools(tools []ResponsesTool) []AnthropicTool {
 				Description: t.Description,
 				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
 			})
-		case "web_search":
-			// Convert OpenAI web_search to Anthropic's native server tool format.
-			// The official Anthropic API supports this; kiro-rs also supports it
-			// but only when it's the sole tool in the request.
-			out = append(out, AnthropicTool{
-				Type:        "web_search_20250305",
-				Name:        "web_search",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-			})
 		default:
-			// Skip other non-function tool types (namespace, file_search,
-			// code_interpreter, etc.) — these are OpenAI platform-specific
-			// server-side tools that have no equivalent in Anthropic's protocol.
-			continue
+			out = append(out, AnthropicTool{
+				Type:        t.Type,
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: normalizeAnthropicInputSchema(t.Parameters),
+			})
 		}
 	}
 	return out
