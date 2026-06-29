@@ -671,6 +671,41 @@
 
 ---
 
+### 2026-06-28：Rebase 到 upstream v0.1.139 (c99112a9)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 上游从 `v0.1.138` 基线（本地上一轮 rebase 记录的 `upstream/main=85a3b122`）推进到 `upstream/main=c99112a9`，官方 tag `v0.1.139` 位于 `9a0fbcc8`，后续还包含 `VERSION=0.1.139` 同步和多项修复合并。
+- 本次上游更新范围较大，涉及 274 个文件，重点包括：Grok OAuth/订阅/配额探测与前端管理能力、OpenAI Codex PAT auth、codex_cli_only 检测加固与 engine fingerprint 信号、OpenAI quota headroom 调度权重、Codex image bridge `tool_choice=auto` 与 Spark 剥离 `image_generation`、OpenAI text-only `/v1/responses` 避免误记图片计费、OpenAI chat transport error failover、refresh_token_invalidated 非重试、passthrough function call args 去重、Responses/Anthropic custom tool schema 规范化、API key 列设置与 unlimited quota 修复、ops system logs API key 过滤、订阅/支付币种与汇率修复、余额预扣防透支、admin usage cache token breakdown、前端 API base 直连修复、source compile docs 与 sponsors 更新等。
+- 本地需要继续保留：OpenAI free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy `/responses` detached upstream context、empty stream retry、TTFT trace、Kiro 账号类型/credits/probe-models、available models、管理员账号清理页面、OpenAI OAuth refresh 不使用 WHAM plan 覆盖、GitHub Actions embed 构建与受控部署流程。
+
+**rebase 结果**：
+- 已创建 rebase 前备份分支：`backup/main-before-upstream-0.1.139-20260628-221543`。
+- 已将本地 `main` rebase 到 `upstream/main=c99112a9`；`backend/cmd/server/VERSION` 已随上游为 `0.1.139`。
+- 文本冲突已手工解决：
+  - `frontend/src/types/index.ts`：合并上游 `grok` account platform 与本地 `kiro` account type，最终同时保留 `AccountPlatform = ... | 'grok'` 与 `AccountType = ... | 'kiro'`。
+  - `backend/internal/pkg/apicompat/responses_to_anthropic_request.go`：合并上游/本地 Responses→Anthropic tool 转换；保留 `custom` tool schema 规范化、`web_search` 转 Anthropic native `web_search_20250305`，继续跳过 file_search/code_interpreter 等无等价工具。
+  - `frontend/src/components/admin/usage/UsageTable.vue`：合并上游 image billing tooltip 与本地 Kiro credits tooltip，使用 `getDisplayBillingMode(...)` 避免 image/credits/token 展示互相覆盖。
+  - `backend/internal/service/openai_oauth_service_refresh_test.go`、`backend/internal/service/openai_oauth_service.go`、`backend/internal/service/ratelimit_service.go`、`backend/internal/service/wire.go` 等：保留本地“撤销 WHAM plan 覆盖 OpenAI OAuth refresh”语义，同时保留上游 Grok provider wiring；`openai_wham_usage.go` 按本地既有最终语义继续删除。
+  - 历史 patch-log 提交触发的 `wire.go` 上下文冲突：保留 `ProvideOpenAIOAuthService` 与上游新增 `NewGrokOAuthService` / Grok token/quota provider wiring。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 仍在：`shouldUseOpenAIImagesWeb2API(account, parsed)`、`openai_images_transport` override、free plan 非流式 generation 路由、Responses `image_generation` tool 不可用 failover 及相关测试均可定位。
+- 图片尺寸计费分级仍在：`normalizeOpenAIImageSizeTier` / `parseOpenAIImageSizeDimensions` / `resolveOpenAIResponsesImageBillingConfig*` 与 `TestResolveOpenAIResponsesImageBillingConfigSupportsOfficialAndCustomSizes`、`TestOpenAIGatewayServiceParseOpenAIImagesRequest_NormalizesOfficialAndCustomSizes`、`TestOpenAIGatewayServiceParseOpenAIImagesRequest_UnknownSizesDoNotBlockPassthrough` 均存在。
+- OAuth legacy `/responses` detached upstream context 仍在：OAuth legacy `/responses` 分支继续使用 `detachUpstreamContext(ctx)`，`TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 仍存在，TTFT `build_upstream_ms` 埋点仍在 upstream request 构造周围。
+- Empty stream retry、TTFT trace、Kiro 账号类型/credits/probe-models、available models 与管理员账号清理页面均在 rebase 后保留。
+- 本地 OpenAI OAuth refresh 不再用 WHAM usage 覆盖 `plan_type` 的语义保留：`fetchOpenAIWhamUsageWithReqClient` / `enrichTokenInfoFromWhamUsage` / `persistOpenAIObservedPlanType` 在 service 代码中无命中。
+- 上游新增 Grok 能力已保留：`NewGrokOAuthService`、`ProvideGrokTokenProvider`、`ProvideGrokQuotaService`、Grok gateway/前端 OAuth/配额探测相关文件均在 rebase 后存在。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=c99112a9` 已成为当前 `main` 祖先。
+- 已执行轻量源码检查：`git diff --check` 通过；backend/frontend/docs 源码无整行冲突标记；关键 grep 确认上述本地补丁与上游 Grok wiring 均存在。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
+- 待 GitHub Actions 验证：`Security Scan`、`CI`（frontend / unit tests / integration tests / golangci-lint）、`Build sub2api modded`（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）。
+- 待受控部署：验证通过后使用带 `[deploy]` 的提交触发 Build workflow deploy job；部署 job 需安装新二进制、重启 `sub2api-modded.service`，并通过宿主机 `/health` 与 `npm-app` 容器回源健康检查。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
