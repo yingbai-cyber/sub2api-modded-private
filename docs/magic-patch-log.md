@@ -701,8 +701,13 @@
 - 源码级 rebase 已完成，`upstream/main=c99112a9` 已成为当前 `main` 祖先。
 - 已执行轻量源码检查：`git diff --check` 通过；backend/frontend/docs 源码无整行冲突标记；关键 grep 确认上述本地补丁与上游 Grok wiring 均存在。
 - 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
-- 待 GitHub Actions 验证：`Security Scan`、`CI`（frontend / unit tests / integration tests / golangci-lint）、`Build sub2api modded`（frontend embed、`go test ./...`、Linux amd64 二进制构建、artifact 上传）。
-- 待受控部署：验证通过后使用带 `[deploy]` 的提交触发 Build workflow deploy job；部署 job 需安装新二进制、重启 `sub2api-modded.service`，并通过宿主机 `/health` 与 `npm-app` 容器回源健康检查。
+- GitHub Actions 首轮验证暴露两个 rebase 合并问题并已修复：`openai_images_capability.go` 调用 `listSchedulableAccounts` 未传平台参数；Responses→Anthropic tools 合并时误给 `web_search` server tool 添加 `input_schema` 且误跳过未知 tool 类型。修复提交分别为 `100054c6`、`bd2e7cde`。
+- **GitHub Actions 验证（commit `bd2e7cde`，无 `[deploy]`，仅验证）**：
+  - `Security Scan` run `28345369938` success：`backend-security` / `frontend-security` 均通过。
+  - `CI` run `28345369911` success：`frontend`、`test`、`golangci-lint` 均通过，其中 unit tests 与 integration tests 均已执行。
+  - `Build sub2api modded` run `28345369888` success：`Detect changed areas` 与 `Build embedded Linux binary` 通过，完成 frontend embed 构建、`go test ./...`、`go build -tags embed`、artifact 上传；`Deploy built binary to server` 因提交未带 `[deploy]` 被跳过。
+  - Build artifact：`sub2api-linux-amd64-bd2e7cde74864da65c195a576f653a1b29ce29ea`，artifact id `7941622996`，size `28163233` bytes，digest `sha256:e6b0f580ce43fd0e0a0e098538fbe9d7dd62b3e480773b60ec2cb05a5342835a`。
+- 待受控部署：以本次文档记录提交带 `[deploy]` 触发 Build workflow deploy job；部署 job 需安装新二进制、重启 `sub2api-modded.service`，并通过宿主机 `/health` 与 `npm-app` 容器回源健康检查。
 
 ---
 
