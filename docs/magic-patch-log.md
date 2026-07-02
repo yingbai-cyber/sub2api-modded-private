@@ -716,6 +716,49 @@
 
 ---
 
+### 2026-07-02：Rebase 到 upstream v0.1.142 (9caa3c9c)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 官方 `upstream/main` 从上一轮 `v0.1.139` 基线 `c99112a9` 推进到 `9caa3c9c`，最新 tag 为 `v0.1.142`，`backend/cmd/server/VERSION` 已随上游同步为 `0.1.142`。
+- 本次官方增量较大：`c99112a9..upstream/main` 共 342 个文件变化，约 21577 行新增、2815 行删除。
+- 官方主要更新范围包括：OpenAI/Grok media 与 imagine alias、Grok group media generation、OpenAI Spark shadow account、OpenAI WS `http_bridge`、Codex compact/image bridge 修复、GPT-5.5/GPT-5.5 Pro/Codex 模型处理、OpenAI count_tokens bridge、Kiro/Anthropic 兼容相邻路径、usage IP geolocation、用户 usage analytics 与 admin 对齐、group peak-rate multiplier、订阅恢复/退款 pending/支付金额显示、平台 quota/Grok quota、前端管理页和 sponsors 更新等。
+- 本地仍需继续保留：OpenAI free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy `/responses` detached upstream context、empty stream retry、TTFT trace、Kiro 账号类型/credits/probe-models/模型映射、available models、管理员账号清理页面、OpenAI OAuth refresh 不使用 WHAM plan 覆盖、Spark shadow 防写保护，以及 GitHub Actions embed 构建与受控部署流程。
+
+**rebase 结果**：
+- 已创建 rebase 前备份分支：`backup/main-before-upstream-0.1.142-20260702-065407`。
+- 已将本地 `main` rebase 到 `upstream/main=9caa3c9c`；`git merge-base --is-ancestor upstream/main HEAD` 已通过。
+- 文本冲突已手工解决，主要包括：
+  - `backend/internal/repository/scheduler_cache.go`：合并上游 `plan_type` / `openai_images_transport` 与本地 `compact_model_mapping`，确保调度快照既支持 free OAuth 图片路由，又保留 compact/model mapping。
+  - `backend/internal/server/routes/gateway.go`：合并上游 `/images/capability` 与本地 Grok images/videos handler，保留 OpenAI capability 路由和 Grok media 入口。
+  - `backend/internal/service/billing_service.go`：合并 GPT-5.5 fast/priority 2.5x 修复与本地 GPT-5.5 Pro 兜底/长上下文计费策略。
+  - `backend/internal/service/openai_gateway_chat_completions.go`：同时保留 TTFT `first_sse_line_ms` / `first_chat_chunk_ms` 埋点与上游流式非 failover 错误处理变量。
+  - `backend/internal/service/openai_gateway_service.go`：保留 OAuth legacy `/responses` detached `upstreamCtx`，并保留 Spark shadow 不写 `codex_*` 全局头快照的本地保护。
+  - `frontend/src/api/admin/accounts.ts`：合并 `createSparkShadow` 与 `probeModels` 导出，避免 Spark shadow 与 Kiro probe-models 互相覆盖。
+  - `backend/internal/service/ratelimit_service.go`：合并 Kiro 401 临时冷却、Spark shadow 凭据 owner 401 处理、OpenAI 429 plan_type 防写 shadow、以及“不再写回 `expires_at` 以避免 refresh_token 回滚”的本地语义。
+  - `frontend/src/components/admin/usage/UsageTable.vue` 与 `frontend/src/views/user/UsageView.vue`：保留上游 usage/IP geolocation/analytics 结构，同时保留 Kiro credits 展示、筛选和 CSV 导出字段；用户页继续使用本地共享 `UsageTable` 架构，避免回退到旧内联表格。
+  - `backend/internal/service/openai_wham_usage.go`：按本地既有最终语义继续删除，不恢复“WHAM usage 覆盖 OAuth refresh plan_type”的临时实现；OpenAI 429 plan_type 观测仍保留并加 Spark shadow 防写保护。
+  - `backend/internal/handler/admin/account_handler_available_models_test.go`：合并 Spark shadow model_mapping 可用模型测试与 Kiro saved-account probe-models 安全测试。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 仍在：`shouldUseOpenAIImagesWeb2API`、`openai_images_transport` override、free plan 非流式 generation 路由、Responses `image_generation` tool 不可用 failover 与相关测试均可定位。
+- 图片尺寸计费分级仍在：`normalizeOpenAIImageSizeTier` / `parseOpenAIImageSizeDimensions` / `resolveOpenAIResponsesImageBillingConfig*` 与官方/自定义尺寸测试仍存在。
+- OAuth legacy `/responses` detached upstream context 仍在：OAuth 分支继续使用 `detachUpstreamContext(ctx)`，TTFT `build_upstream_ms` 仍围绕 upstream request 构造记录。
+- TTFT trace 保留：`MaybeStartOpenAITTFTTrace`、HTTP trace wrapper、`first_sse_line_ms`、`first_token_ms`、`first_chat_chunk_ms` 等埋点仍可定位。
+- Kiro 账号类型、credits-based billing、probe-models、saved Kiro API key 安全限制、前端创建/编辑表单字段仍保留。
+- Spark shadow 本地保护保留：shadow 账号不刷新自身凭据、不导出自身凭据、不写 `codex_*` 全局快照、不写 429 `plan_type` 到 shadow credentials。
+- OpenAI OAuth refresh 不使用 WHAM plan 覆盖 `plan_type` 的本地语义保留：`fetchOpenAIWhamUsageWithReqClient` / `enrichTokenInfoFromWhamUsage` / `persistOpenAIObservedPlanType` 在 service 代码中无命中。
+- 上游新增能力已保留：Grok media/imagine alias、Spark shadow account、OpenAI WS `http_bridge`、count_tokens bridge、usage IP geolocation、group peak-rate multiplier、subscription recovery/refund pending 等源码路径仍存在。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=9caa3c9c` 已成为当前 `main` 祖先。
+- 已执行轻量源码检查：`git diff --check` 通过；关键 grep 确认上述本地补丁与上游新增能力均可定位。
+- 未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
+- GitHub Actions 验证：待提交并推送后执行；当前状态为**待 GitHub Actions 验证**。
+- 部署：待 Actions 首轮验证通过后，再按受控 `[deploy]` 流程触发并记录实际结果。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
