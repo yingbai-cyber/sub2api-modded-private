@@ -258,7 +258,6 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages?beta=true"
 	} else if account.Type == "kiro" {
 		// Kiro - use Bearer token via kiro-rs proxy
-		useBearer = true
 		authToken = account.GetCredential("api_key")
 
 		baseURL := account.GetCredential("base_url")
@@ -306,7 +305,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	}
 
 	// Set authentication header
-	if account.IsOAuth() {
+	if account.IsOAuth() || account.Type == AccountTypeKiro {
 		req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
