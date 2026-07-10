@@ -849,6 +849,19 @@
 - GitHub Actions 验证：待提交并推送后执行；当前状态为**待 GitHub Actions 验证**。
 - 部署：待 Actions 验证通过后，再按受控 `[deploy]` workflow 发布并记录实际结果。
 
+**补充（2026-07-10 第二轮，提交 88dc4f7af 之后）**：
+- 第二轮 Actions（Security Scan / `backend-security`）暴露真正根因：上一轮只清理了 `gateway_service.go` 的少量重复块，**低估了 upstream 的拆分范围**。upstream 实际把两个 monolith 大规模拆分，旧 monolith 与拆分文件产生海量 `redeclared in this block`：
+  - `antigravity_gateway_service.go`（旧 3932 行）与 `antigravity_gateway_claude.go` / `_gemini.go` / `_retry.go` / `_streaming.go` / `_upstream.go` 重复。
+  - `gateway_service.go`（旧 9729 行）与 `gateway_scheduling.go` / `gateway_upstream_request.go` / `gateway_upstream_response.go` / `gateway_claude_oauth_body.go` / `gateway_forward.go` / `gateway_bedrock.go` / `gateway_count_tokens.go` / `gateway_anthropic_passthrough.go` / `gateway_usage_billing.go` 重复。
+- 修复策略（机械可回溯）：
+  1. 用 `git show upstream/main:<file>` 把两个 monolith **恢复到 upstream 版本**（`antigravity_gateway_service.go`→639 行、`gateway_service.go`→1289 行），一次性消除全部跨文件重复定义。
+  2. 恢复前用「单体独有函数/类型」差集分析确认唯一需保留的 monolith 独有补丁：**可用模型入口**（`getAvailableModels` 缓存实现、`GetAvailableModelsForDiscovery`、`listAccountsForAvailableModels`、`availableModelMatchesDiscoveryPlatform` 及 `availableModelsQueryResult` / `availableModelsCacheEntry` 类型）。恢复后在 `gateway_service.go` 用本地增强版整体替换 upstream 简化版 `GetAvailableModels` 并补回上述类型/函数。
+  3. 补回 `ClaudeUsage.KiroCredits` 字段（upstream 未吸收，`ForwardResult.Usage` / kiro / antigravity 路径均引用）。
+  4. 把 Kiro credits 流式/非流式解析补丁迁到 upstream 拆分文件 `antigravity_gateway_upstream.go` 的 `extractSSEUsage` / `extractClaudeUsage`。
+- 其余长期补丁经确认**已在 upstream 拆分文件或独立文件中就位**，无需从 monolith 迁移：TTFT `FirstTokenMs`（`gateway_forward.go` / `gateway_bedrock.go` / `gateway_anthropic_passthrough.go` / `gateway_usage_billing.go`，且 upstream 已带 `ForwardResult.FirstTokenMs`）、图片尺寸计费（`antigravity_gateway_gemini.go` / `_streaming.go` 带 `normalizeOpenAIImageSizeTier`）、web2api / OAuth legacy detach / BatchImageConfig（各自独立文件）。
+- 静态验证（本机仅文本级，不编译）：全 service 包跨文件顶层函数零重复；两个恢复文件相对上次提交零顶层 type/const/var/func 丢失；可用模型入口依赖的 repo 方法（`ListSchedulableByGroupIDAndPlatforms` 等）与 `IsMixedSchedulingEnabled` 均存在；`gofmt` 通过；`git diff --check` 无输出。
+- 验证方式：推送验证分支 `verify/rebase-0dec1ad29` 触发 CI + Security Scan（不 force-push `main`），编译级结论以 Actions 为准。
+
 ---
 
 ## 后续记录模板
