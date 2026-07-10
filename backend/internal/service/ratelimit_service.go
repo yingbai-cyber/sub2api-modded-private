@@ -441,9 +441,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
+		// Antigravity OAuth 也走此路径：401 后临时不可调度并标记 force token refresh，由刷新服务恢复。
 		// Kiro 账号也走临时冷却：kiro-rs 的 token 是动态刷新的，偶尔 401 是正常的。
-		if (authAccount.Type == AccountTypeOAuth && authAccount.Platform != PlatformAntigravity) || authAccount.Type == AccountTypeKiro {
+		if authAccount.Type == AccountTypeOAuth || authAccount.Type == AccountTypeKiro {
 			if authAccount.Type != AccountTypeKiro {
 				// 1. 失效缓存
 				if s.tokenCacheInvalidator != nil {
