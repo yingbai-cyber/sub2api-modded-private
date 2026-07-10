@@ -877,6 +877,14 @@
 - 说明：`unused` linter 是恢复后「本地补丁入口是否丢失」的权威交叉验证——它仅报出 Kiro 链一处，佐证其余长期补丁（可用模型入口、TTFT、图片尺寸计费、web2api、OAuth legacy detach、BatchImageConfig、Kiro credits 解析）的函数在恢复后均仍有引用、未丢失入口。
 - Kiro credits 长期补丁至此完整闭环：解析（`kiro_gateway.go` / `antigravity_gateway_upstream.go`）+ 计费覆盖（`gateway_usage_billing.go`）+ 转发入口（`gateway_forward.go`）+ `ClaudeUsage.KiroCredits` 字段（`gateway_service.go`）。
 
+**最终验证结果（2026-07-10，验证分支 `verify/rebase-0dec1ad29` @ `003a0016d`）**：
+- **GitHub Actions 全绿**：
+  - Security Scan：`backend-security`（govulncheck）+ `frontend-security` 均 success。
+  - CI：`test` + `frontend` + `golangci-lint` 均 success。
+- 四轮迭代逐个消除：① 两个 monolith 与 upstream 拆分文件的海量 `redeclared`；② `antigravity` OAuth 401 与 upstream 演进的语义冲突（test）；③ 补回 `ClaudeUsage.KiroCredits` 字段 gofmt + Kiro 转发入口 unused（golangci-lint）。
+- 7 大长期补丁经复核 + `unused` linter 交叉验证全部保留：BatchImageConfig、可用模型入口、TTFT trace、OAuth legacy detach、free OAuth 生图 web2api、图片尺寸计费分级、Kiro credits。
+- 待办：验证分支已全绿；`main` 的最终推送方式（是否 force-update `origin/main`）待确认后执行，随后按受控 `[deploy]` 流程发布。
+
 ---
 
 ## 后续记录模板
