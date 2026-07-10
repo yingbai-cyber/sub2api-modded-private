@@ -794,6 +794,63 @@
 
 ---
 
+### 2026-07-10：继续 Rebase 到 upstream v0.1.149+29 (0dec1ad29)
+**类型**：upstream 跟进 / rebase 收尾 / 拆分文件语义合并
+
+**背景**：
+- 在上一轮记录 `upstream/main=8b96acde9` 后，官方 `upstream/main` 继续推进 1 个提交到 `0dec1ad29`（`fix(service): 消除 isOpenAIGPT56Model 重复声明，统一到 openai_model_alias.go`）。
+- 当前 `git describe upstream/main` 为 `v0.1.149-29-g0dec1ad29`，上一轮基线为 `v0.1.149-28-g8b96acde9`。
+- 本地 `main` 已继续 rebase 到该 upstream head；源码层还需要收敛上一轮 Actions 暴露的“拆分文件 + 旧 monolith 回灌”类重复定义/缺失 import 问题。
+
+**影响文件**：
+- `backend/internal/service/gateway_service.go`
+- `backend/internal/service/gateway_usage_billing.go`
+- `backend/internal/service/gateway_upstream_request.go`（作为保留拆分实现的语义目标，未直接改动）
+- `backend/internal/service/antigravity_gateway_service.go`
+- `docs/magic-patch-log.md`
+
+**改动摘要**：
+- 继续采用官方拆分后的 service 文件结构：
+  - beta/upstream request helper 以 `gateway_upstream_request.go` 为准。
+  - usage billing helper 与 `RecordUsage*` / `recordUsageCore` 以 `gateway_usage_billing.go` 为准。
+  - `gateway_service.go` 保留主 gateway 逻辑，不再回灌旧 monolith 中已拆出的重复定义。
+- 清理 `gateway_service.go` 中与拆分文件重复的 beta policy / beta token helper，避免与 `gateway_upstream_request.go` 重复声明。
+- 清理 `gateway_service.go` 中与拆分文件重复的 usage billing 区块，避免 `RecordUsageInput`、`recordUsageCore`、`detachUpstreamContext`、`billingDeps`、`calculateRecordUsageCost` 等重复声明。
+- 补回 rebase 后旧 monolith 片段缺失的 import：
+  - `gateway_service.go` 补回 `gin`、`claude`、`ctxkey`、`sjson`、`uuid`、`io`、`syscall`、`net`、`urlvalidator`、`timezone`、`usagestats` 等主 gateway 仍使用的依赖。
+  - `antigravity_gateway_service.go` 补回 `gin`、`log`、`mathrand`、`os`、`strconv`、`bufio`、`atomic` 等 Antigravity/Gemini stream 与重试逻辑仍使用的依赖。
+- 修复 Kiro credits 在拆分后的实际计费路径中漏保留的问题：
+  - 在 `gateway_usage_billing.go` 的 `recordUsageCore` 中补回 credits-based billing 覆盖，用 `kiro_credits / credits_per_dollar` 替代 token 费用。
+  - 在 `gateway_usage_billing.go` 的 usage log 构造中写入 `KiroCredits: result.Usage.KiroCredits`。
+
+**冲突策略 / 语义选择**：
+- 不接受旧 monolith 回灌；优先保留 upstream 拆分文件结构，再把本地长期补丁迁移到拆分后的实际执行路径。
+- 不用 `abort` / `reset --hard`；仅做源码级语义合并。
+- 不在服务器本机跑编译、测试、依赖下载或构建；所有 Go/前端验证继续交给 GitHub Actions。
+- 对上游 `isOpenAIGPT56Model` 去重提交保持兼容：本地不新增同名重复声明，后续由 Actions 编译验证最终确认。
+
+**关键本地补丁复核**：
+- `BatchImageConfig` 保留：`backend/internal/config/config.go` 中 `BatchImageConfig` 与 `Config.BatchImage` 仍存在。
+- 可用模型入口保留：`AvailableModelHandler.List` 调用 `GetAvailableModelsForDiscovery`，`GatewayService.GetAvailableModels` / `GetAvailableModelsForDiscovery` 仍在。
+- TTFT trace 保留：`OpenAITTFTTraceConfig`、`openai.ttft_trace` 输出、`build_upstream_ms`、`http_do_ms`、`first_sse_line_ms` / `first_token_ms` 等埋点仍可定位。
+- OAuth legacy `/responses` detached upstream context 保留：HTTP upstream request 构造仍使用 `detachUpstreamContext(ctx)`，`TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 仍在。
+- OpenAI free OAuth 生图 web2api 保留：`shouldUseOpenAIImagesWeb2API`、`openai_images_transport` override、free plan 非流式 generation 路由和 `Tool choice 'image_generation' not found` failover 测试仍可定位。
+- 图片尺寸计费分级保留：`NormalizeImageBillingTierOrDefault` / `normalizeOpenAIImageSizeTier` / `resolveOpenAIResponsesImageBillingConfig*` 仍使用本地 1K/2K/4K 分级策略。
+- Kiro credits 保留：`ClaudeUsage.KiroCredits`、Kiro response/SSE 解析、usage log `kiro_credits` 查询/写入、credits-based billing 覆盖均已迁移到拆分后的实际路径。
+
+**验证结果**：
+- 源码级 rebase 收尾已完成，`upstream/main=0dec1ad29` 已成为当前 `main` 祖先；当前本地 `HEAD` 描述为 `v0.1.149-144-g74f0b27c2`（尚含未提交收尾修改）。
+- 已执行轻量文本/源码检查：
+  - `git diff --check` 无输出。
+  - `git diff --name-only --diff-filter=U` 无输出。
+  - 严格冲突标记 grep `^(<<<<<<<|=======$|>>>>>>>)` 无匹配。
+  - grep 确认 usage billing 相关定义只剩 `gateway_usage_billing.go`，beta/upstream helper 只剩 `gateway_upstream_request.go`。
+- 本轮未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build`、`govulncheck` 或手动重启服务；此前误触发的本机 Go 轻量编译检查不作为验证依据。
+- GitHub Actions 验证：待提交并推送后执行；当前状态为**待 GitHub Actions 验证**。
+- 部署：待 Actions 验证通过后，再按受控 `[deploy]` workflow 发布并记录实际结果。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称

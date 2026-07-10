@@ -691,6 +691,20 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts)
 
+	// Kiro credits 计费覆盖：用真实 credits 消耗换算 USD，替代 token 计费。
+	if account.IsCreditsBasedBilling() && result.Usage.KiroCredits > 0 {
+		creditsPerDollar := account.GetCreditsPerDollar()
+		creditsCost := result.Usage.KiroCredits / creditsPerDollar
+		cost.InputCost = 0
+		cost.OutputCost = 0
+		cost.CacheCreationCost = 0
+		cost.CacheReadCost = 0
+		cost.ImageOutputCost = 0
+		cost.TotalCost = creditsCost
+		cost.ActualCost = creditsCost * multiplier
+		cost.BillingMode = "credits"
+	}
+
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	billingType := BillingTypeBalance
@@ -919,6 +933,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
 		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		KiroCredits:           result.Usage.KiroCredits,
 		RateMultiplier:        multiplier,
 		AccountRateMultiplier: &accountRateMultiplier,
 		BillingType:           billingType,
