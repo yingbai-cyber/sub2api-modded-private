@@ -896,6 +896,32 @@
 
 ---
 
+### 2026-07-10：Rebase 到 upstream v0.1.151 (e316ebf52)
+**类型**：upstream 跟进 / rebase
+
+**背景**：
+- 官方 `upstream/main` 从 `0dec1ad29` 推进 32 个提交到 `e316ebf52`（含 tag `v0.1.150`、`v0.1.151`）。
+- 本地 `main` 领先 122（本地补丁）、落后 32。`git describe upstream/main` = `v0.1.151-17-ge316ebf52`。
+- 上游本轮主要范围：apicompat / tool_search / Codex MCP 工具桥（responses↔anthropic/chat 转换、namespace 摊平去重）、OpenAI gateway（grok reasoning effort、GPT-5.6 billing/usage、用户级 Fast/Flex 策略、ws forwarder v2）、setup-token 纳入后台刷新、pricing service、前端 settings / model whitelist / keys。
+
+**影响文件**：
+- 上游改动 80 个文件；与本地补丁面（130 文件）交集 12 个潜在冲突文件：`openai_gateway_forward.go`、`openai_gateway_passthrough.go`、`openai_gateway_response_handling.go`、`openai_oauth_passthrough_test.go`、`account_test_service.go`、`billing_service.go`、`settings_view.go`、`apicompat/anthropic_to_responses_response.go`、`handler/dto/settings.go`、前端 `SettingsView.vue` / `useModelWhitelist.ts` / `api/admin/settings.ts`。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main`：122 个本地提交**一次性零冲突**重放到 `e316ebf52` 之上（3-way 自动合并，交集文件均无冲突标记）。
+- rebase 前打 `pre-rebase-v0.1.151` tag 保留可回溯点；不用 `abort`/`reset --hard`。
+- 不在本机跑编译 / 测试 / 构建 / 依赖下载；验证交给 GitHub Actions。
+
+**本地补丁复核（静态）**：
+- HEAD = `v0.1.151-139-g5d28900b6`，`HEAD...upstream/main = 122/0`（完整含 v0.1.151）。
+- 全 service 包跨文件顶层函数**零重复**（无 monolith 回灌）。
+- 7 大长期补丁全部保留：free OAuth 生图 web2api（`openai_images_web2api.go` + `shouldUseOpenAIImagesWeb2API`）、图片尺寸计费分级（`normalizeOpenAIImageSizeTier`）、OAuth legacy detach（`detachUpstreamContext` + `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` @ line 621 + `openai_gateway_forward.go:694`）、Kiro 转发入口（`gateway_forward.go:125 IsKiro`）+ Kiro credits、可用模型入口（`GetAvailableModelsForDiscovery`）、antigravity 401 对齐（`ratelimit_service.go:274 Type==OAuth||Kiro`）、TTFT trace（`openai_first_token_trace.go` 等）、BatchImageConfig（`config/config.go`）。
+
+**验证结果**：
+- **待 GitHub Actions 验证**：推送验证分支触发 CI + Security Scan，编译/测试/lint 结论以 Actions 为准；全绿后按授权 force-push `main` 并按需 `[deploy]`。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
