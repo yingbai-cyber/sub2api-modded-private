@@ -346,6 +346,10 @@ func (s *AntigravityGatewayService) extractSSEUsage(line string, usage *ClaudeUs
 			usage.CacheCreation1hTokens = int(v)
 		}
 	}
+	// Kiro credits（kiro-rs 在 message_delta 中返回）
+	if v, ok := u["kiro_credits"].(float64); ok && v > 0 {
+		usage.KiroCredits = v
+	}
 }
 
 // extractClaudeUsage 从非流式 Claude 响应提取 usage
@@ -376,6 +380,10 @@ func (s *AntigravityGatewayService) extractClaudeUsage(body []byte) *ClaudeUsage
 			if v, ok := cc["ephemeral_1h_input_tokens"].(float64); ok {
 				usage.CacheCreation1hTokens = int(v)
 			}
+		}
+		// Kiro credits（kiro-rs 返回的真实 credits 消耗）
+		if v, ok := u["kiro_credits"].(float64); ok && v > 0 {
+			usage.KiroCredits = v
 		}
 	}
 	return usage
