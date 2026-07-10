@@ -885,6 +885,15 @@
 - 7 大长期补丁经复核 + `unused` linter 交叉验证全部保留：BatchImageConfig、可用模型入口、TTFT trace、OAuth legacy detach、free OAuth 生图 web2api、图片尺寸计费分级、Kiro credits。
 - 待办：验证分支已全绿；`main` 的最终推送已获用户明确授权，执行 `git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` 的 embed 前端构建 + 后端 embed 构建 + 受控部署（Actions 远程健康检查 / 自动回滚）。
 
+**上线结果（2026-07-10，`main` @ `2166e1273`）**：
+- `git push --force-with-lease origin main` 成功：`origin/main` 由 `f8521767d` forced-update 到 `2166e1273`；`fetch` 后 `HEAD...origin/main = 0/0`。
+- `main` 上三条 workflow：
+  - **Build sub2api modded**（run 29083285142）全 success：`Detect changed areas` → `Build embedded Linux binary`（embed 前端 + `go build -tags embed`）→ `Deploy built binary to server`。
+  - **CI**（test/frontend/golangci-lint）success。
+  - **Security Scan**（backend/frontend）success。
+- 部署验证：systemd `sub2api-modded.service` 状态 `active`；部署脚本以 **npm-app 容器内 `curl /health`** 为健康判定（`npm_code != 200` 即回滚 + `exit 1`），Deploy job 判定 success 反证 `npm_code == 200`，即服务在当前 RackNerd/NPM 架构下可达且健康。日志中主机侧 `curl 172.19.0.1:18081`（docker 网桥地址）失败为预期，带 `|| true` 容错、非阻断。
+- 至此 rebase 到 upstream v0.1.149+29 (0dec1ad29) 的收尾、验证与上线全部完成。
+
 ---
 
 ## 后续记录模板
