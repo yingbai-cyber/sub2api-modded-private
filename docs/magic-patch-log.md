@@ -869,6 +869,14 @@
 - 修复：将条件改为 `authAccount.Type == AccountTypeOAuth || authAccount.Type == AccountTypeKiro`，让 antigravity 重新进入通用 OAuth 401 逻辑（对齐 upstream：temp-unschedulable + force token refresh；无 refresh_token → SetError），**保留本地新增的 Kiro 401 冷却支持**。此项不属于必保长期补丁清单，属「本地过时补丁 vs upstream 演进」冲突，选择对齐 upstream。
 - 关联测试均为纯 upstream（`ratelimit_service_401_db_fallback_test.go` / `error_policy_test.go` / `token_refresh_service_test.go` 与 upstream 零差异），依赖常量 `antigravityForceTokenRefreshExtraKey` 等在 `antigravity_token_refresher.go` 存在；对齐后应一并通过。`golangci-lint` 上一轮为重复定义导致的编译失败，随根因消除预期恢复，最终以 Actions 为准。
 
+**补充（2026-07-10 第四轮，test 转绿后处理 golangci-lint）**：
+- 第三次推送后：**Security Scan + CI `test` + CI `frontend` 全绿**，仅剩 CI `golangci-lint` failure，两类问题：
+  1. `gateway_service.go:528` gofmt：补回 `ClaudeUsage.KiroCredits`（`float64`）字段后，同一连续字段块内 `int` 字段的 tag 列需要重新对齐，遗漏了 `gofmt`。已 `gofmt -w` 修正（`gofmt -l` 无输出）。
+  2. `kiro_gateway.go` 的 `forwardKiro` / `streamKiroResponse` / `kiroStreamResult` / `replaceModelInSSELine` / `extractKiroSSEUsage` 全部 `unused`——**Kiro 转发入口丢失**（功能缺陷）：恢复 `gateway_service.go` 到 upstream 版时，原本在旧 monolith `Forward` 中「`if account.IsKiro() { return s.forwardKiro(...) }`」的分发点被一并删除，而 upstream 的 `Forward`（`gateway_forward.go`）不含 Kiro 分发。
+- 修复：在 `gateway_forward.go` 的 `Forward` 中、`forwardBedrock` 分发之后补回 Kiro 分发 `if account != nil && account.IsKiro() { return s.forwardKiro(ctx, c, account, parsed, startTime) }`，与旧 monolith 语义一致。补回入口后整条 Kiro 链引用闭合（`forwardKiro`→`streamKiroResponse`→`kiroStreamResult`/`extractKiroSSEUsage`/`replaceModelInSSELine`），`unused` 消除。
+- 说明：`unused` linter 是恢复后「本地补丁入口是否丢失」的权威交叉验证——它仅报出 Kiro 链一处，佐证其余长期补丁（可用模型入口、TTFT、图片尺寸计费、web2api、OAuth legacy detach、BatchImageConfig、Kiro credits 解析）的函数在恢复后均仍有引用、未丢失入口。
+- Kiro credits 长期补丁至此完整闭环：解析（`kiro_gateway.go` / `antigravity_gateway_upstream.go`）+ 计费覆盖（`gateway_usage_billing.go`）+ 转发入口（`gateway_forward.go`）+ `ClaudeUsage.KiroCredits` 字段（`gateway_service.go`）。
+
 ---
 
 ## 后续记录模板
