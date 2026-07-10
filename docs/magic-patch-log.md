@@ -883,7 +883,7 @@
   - CI：`test` + `frontend` + `golangci-lint` 均 success。
 - 四轮迭代逐个消除：① 两个 monolith 与 upstream 拆分文件的海量 `redeclared`；② `antigravity` OAuth 401 与 upstream 演进的语义冲突（test）；③ 补回 `ClaudeUsage.KiroCredits` 字段 gofmt + Kiro 转发入口 unused（golangci-lint）。
 - 7 大长期补丁经复核 + `unused` linter 交叉验证全部保留：BatchImageConfig、可用模型入口、TTFT trace、OAuth legacy detach、free OAuth 生图 web2api、图片尺寸计费分级、Kiro credits。
-- 待办：验证分支已全绿；`main` 的最终推送方式（是否 force-update `origin/main`）待确认后执行，随后按受控 `[deploy]` 流程发布。
+- 待办：验证分支已全绿；`main` 的最终推送已获用户明确授权，执行 `git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` 的 embed 前端构建 + 后端 embed 构建 + 受控部署（Actions 远程健康检查 / 自动回滚）。
 
 ---
 
