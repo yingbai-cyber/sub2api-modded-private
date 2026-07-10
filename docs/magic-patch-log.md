@@ -918,7 +918,9 @@
 - 7 大长期补丁全部保留：free OAuth 生图 web2api（`openai_images_web2api.go` + `shouldUseOpenAIImagesWeb2API`）、图片尺寸计费分级（`normalizeOpenAIImageSizeTier`）、OAuth legacy detach（`detachUpstreamContext` + `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` @ line 621 + `openai_gateway_forward.go:694`）、Kiro 转发入口（`gateway_forward.go:125 IsKiro`）+ Kiro credits、可用模型入口（`GetAvailableModelsForDiscovery`）、antigravity 401 对齐（`ratelimit_service.go:274 Type==OAuth||Kiro`）、TTFT trace（`openai_first_token_trace.go` 等）、BatchImageConfig（`config/config.go`）。
 
 **验证结果**：
-- **待 GitHub Actions 验证**：推送验证分支触发 CI + Security Scan，编译/测试/lint 结论以 Actions 为准；全绿后按授权 force-push `main` 并按需 `[deploy]`。
+- 验证分支 `verify/rebase-v0.1.151` @ `c32bd8cdd`：**GitHub Actions 全绿（一次通过）**——CI（`test` / `frontend` / `golangci-lint`）+ Security Scan（`backend-security` govulncheck / `frontend-security`）均 conclusion=success。
+- 本轮零冲突 + 一次通过，佐证 v0.1.151 改动（apicompat/tool_search/openai gateway 等）与本地 7 大补丁的 3-way 自动合并干净、无语义/编译回归。
+- 待办：`main` 最终推送（force-push）+ 是否 `[deploy]` 由用户确认后执行；`pre-rebase-v0.1.151` tag（= `3133d987f`，当前 `origin/main`）保留为回溯点。
 
 ---
 
