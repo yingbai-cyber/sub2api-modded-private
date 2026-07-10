@@ -759,6 +759,41 @@
 
 ---
 
+### 2026-07-10：Rebase 到 upstream v0.1.149+28 (8b96acde9)
+**类型**：upstream 跟进 / rebase / 源码级冲突修复
+
+**背景**：
+- 本次从中断的 interactive rebase 继续执行；中断点最初基于 `upstream/main=12d811bd`（`chore: sync VERSION to 0.1.149 [skip ci]`）。
+- 继续期间重新 fetch 后，官方 `upstream/main` 又推进到 `8b96acde9`（`Merge pull request #3898 from Arron196/feat/gpt-5.6-cache-billing-stats`），`git describe upstream/main` 为 `v0.1.149-28-g8b96acde9`。
+- 官方新增/修复范围包括：GPT-5.6 cache billing stats、WS passthrough reasoning_effort 模型候选、user breakdown request_type 解析、audit 并发恢复、locale missing keys、parallel tool calls compat、compact/max 相关修复等。
+- 本地仍需继续保留：BatchImageConfig、可用模型页/入口、TTFT trace、OAuth legacy `/responses` detached upstream context、free OAuth 生图 web2api、图片尺寸计费分级、Kiro/Antigravity、Kiro credits billing、empty stream retry、管理员账号清理页、GitHub Actions embed 构建与受控部署流程。
+
+**rebase 结果**：
+- 已完成原中断 interactive rebase，并继续将本地 `main` rebase 到最新 `upstream/main=8b96acde9`；`git merge-base --is-ancestor upstream/main HEAD` 已通过。
+- 本轮没有使用 `abort` / `reset --hard`；按现有 rebase 状态逐个语义解决冲突。
+- 主要冲突处理策略：
+  - `backend/internal/service/setting_service.go`：保留官方拆分后的 `setting_public.go` / `setting_update.go` / `setting_parse.go` / `setting_gateway_runtime.go` 结构，不恢复旧 monolith；确认 `available_models_enabled`、`GetFrontendURL`、`GetAvailableModelsRuntime`、`GetCyberSessionBlockRuntime` 等语义均已在拆分文件中存在。
+  - `backend/internal/repository/usage_log_repo.go`：保留拆分后的 usage repo 结构，不恢复旧 monolith；将 `kiro_credits` 迁移到 `usage_log_repo_query.go` / `usage_log_repo_insert.go` 的 select、insert、scan、prepared args、批量 insert 与 best-effort insert 路径。
+  - `frontend/src/i18n/locales/en.ts` / `zh.ts`：继续按模块化 locale 结构删除旧顶层文件；把本地新增的 Kiro credits、公告中心与充值到账 U 文案补入模块化 `dashboard.ts`、`admin/resources.ts`、`common.ts`、`misc.ts`。
+  - `frontend/src/utils/billingMode.ts`、`UsageFilters.vue`、`UsageTable.vue`、`views/user/UsageView.vue`：同时保留 `video` 和 `credits` billing mode；保留 Kiro credits 展示/筛选/CSV 导出，不回退为单一模式。
+  - `backend/internal/service/gateway_service.go`、`antigravity_gateway_service.go`、`ratelimit_service.go`、`EditAccountModal.vue` 等：按语义合并 Kiro/Antigravity 调度、401 临时冷却、header override reset 与 API key/base_url 初始化。
+  - `backend/internal/service/upstream_models.go`：保留统一 `buildOpenAIEndpointURL(base, "/v1/models")` helper，避免恢复重复 URL 归一化逻辑。
+
+**关键本地补丁复核**：
+- OpenAI free OAuth 生图 web2api 仍在：`shouldUseOpenAIImagesWeb2API`、`openai_images_transport` override、free plan 非流式 generation 路由与 Responses `image_generation` tool 不可用 failover 保留。
+- 图片尺寸计费分级仍在：官方固定尺寸与本地自定义尺寸 1K/2K/4K 分级逻辑保留；未知有效尺寸最低 2K，超阈值按 4K。
+- OAuth legacy `/responses` detached upstream context 仍需由 Actions 覆盖验证；本地不主动回退为 stream-only detach。
+- TTFT trace、empty stream retry、Kiro credits、available models、管理员账号清理页、GitHub Actions 受控部署 workflow 均在 rebase 后保留。
+- 设置与 locale 均保持上游拆分/模块化结构，避免重复定义和旧 monolith 回灌。
+
+**验证结果**：
+- 源码级 rebase 已完成，`upstream/main=8b96acde9` 已成为当前 `main` 祖先。
+- 已执行轻量源码检查：全仓无整行冲突标记；Go 冲突文件已 `gofmt`；未在服务器本机执行 `pnpm install`、`pnpm run build`、`go test ./...`、`go build` 或手动 `systemctl restart`。
+- GitHub Actions 验证：待提交并推送后执行；当前状态为**待 GitHub Actions 验证**。
+- 部署：待 Actions 首轮验证通过后，再按受控 `[deploy]` workflow 发布并记录实际结果。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
