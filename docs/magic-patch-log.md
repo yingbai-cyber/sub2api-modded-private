@@ -920,7 +920,7 @@
 **验证结果**：
 - 验证分支 `verify/rebase-v0.1.151` @ `c32bd8cdd`：**GitHub Actions 全绿（一次通过）**——CI（`test` / `frontend` / `golangci-lint`）+ Security Scan（`backend-security` govulncheck / `frontend-security`）均 conclusion=success。
 - 本轮零冲突 + 一次通过，佐证 v0.1.151 改动（apicompat/tool_search/openai gateway 等）与本地 7 大补丁的 3-way 自动合并干净、无语义/编译回归。
-- 待办：`main` 最终推送（force-push）+ 是否 `[deploy]` 由用户确认后执行；`pre-rebase-v0.1.151` tag（= `3133d987f`，当前 `origin/main`）保留为回溯点。
+- `main` 最终推送已获用户明确授权：`git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署；`pre-rebase-v0.1.151` tag（= `3133d987f`）保留为回溯点。
 
 ---
 
