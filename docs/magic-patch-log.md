@@ -862,6 +862,13 @@
 - 静态验证（本机仅文本级，不编译）：全 service 包跨文件顶层函数零重复；两个恢复文件相对上次提交零顶层 type/const/var/func 丢失；可用模型入口依赖的 repo 方法（`ListSchedulableByGroupIDAndPlatforms` 等）与 `IsMixedSchedulingEnabled` 均存在；`gofmt` 通过；`git diff --check` 无输出。
 - 验证方式：推送验证分支 `verify/rebase-0dec1ad29` 触发 CI + Security Scan（不 force-push `main`），编译级结论以 Actions 为准。
 
+**补充（2026-07-10 第三轮，Security Scan 已转绿后处理 CI 用例失败）**：
+- 验证分支第二次推送后：**Security Scan 全绿**（redeclared 根因确认消除），但 **CI 的 `test` / `golangci-lint` 仍 failure**。
+- `test` 失败定位到 `ratelimit_service_401_test.go` 的两个 antigravity 子用例：`antigravity_401_sets_temp_unschedulable`、`antigravity_no_refresh_token_sets_error`。该测试文件与 upstream **零差异**（纯 upstream 用例）。
+- 根因：本地 `ratelimit_service.go` 的 401 分支带有一处**过时补丁**——用 `authAccount.Platform != PlatformAntigravity` 把 antigravity 排除出通用 OAuth 401 处理，注释称「antigravity 401 由 `applyErrorPolicy` 的 temp_unschedulable_rules 自行控制」。但同函数 line 209 明确 `if statusCode != 401` 时才走 `tryTempUnschedulable`，即 **401 根本不经过该规则**。排除的结果是 antigravity 401 既不 temp-unschedulable 也不 force token refresh（upstream 的 `antigravityForceTokenRefreshExtra` 标记逻辑变成死代码），既违背 upstream 新增用例，也是功能缺陷。
+- 修复：将条件改为 `authAccount.Type == AccountTypeOAuth || authAccount.Type == AccountTypeKiro`，让 antigravity 重新进入通用 OAuth 401 逻辑（对齐 upstream：temp-unschedulable + force token refresh；无 refresh_token → SetError），**保留本地新增的 Kiro 401 冷却支持**。此项不属于必保长期补丁清单，属「本地过时补丁 vs upstream 演进」冲突，选择对齐 upstream。
+- 关联测试均为纯 upstream（`ratelimit_service_401_db_fallback_test.go` / `error_policy_test.go` / `token_refresh_service_test.go` 与 upstream 零差异），依赖常量 `antigravityForceTokenRefreshExtraKey` 等在 `antigravity_token_refresher.go` 存在；对齐后应一并通过。`golangci-lint` 上一轮为重复定义导致的编译失败，随根因消除预期恢复，最终以 Actions 为准。
+
 ---
 
 ## 后续记录模板
