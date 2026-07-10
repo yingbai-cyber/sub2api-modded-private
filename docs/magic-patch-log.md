@@ -922,6 +922,14 @@
 - 本轮零冲突 + 一次通过，佐证 v0.1.151 改动（apicompat/tool_search/openai gateway 等）与本地 7 大补丁的 3-way 自动合并干净、无语义/编译回归。
 - `main` 最终推送已获用户明确授权：`git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署；`pre-rebase-v0.1.151` tag（= `3133d987f`）保留为回溯点。
 
+**上线结果（2026-07-10，`main` @ `4b511151f`）**：
+- `git push --force-with-lease origin main` 成功：`origin/main` 由 `3133d987f` forced-update 到 `4b511151f`；`fetch` 后 `HEAD...origin/main = 0/0`，`origin/main` 已含 upstream `e316ebf52`（v0.1.151）。
+- `main` 上三条 workflow 全 success：
+  - **Build sub2api modded**（run 29111159702）：`Detect changed areas` → `Build embedded Linux binary`（embed 前端 + `go build -tags embed`）→ `Deploy built binary to server` 全 success。
+  - **CI**（test/frontend/golangci-lint）success；**Security Scan**（backend/frontend）success。
+- 部署验证：systemd `sub2api-modded.service` 状态 `active`；部署脚本以 npm-app 容器内 `curl /health` 为判定（`npm_code != 200` 即回滚 + `exit 1`），Deploy job success 反证 `npm_code == 200`。主机侧 `curl 172.19.0.1:18081`（docker 网桥）失败为预期、`|| true` 非阻断。
+- 至此 rebase 到 upstream v0.1.151 (e316ebf52) 的收尾、验证与上线全部完成。
+
 ---
 
 ## 后续记录模板
