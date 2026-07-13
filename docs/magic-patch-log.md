@@ -958,8 +958,10 @@
 **验证结果**：
 - 回溯 tag `pre-rebase-v0.1.152` = `f6286f046`（上轮 `origin/main`，v0.1.151-143）。
 - rebase 后 HEAD = `29b2e055c`（v0.1.152-127），`HEAD...upstream/main = 126/0`。
-- 【待补】验证分支 `verify/rebase-v0.1.152` GitHub Actions（CI + Security Scan）结果。
-- 【待补】`main` force-push + `[deploy]` 上线结果。
+- 验证分支 `verify/rebase-v0.1.152` @ `497ab3db7`：**GitHub Actions 全绿（一次通过）**——CI（`golangci-lint` / `frontend` / `test`）+ Security Scan（`backend-security` / `frontend-security`）全部 conclusion=success；非 main 分支未触发 `build.yml`（符合预期）。
+- 本轮 40 个上游提交（grok 大改 / Codex 按次计费 / billing 修复 / compact writer nil guard）与本地 7 大补丁 3-way 自动合并干净，仅 2 处相邻/语义冲突，CI 交叉验证无回归。
+- `main` force-push 已获用户明确授权：`git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署；`pre-rebase-v0.1.152` tag（= `f6286f046`）保留为回溯点。
+- 【上线结果待 `main` build+deploy run 完成后补记】。
 
 ---
 
