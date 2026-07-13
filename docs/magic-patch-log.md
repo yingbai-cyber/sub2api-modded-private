@@ -972,6 +972,44 @@
 
 ---
 
+### 2026-07-13：rebase 到 upstream v0.1.153 (a2bc13374)
+**类型**：上游同步 rebase
+
+**背景**：
+- upstream `a1930ea6f`（v0.1.152）→ `a2bc13374`（tag `v0.1.153`），新增 **45 个提交**；`git describe upstream/main` = `v0.1.153-5-g7d239d62e`（tag 后又续了 5 个 grok/codex 修复）。
+- 上游本轮主要范围：openai-ws ingress 生命周期收敛（`openai_ws_pool.go`）、scheduler 按账号冷却 Codex plan-gated 模型 + 缓存异常时间修复（`ratelimit_service.go` / `scheduler_cache.go`）、apicompat（`response.completed` 填充 output + 过滤不支持工具、Read 工具参数实时流式、Anthropic max_tokens→incomplete / content_filter→finish_reason、Codex additional tools 桥接）、grok（OAuth 媒体走官方 API、第三方 API base、视频 edits/extensions）、池模式同账号重试次数生效、前端（账号 plan_type 编辑、DataTable 滑动选择/滚动、用量窗口本地日期分页、静态资源长效缓存、i18n 补齐）、部署新增 Apple container 支持。
+- rebase 前本地 `main` @ `320f45dd7`（v0.1.152-… 顶端 docs commit），落后 upstream 45、领先 129（本地补丁）。
+
+**影响文件**：
+- 上游改动 101 文件；与本地补丁面（130 文件）交集 14 个潜在冲突文件：`wire_gen.go`、`config/config.go`、`config_test.go`、`openai_gateway_handler.go`、`apicompat/anthropic_to_responses_response.go`、`repository/scheduler_cache.go`、`scheduler_cache_unit_test.go`、`server/routes/gateway.go`、`service/account.go`、`account_test_service.go`、`ratelimit_service.go`、`EditAccountModal.vue`、`i18n/zh/misc.ts`、`.gitignore`。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main`：129 个本地补丁提交重放到 upstream v0.1.153 之上，**仅 2 处冲突**（均为"两侧新增不同函数/字段恰好同位"的相邻冲突，非 monolith 回灌）：
+  1. `backend/internal/repository/scheduler_cache_unit_test.go`（重放补丁 `763f076af fix(openai): resolve free image capability detection` → 新 hash `eeefc9aef`）：HEAD 侧（新基线）新增 scheduler cache 的 `newSchedulerCacheUnit` helper + 3 个 unencodable-time 测试，本地补丁新增 `TestBuildSchedulerMetadataAccount_KeepsOpenAIImageCapabilityFields`（验证 free web2api 账号 plan_type/openai_images_transport/model_mapping 保留、access/refresh token 脱敏）。两侧函数名不重叠，**全保留**，补回 HEAD 侧末尾 `}`。该补丁同时带出新文件 `openai_images_capability.go`。
+  2. `backend/internal/pkg/apicompat/anthropic_to_responses_response.go`（重放补丁 `430bf3533 fix(responses): populate output ...` → 新 hash `b2a12854a`）：upstream 新增 `eventType`（completed/incomplete 判断，配 `Type: eventType`），本地补丁新增 `output := state.CompletedOutputs`（修复 Codex Desktop 空响应）。两段逻辑正交，**都保留**；`Output` 字段冲突采纳本地 `Output: output`（本 commit 意图正是用真实 output 替换空数组）。合并后 `eventType`/`output` 双变量均定义且被引用。
+- rebase 前建回溯分支 `backup/pre-rebase-v0.1.153-20260713-094903` = `320f45dd7`；全程不用 `abort`/`reset --hard`。
+- 不在本机跑编译 / 测试 / 构建 / 依赖下载；验证交给 GitHub Actions。
+
+**本地补丁复核（静态）**：
+- HEAD = `e2e3de826`（`v0.1.153-134-ge2e3de826`），`main...upstream/main = 129/0`（完整含 v0.1.153），`VERSION`(`backend/cmd/server/VERSION`) = `0.1.153`。全仓无遗留冲突标记。
+- 4 大受保护补丁逐条确认（存在性 + 语义）：
+  1. **free OAuth 生图 web2api**：`openai_images_web2api.go`(36KB) 在；`shouldUseOpenAIImagesWeb2API` 被 `openai_images_responses.go` 引用；`shouldFailoverOpenAIImagesOAuthResponse`(responses.go:1494) 函数体完整保留 failover 判据（`statusCode==400 && "tool choice" && "image_generation" && "not found" && "tools"`），responses.go:1593 + web2api.go:1038 双处调用。
+  2. **图片尺寸计费分级**：`normalizeOpenAIImageSizeTier`(openai_images.go:573) 现委托 upstream 重构后的 `NormalizeImageBillingTierOrDefault`(image_billing_size.go:61)，分级表与 skill 约束逐条吻合——仅 `1024x1024=1K`；2K 白名单含 `1536x1024`/`2048x2048`/`2560x1440` 等；4K 含 `3840x2160`；像素阈值 `2560*1440` 升档 + `3840` 长边判断齐全。`resolveOpenAIResponsesImageBillingConfig*` 系列仍在 `image_generation_intent.go`。（`parseOpenAIImageSizeDimensions` 为改名/内联，维度解析语义未丢。）
+  3. **OAuth legacy /responses detach**：`detachUpstreamContext`(gateway_usage_billing.go:478) 在；`openai_gateway_forward.go:693` 在 HTTP 转发重试循环中**无条件**调用（未被 `reqStream` 门控），且 `SetOpenAITTFTTrace(c,"build_upstream_ms",...)` 正好包裹在 detached context 构造请求周围；保护测试 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel`(openai_oauth_passthrough_test.go:623) 在。
+  4. **TTFT trace**：`openai_first_token_trace.go` 等埋点文件齐全，`build_upstream_ms` 在。
+
+**rebase 风险点**：
+- upstream scheduler 按账号冷却 plan-gated 模型 + 缓存异常时间修复同改 `ratelimit_service.go` / `scheduler_cache.go`，与本地补丁面交集；靠 3-way 自动合并（无冲突标记），需 CI 交叉验证调度/限流无回归。
+- apicompat `response.completed` 填充 output 与本地 Codex 空响应补丁语义交叉（本轮 2 号冲突已合并），需 Actions 验证 responses↔anthropic 流式转换无回归。
+- 前端 `EditAccountModal.vue` 新增 plan_type 编辑与本地补丁交集，靠自动合并，需 frontend build 验证。
+
+**验证结果**：
+- 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留为回溯点；rebase 后 HEAD = `e2e3de826`。
+- 后续将推验证分支触发 CI（`test` / `frontend` / `golangci-lint`）+ Security Scan，全绿后再经用户授权 force-push `main` 带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署与健康检查。
+- 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
