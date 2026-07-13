@@ -932,6 +932,37 @@
 
 ---
 
+### 2026-07-12：rebase 到 upstream v0.1.152 (a1930ea6f)
+**类型**：上游同步 rebase
+
+**背景**：
+- upstream `e316ebf52`(v0.1.151）→ `a1930ea6f`(v0.1.152），新增 40 个提交。
+- 上游主要改动：grok 大改（xAI API key 账户、OAuth 经 CLI proxy 路由、prompt caching、quota display、CLI 版本 guard）、Codex alpha/search 网页搜索按次计费、billing 三处按次计费修复、compact keepalive writer nil guard、Codex identity for OAuth Messages、OpenAI Fast/Flex 搜索策略用户维度、`openai_ws_v2` passthrough relay 新子包。
+- 上游改动 120 文件，与本地 7 大补丁面交集 20 文件。
+
+**影响文件 / 冲突解决**：
+- 122 个本地补丁提交重放，**仅 2 处冲突**（均为补丁与上游相邻/语义交叉，非 monolith 回灌）：
+  1. `backend/internal/repository/http_upstream.go`：TTFT 补丁 `withOpenAITTFTHTTPTrace` 与 upstream 新增 grok CLI proxy 函数（`applyGrokCLIProxyHeaders` / `isSupportedGrokCLIVersion`）插入同一位置。保留两者，给 `isSupportedGrokCLIVersion` 补回自身 `}`；import 已含 `net/http/httptrace`(TTFT) + `os`/`golang.org/x/mod/semver`(grok)。
+  2. `frontend/src/components/account/CreateAccountModal.vue`：upstream 给 apiKeyHint 段加 `v-if="apiKeyHint"` 条件渲染，本地补丁在此插入 probe-models 按钮。采纳 upstream `v-if` + 保留 probe 按钮块。
+
+**静态复核**：
+- 全仓无遗留冲突标记（`request_transformer.go` 内 `====` 长串为 antigravity prompt 字符串常量，非标记）。
+- service / repository 主包顶层函数**零真重复**：`init` 为 Go 合法多重；`openAICacheCreationTokensFromUsage` 分属 `service` 与新子包 `openai_ws_v2`（不同包）；`stubAntigravityAccountRepo` / `stubSmartRetryCache` 由 `//go:build !unit`(`antigravity_default_test_stubs_test.go`) vs `//go:build unit`(`antigravity_rate_limit_test.go` / `antigravity_smart_retry_test.go`) **互斥编译**，与 upstream 原生一致。
+- 关键文件行数为 upstream 拆分版量级：`gateway_service.go` 1370、`antigravity_gateway_service.go` 639、`gateway_forward.go` 969、`openai_first_token_trace.go` 614。
+- 7 大长期补丁全部保留：free OAuth 生图 web2api、图片尺寸计费分级、OAuth legacy detach（`applyCodexOAuthTransform` OAuth legacy path + `openai_oauth_passthrough_test.go`）、Kiro 转发入口（`gateway_forward.go IsKiro()`）+ Kiro credits、可用模型入口（`handleProbeModels`/probe 按钮）、antigravity 401 对齐、TTFT trace、BatchImageConfig。
+
+**rebase 风险点**：
+- grok 大改集中在 openai gateway / transport 层，与 TTFT trace 的 transport 埋点相邻，需确认 `http_upstream.go` transport 边界两个补丁共存不互相覆盖。
+- billing 上游三处按次计费修复与本地图片尺寸计费分级同改 `billing_service.go`，靠 3-way 自动合并，需 CI 交叉验证无回归。
+
+**验证结果**：
+- 回溯 tag `pre-rebase-v0.1.152` = `f6286f046`（上轮 `origin/main`，v0.1.151-143）。
+- rebase 后 HEAD = `29b2e055c`（v0.1.152-127），`HEAD...upstream/main = 126/0`。
+- 【待补】验证分支 `verify/rebase-v0.1.152` GitHub Actions（CI + Security Scan）结果。
+- 【待补】`main` force-push + `[deploy]` 上线结果。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
