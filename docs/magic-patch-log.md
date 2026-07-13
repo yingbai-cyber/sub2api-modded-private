@@ -1007,6 +1007,7 @@
 - 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留为回溯点；rebase 后 HEAD = `e2e3de826`。
 - 后续将推验证分支触发 CI（`test` / `frontend` / `golangci-lint`）+ Security Scan，全绿后再经用户授权 force-push `main` 带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署与健康检查。
 - 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。
+- **推送决定（2026-07-13）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。回溯点 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留；`--force-with-lease` 以 `origin/main == 320f45dd7` 为前提，防止误覆盖远程未知提交。上线结果待 Actions 完成后补记。
 
 ---
 
