@@ -1007,7 +1007,17 @@
 - 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留为回溯点；rebase 后 HEAD = `e2e3de826`。
 - 后续将推验证分支触发 CI（`test` / `frontend` / `golangci-lint`）+ Security Scan，全绿后再经用户授权 force-push `main` 带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署与健康检查。
 - 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。
-- **推送决定（2026-07-13）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。回溯点 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留；`--force-with-lease` 以 `origin/main == 320f45dd7` 为前提，防止误覆盖远程未知提交。上线结果待 Actions 完成后补记。
+- **推送决定（2026-07-13）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。回溯点 `backup/pre-rebase-v0.1.153-20260713-094903`（= `320f45dd7`）保留；`--force-with-lease` 以 `origin/main == 320f45dd7` 为前提，防止误覆盖远程未知提交。
+
+**上线结果（2026-07-13，`main` @ `ce8e0a351`）**：
+- `git push --force-with-lease origin main` 成功：`origin/main` 由 `320f45dd7` forced-update 到 `ce8e0a351526122993b4808d2d9b786d303fd955`（本地 HEAD = origin/main = 部署 marker commit 三者一致）。
+- `main` 上三条 workflow 全 success（一次通过）：
+  - **CI**（run 29256842536）：`frontend` / `golangci-lint` / `shell` / `test`(含 Integration tests) 全 success。
+  - **Build sub2api modded**（run 29256842532）：`Detect changed areas` → `Build embedded Linux binary`（embed 前端 + `go build -tags embed`）→ `Deploy built binary to server` 全 success。
+  - **Security Scan**（run 29256842581）：success。
+- 部署验证：systemd `sub2api-modded.service` 状态 `active`；部署 marker `last-github-actions-deploy.json` 记 `commit=ce8e0a351526...`、`health_code=200`、`npm_health_code=200`（npm-app 容器内 `/health` 判定为准），备份 `sub2api.bak.29256842532.1` 保留。
+- 本轮 45 个上游提交（openai-ws ingress / scheduler plan-gated 冷却 + 缓存异常时间 / apicompat response.completed / grok 媒体路由 / 池模式重试 / 前端 plan_type 编辑等）与本地 4 大受保护补丁 3-way 合并 + 2 处相邻冲突手工解决后，CI 全绿一次通过，佐证无编译/测试/lint 回归。
+- 至此 rebase 到 upstream v0.1.153 (a2bc13374) 的收尾、验证与上线全部完成。
 
 ---
 
