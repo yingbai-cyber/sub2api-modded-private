@@ -961,7 +961,14 @@
 - 验证分支 `verify/rebase-v0.1.152` @ `497ab3db7`：**GitHub Actions 全绿（一次通过）**——CI（`golangci-lint` / `frontend` / `test`）+ Security Scan（`backend-security` / `frontend-security`）全部 conclusion=success；非 main 分支未触发 `build.yml`（符合预期）。
 - 本轮 40 个上游提交（grok 大改 / Codex 按次计费 / billing 修复 / compact writer nil guard）与本地 7 大补丁 3-way 自动合并干净，仅 2 处相邻/语义冲突，CI 交叉验证无回归。
 - `main` force-push 已获用户明确授权：`git push --force-with-lease origin main` 并带 `[deploy]` 触发 `build.yml` embed 前端 + 后端 embed 构建 + 受控部署；`pre-rebase-v0.1.152` tag（= `f6286f046`）保留为回溯点。
-- 【上线结果待 `main` build+deploy run 完成后补记】。
+
+**上线结果（2026-07-13，`main` @ `468f238e7`）**：
+- `git push --force-with-lease origin main` 成功：`origin/main` 由 `f6286f046` forced-update 到 `468f238e7`；`main...origin/main = 0/0`，已含 upstream `a1930ea6f`（v0.1.152）。
+- `main` 上三条 workflow 全 success：
+  - **Build sub2api modded**（run 29226935199）：`Detect changed areas` → `Build embedded Linux binary`（embed 前端 + `go build -tags embed`）→ `Deploy built binary to server`（`Install, restart and verify`）全 success。
+  - **CI**（golangci-lint/frontend/test）success；**Security Scan**（backend/frontend）success。
+- 部署验证：systemd `sub2api-modded.service` 状态 `active (running)`（Main PID 85744）；部署 marker `last-github-actions-deploy.json` 记 `commit=468f238e7`、`health_code=200`、`npm_health_code=200`（npm-app 容器内 `/health` 判定为准），备份 `sub2api.bak.29226935199.1` 已保留。
+- 至此 rebase 到 upstream v0.1.152 (a1930ea6f) 的收尾、验证与上线全部完成。
 
 ---
 
