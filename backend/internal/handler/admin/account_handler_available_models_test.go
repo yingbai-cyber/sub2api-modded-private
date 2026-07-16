@@ -40,7 +40,7 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 func setupProbeModelsRouter(adminSvc service.AdminService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router.POST("/api/v1/admin/accounts/probe-models", handler.ProbeModels)
 	return router
 }
