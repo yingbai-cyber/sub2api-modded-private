@@ -1061,6 +1061,7 @@
 **验证结果**：
 - 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.156-20260716-043520`（= `f450fd559`）保留；rebase 后 HEAD = `7064abf9d`。
 - 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。因本轮冲突密集（尤其 SQL 占位符、wire 注入、context detach），**建议先推验证分支跑 CI，全绿后再经用户授权 force-push main 带 `[deploy]`**。
+- **推送决定（2026-07-16）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。`--force-with-lease` 以 `origin/main == f450fd559` 为前提防误覆盖；回溯点 `backup/pre-rebase-v0.1.156-20260716-043520` 保留。上线结果待 Actions 完成后补记。
 
 ---
 
