@@ -1061,7 +1061,17 @@
 **验证结果**：
 - 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.156-20260716-043520`（= `f450fd559`）保留；rebase 后 HEAD = `7064abf9d`。
 - 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。因本轮冲突密集（尤其 SQL 占位符、wire 注入、context detach），**建议先推验证分支跑 CI，全绿后再经用户授权 force-push main 带 `[deploy]`**。
-- **推送决定（2026-07-16）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。`--force-with-lease` 以 `origin/main == f450fd559` 为前提防误覆盖；回溯点 `backup/pre-rebase-v0.1.156-20260716-043520` 保留。上线结果待 Actions 完成后补记。
+- **推送决定（2026-07-16）**：经用户明确授权，跳过验证分支，直接 `git push --force-with-lease origin main` 带 `[deploy]` 触发 `build.yml`（CI + embed 前端 + 后端 embed 构建 + 受控部署 + 健康检查）。`--force-with-lease` 以 `origin/main == f450fd559` 为前提防误覆盖；回溯点 `backup/pre-rebase-v0.1.156-20260716-043520` 保留。
+
+**上线结果（2026-07-16，`main` @ `d110cd9f9`）**：
+- **首轮 push（`4841bb083`）CI/Build/Security 全红**，暴露 2 处冲突解决错误（正是本轮建议先走验证分支的风险点，直接 deploy 的教训）：
+  1. `billing_service.go:1005 computeTokenBreakdown undefined`：补丁把 `computeTokenBreakdown` wrapper 放在了测试文件 `billing_service_test.go`，但 upstream 新基线在主文件 1005 行调用它（非测试编译不可见）→ 主文件缺定义。修复：wrapper 移回主文件 `billing_service.go`，删除测试文件重复定义。
+  2. `UsageTable.vue` 前端 typecheck 全量 unused：解决畸形三标记冲突时误删了 token-billing `<template>` 下的 `<div v-if="tooltipData && textInputTokens(tooltipData) > 0">` 开标签，模板结构破损。修复：按 upstream 结构补回该 `<div>`。
+- 次轮修复后又暴露 `account_handler_available_models_test.go`：upstream 给 `NewAccountHandler` 加了第 14 个参数，补丁测试调用少 1 个 `nil`。补齐后第三轮（`d110cd9f9`）**CI / Build / Security 全绿**。
+- `main` force-push 由 `f450fd559` → `d110cd9f9`（本地 HEAD = origin/main = 部署 marker 三者一致）。
+- 部署验证：Deploy job success；systemd `sub2api-modded.service` `active`；marker `last-github-actions-deploy.json` 记 `commit=d110cd9f9`、`health_code=200`、`npm_health_code=200`（npm-app 容器内 `/health` 判定），备份 `sub2api.bak.29503562904.1` 保留。
+- **教训**：本轮冲突密集（132 补丁 / 8 冲突 commit），SQL 占位符、wire 注入、wrapper 归属、Vue 模板结构等编译/测试期才暴露的错误，本机 gofmt/静态检查抓不全；本机 `go vet` 首次编译依赖树超时（10 分钟未完，属高资源命令，放弃）。此类大 rebase 后续应优先「先推验证分支跑 CI，全绿再 deploy」，而非直接 force-push main 带 `[deploy]`。
+- 至此 rebase 到 upstream v0.1.156 (393a8fe56) 的收尾、验证与上线全部完成。
 
 ---
 
