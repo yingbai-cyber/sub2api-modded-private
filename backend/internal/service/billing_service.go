@@ -1263,6 +1263,15 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	return breakdown, nil
 }
 
+// computeTokenBreakdown 是不带 model 的兼容包装：不启用 GPT-5.5 fast/priority 的 model 专属倍率。
+func (s *BillingService) computeTokenBreakdown(
+	pricing *ModelPricing, tokens UsageTokens,
+	rateMultiplier float64, serviceTier string,
+	applyLongCtx bool,
+) *CostBreakdown {
+	return s.computeTokenBreakdownForModel("", pricing, tokens, rateMultiplier, serviceTier, applyLongCtx)
+}
+
 // computeTokenBreakdownForModel 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
 // applyLongCtx 控制是否检查长上下文定价（区间定价已自含上下文分层，不需要额外应用）。
 func (s *BillingService) computeTokenBreakdownForModel(
