@@ -1021,6 +1021,49 @@
 
 ---
 
+### 2026-07-16：rebase 到 upstream v0.1.156 (393a8fe56)
+**类型**：上游同步 rebase（大版本跨越 + 冲突密集）
+
+**背景**：
+- upstream `a2bc13374`（v0.1.153）→ `393a8fe56`（含 tag `v0.1.155`、`v0.1.156`，`git describe upstream/main` = `v0.1.156-76-g393a8fe56`），跨两个 tag、约 279 个提交。
+- rebase 前本地 `main` @ `f450fd559`（v0.1.153-137），落后 upstream 274/领先 132（本地补丁）。
+- 上游本轮主要范围：**大安全特性**（操作审计日志 `audit_log` + 会话 IP/UA 绑定 + 敏感操作 step-up 2FA）、**异步图片任务**（结果落 S3 兼容对象存储 `ImageStorageConfig`）、按上游计费倍率调度 OpenAI 账号、usage_logs 单独记录图片输入 token 与费用（`image_input_tokens`/`image_input_cost`）、image-intent `/v1/responses` 只路由到 Responses-capable 账号、grok 第三方 API base + 视频 edits/extensions、openai-ws ingress 生命周期、账号 plan_type 编辑、调度快照账号载荷复用。
+- 回溯点：`backup/pre-rebase-v0.1.156-20260716-043520`（= `f450fd559`）。
+
+**影响文件**：
+- 上游改动 591 文件；与本地补丁面（130 文件）交集 **66 个潜在冲突文件**（上次 v0.1.153 仅 14），冲突密集落在图片/计费/OAuth/TTFT/usage_log 区。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main`：132 个本地补丁重放到 v0.1.156 之上，**8 个补丁 commit 出现冲突**，逐个手工解决（均保留本地补丁语义）：
+  1. `eeefc9aef` free image capability：`openai_images.go`（HEAD 新增 `openAIImagesJSONKeepaliveInterval` + 补丁 `ImagesCapability` handler，两函数都留）、`scheduler_cache_unit_test.go`（两侧各新增测试，都留）。
+  2. `0416a4dcb` GPT-5.5 fast billing：`billing_service.go` 单行语义融合——保留补丁 `computeTokenBreakdownForModel(model,...)`（GPT-5.5 2.5x 修正）+ 采纳新基线 `longContextBillingEnabled` 参数（替代补丁硬编码 `true`）。
+  3. `c0283eac2` **TTFT trace**（受保护，6 文件 12 块）：`config.go`（ImageStorage + OpenAITTFTTrace 双字段/双类型都留）、`openai_chat_completions.go`（图片模型拒绝 + MaybeStartOpenAITTFTTrace 都留）、`http_upstream.go`（`withOpenAITTFTHTTPTrace(req)` 与新基线 `servertiming.Do` 包装融合）、`openai_gateway_forward.go`（TTFT 埋点与新基线 headerGuard 首字节超时逻辑交织，全保留）、`openai_gateway_passthrough.go`（埋点加进新基线 for 重试循环）、`openai_gateway_response_handling.go`（补丁旧块已被 upstream 重构，采纳 HEAD 空侧 + 把 3 行埋点重新定位到新基线 `!guardFirstOutput` record-first-token 块）。
+  4. `c6926a41f` **OAuth detach**（受保护）：`openai_gateway_passthrough.go` 顶部 detach（补丁，已自动合并给 GetAccessToken）+ 循环内 detach（upstream，给 build）共存；两冲突块采纳 HEAD（build/错误处理已在循环内）。默认 lint 不查 shadow，功能正确。
+  5. `c6c2f2a2d` 可用模型入口：`wire_gen.go`（ProvideHandlers 调用同时含 upstream `asyncImageHandler` + 补丁 `availableModelHandler`，middleware 用新基线带 `auditLogService` 签名）、`domain_constants.go`（两侧各加 SettingKey，都留）。
+  6. `342779f3c` probe-models：`accounts.ts` export 列表两组都留。
+  7. `7e2f7ae50` **kiro credit usage**（5 文件）：`types.go`/`mappers.go`（KiroCredits 字段 + upstream 的 LongContextBillingApplied/ImageInput* 都留）、`usage_log_repo_insert.go`（SQL 占位符精确数到 `$57`：合并列 57 = usageLogInsertArgTypes 57，容量用自适应 `len(usageLogInsertArgTypes)`）、`usage_log_repo_query.go`（3 块：SELECT 列清单 / 变量声明 / Scan 赋值，KiroCredits 锚点统一放 account_stats_cost 后、created_at 前，列序严格对齐）、`UsageTable.vue`（畸形三标记冲突，采纳补丁的 billing_mode 判断）。
+  8. `630bdb90e` account cleanup page：`api/admin/index.ts`（3 块 import/注册/export，audit + accountCleanup 都留）。
+- 全程不用 `abort`/`reset --hard`；4 个 go 冲突文件 gofmt 全部通过。
+
+**本地补丁复核（静态）**：
+- HEAD = `7064abf9d`（`v0.1.156-208-g7064abf9d`），`main...upstream/main = 132/0`（完整含 v0.1.156），`VERSION` = `0.1.156`，全仓无遗留冲突标记（go/vue/ts 扫描为空）。
+- 4 大受保护补丁逐条确认（存在性 + 语义，重点行级核对冲突重灾区）：
+  1. **free OAuth 生图 web2api**：`openai_images_web2api.go` 在；`shouldUseOpenAIImagesWeb2API` 被引用；`shouldFailoverOpenAIImagesOAuthResponse` 保留 `image_generation` failover 判据。
+  2. **图片尺寸计费分级**：`normalizeOpenAIImageSizeTier` 委托 `NormalizeImageBillingTierOrDefault`；1K/2K/4K 分级 + `1024x1024` 白名单在。
+  3. **OAuth legacy detach**：`detachUpstreamContext` 在；forward.go 行级确认 `buildUpstreamStart`(765)→`detachUpstreamContext(ctx)`(766)→`buildUpstreamRequest(upstreamCtx)`(773)→`build_upstream_ms` 埋点(777)，符合 skill「埋点在 detached context 构造请求周围」约束；保护测试 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 在。
+  4. **TTFT trace**：`openai_first_token_trace.go` 在；`SetOpenAITTFTTrace` 跨 8 文件；`withOpenAITTFTHTTPTrace` 3 处；`OpenAITTFTTraceConfig` 3 处。
+
+**rebase 风险点**：
+- upstream 大安全特性（audit_log/2FA/会话绑定）改了 wire 依赖注入 + middleware 签名，`wire_gen.go` 是生成文件，ProvideHandlers/middleware 参数须精确匹配 `wire.go` 定义，靠 CI 编译验证。
+- `usage_log_repo_insert.go` SQL 占位符与 `usage_log_repo_query.go` 的 SELECT 列序 / Scan 目标须一一对应，错位是运行时静默数据损坏（非编译错误），已按「列数=占位符数=Scan 参数数」逐一核对，仍需 CI + 集成测试交叉验证。
+- passthrough OAuth detach 顶部 + 循环内共存产生变量 shadow（默认 lint 不拦），需 CI 确认无 govet 回归。
+
+**验证结果**：
+- 待 GitHub Actions 验证：回溯分支 `backup/pre-rebase-v0.1.156-20260716-043520`（= `f450fd559`）保留；rebase 后 HEAD = `7064abf9d`。
+- 本机未跑 build/test（遵循 rebase-playbook：交互会话只做源码级 rebase / 冲突解决 / 文档记录）。因本轮冲突密集（尤其 SQL 占位符、wire 注入、context detach），**建议先推验证分支跑 CI，全绿后再经用户授权 force-push main 带 `[deploy]`**。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
