@@ -1075,6 +1075,37 @@
 
 ---
 
+### 2026-07-20：rebase 到 upstream v0.1.161 (db4295d64)
+**类型**：上游同步 rebase
+
+**背景**：
+- upstream `393a8fe56`（v0.1.156）→ `db4295d64`（含 tag `v0.1.157`~`v0.1.161`，`git describe` = `v0.1.161-223-g106789e1e`）。
+- rebase 前本地 `main` @ `cbf5ca027`（v0.1.156-208 顶端 docs commit），落后 upstream 137、领先 137（本地补丁）。
+- 上游本轮主要范围：**客户端 IP 解析重构**（自定义请求头 + trusted proxies BindEnv + 安全设置界面 + 审计/会话绑定统一取 IP）、安全开关默认关闭 + step-up 2FA 开关化、安全审计（完整 prompt 持久化、审计节点管理、一键过滤删除）、Grok 大批修复（客户端工具缓存、Trae 缓存路由、受保护视频内容代理、媒体资格调度缓存、免费探测加密恢复）、OpenAI（Codex call_id 长度归一化、OAuth system prompt 去重、models manifest 401 不可调度、HTTP bridge failover 安全化、WS turn 生命周期）、apicompat（Responses content_part 事件 + 完整 output、Anthropic message_start null stop_reason、Grok Claude Messages prompt-cache）、批量生图 handler 重构为 `ProvideBatchImageHandler`、异步生图对象存储改后台配置、粘性会话 force-cache-billing、订阅到期时间显示到分钟、GitHub release token 支持。
+- 回溯点：`backup/pre-rebase-v0.1.161-20260720-030427`（= `cbf5ca027`）。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main`：137 个本地补丁重放到 v0.1.161 之上，**仅 3 个补丁 commit 冲突**（比上轮 8 个大幅减少），逐个手工解决：
+  1. `4ccc01f2b` **TTFT trace**（受保护）：`config.go`（HEAD 侧 upstream 新增 `MissingCredentialKeys` 与补丁 `OpenAITTFTTraceConfig` 共用结尾 `}` 的相邻冲突，两者都留）；`http_upstream.go` 两处（`Do` / `DoWithTLS`）：融合补丁 `withOpenAITTFTHTTPTrace(req)` 与 HEAD 侧已重放补丁的 `httpClientWithGrokAccessDeniedFallback` 包装，三行顺序为 trace→client 构造→fallback 包装→`servertiming.Do`。
+  2. `1a954b042` 可用模型入口：`wire.go` / `wire_gen.go` 同型冲突——upstream 把批量生图 handler 换成 `ProvideBatchImageHandler`（多带 `openAIGatewayHandler` 参数），补丁在旧 `NewBatchImageHandler` 旁加 `NewAvailableModelHandler`。采纳 upstream 新 provider + 补上 `NewAvailableModelHandler`/`availableModelHandler`；`ProvideHandlers` 调用行自动合并已含 `availableModelHandler`。
+  3. `f9e823223` responses completed output + 工具过滤：`anthropic_to_responses_response.go` **整体取 ours**——upstream #4468（v0.1.159）已自带更完整的等价实现（`Outputs`/`TextAccum`/`CurrentContent` 累积，覆盖 message/function_call/reasoning 三类），补丁第 1 部分（`CompletedOutputs` 版）被上游取代，自动合并混入的重复旧实现一并丢弃；补丁第 2 部分（`responses_to_anthropic_request.go` 过滤 Anthropic 不支持的工具类型避免 422）自动合并成功保留。该补丁重放后缩水为 1 文件 3+/7-。
+- 全程不用 `abort`/`reset --hard`；5 个手工解决文件 gofmt 通过。
+
+**本地补丁复核（静态）**：
+- HEAD = `106789e1e`（`v0.1.161-223`），`main...upstream/main = 137/0`，`VERSION` = `0.1.161`，全仓（go/vue/ts）无遗留冲突标记。
+- 受保护补丁逐条确认存在：web2api 路由 `shouldUseOpenAIImagesWeb2API` + failover `shouldFailoverOpenAIImagesOAuthResponse`（openai_images_responses.go）；图片尺寸分级 `normalizeOpenAIImageSizeTier`；OAuth legacy detach `detachUpstreamContext`（openai_gateway_forward.go）；TTFT trace（`openai_first_token_trace.go` + `withOpenAITTFTHTTPTrace` + `OpenAITTFTTraceConfig`）；Grok fallback `httpClientWithGrokAccessDeniedFallback`（http_upstream.go 与 trace 共存）；Kiro credits 计费 `IsCreditsBasedBilling`（gateway_usage_billing.go）；`available_model_handler.go`。
+
+**rebase 风险点**：
+- upstream 客户端 IP 重构改了 middleware/config 面，与本地补丁面交集靠 3-way 自动合并（无冲突标记），需 CI 交叉验证。
+- `wire_gen.go` 为生成文件，`ProvideBatchImageHandler` 参数与 `wire.go` 定义须精确匹配，靠 CI 编译验证。
+- apicompat 本地补丁第 1 部分让位 upstream 实现后，Codex Desktop 空响应场景依赖 upstream `Outputs` 版语义，需 Actions 的 apicompat 测试验证无回归。
+
+**验证结果**：
+- 按 v0.1.156 轮教训，本轮**先推验证分支跑 CI（push 任意分支即触发 CI + Security Scan），全绿后再经用户授权 force-push `main` 带 `[deploy]`**。
+- 本机未跑 build/test（遵循 rebase-playbook）；仅做 gofmt / 冲突标记扫描 / 受保护补丁符号核对。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
