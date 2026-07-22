@@ -1106,6 +1106,34 @@
 
 ---
 
+### 2026-07-22：rebase 到 upstream v0.1.163（60013c5f1）
+**类型**：上游同步 rebase
+
+**背景**：
+- upstream 从 `db4295d64`（v0.1.161）前进到 `60013c5f1`；本轮包含 tag `v0.1.162`、`v0.1.163`，源码 `VERSION` 已为 `0.1.163`。
+- 上游主要范围包括：OpenAI `/responses` 客户端工具 round-trip 与 hosted `image_generation` 计费、Grok OAuth 模型/缓存/403 策略、群组 reasoning policy、调度缓存与 API Key 解密失败处理、usage 筛选口径、Redis ACL、前端移动端与安全依赖更新。
+- rebase 前本地 `main` 为 `9015bba18`；回溯分支 `backup/pre-rebase-v0.1.163-20260722` 已保留该提交。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main` 已将 139 个本地补丁提交重放到 `60013c5f1` 之上，**无冲突**完成；rebase 后 HEAD 为 `e413fe14f`。
+- 上游已无待合并提交；`main` 仍保留 139 个本地补丁提交。未改写、删除或折叠任何本地补丁以规避冲突。
+
+**本地补丁复核（静态）**：
+1. **free OpenAI OAuth 生图 web2api**：`openai_images_web2api.go` 仍按 OAuth + 非流式 `generations` + free `credentials.plan_type` 默认走 web2api；`extra`/`credentials.openai_images_transport` 的 `web2api` 与 `responses` 覆盖项仍生效。`openai_images_responses.go` 继续在进入 Responses 链路前调用 `shouldUseOpenAIImagesWeb2API`，并保留 `Tool choice ... image_generation ... not found ... tools` 的 400 failover 判据。
+2. **OpenAI 图片尺寸计费**：`NormalizeImageBillingTierOrDefault` 仍仅将 `1024x1024` 归为 1K；自定义有效尺寸最低 2K，像素超过 `2560*1440` 升为 4K；未知值默认 2K。
+3. **OAuth legacy /responses detached context**：`openai_gateway_forward.go` 仍在每次构造上游请求时调用 `detachUpstreamContext(ctx)`，并在 `buildUpstreamRequest` 后记录 `build_upstream_ms`；保护测试 `TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel` 仍在。
+4. **TTFT trace**：`openai_first_token_trace.go`、`OpenAITTFTTraceConfig`、`openai.ttft_trace` 结构化日志以及 `SetOpenAITTFTTrace` 埋点均仍存在。
+
+**rebase 风险点**：
+- upstream 本轮直接触及 OpenAI Responses、图片计费、Grok 和调度缓存；虽然本次 3-way 重放无冲突，仍需由 CI 覆盖编译、单元测试和前端 embed 构建。
+- 本地带 `[deploy]` 的历史提交已被 rebase 重写；在 CI 通过并获得明确授权前，禁止推送（尤其禁止直接 force-push `main`）。
+
+**验证结果**：
+- 待 GitHub Actions 验证：本机未运行 `pnpm install/build`、`go test ./...` 或 `go build`；未重启服务、未部署、未推送。
+- 本地只完成 rebase、静态受保护补丁核对及后续 `git diff --check` / 工作区检查；CI 应至少验证 embed 前端、全量 Go 测试，以及生图路由/尺寸计费/OAuth detach 相关测试。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
