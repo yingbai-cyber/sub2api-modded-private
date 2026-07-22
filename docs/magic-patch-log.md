@@ -1125,12 +1125,13 @@
 4. **TTFT trace**：`openai_first_token_trace.go`、`OpenAITTFTTraceConfig`、`openai.ttft_trace` 结构化日志以及 `SetOpenAITTFTTrace` 埋点均仍存在。
 
 **rebase 风险点**：
-- upstream 本轮直接触及 OpenAI Responses、图片计费、Grok 和调度缓存；虽然本次 3-way 重放无冲突，仍需由 CI 覆盖编译、单元测试和前端 embed 构建。
-- 本地带 `[deploy]` 的历史提交已被 rebase 重写；在 CI 通过并获得明确授权前，禁止推送（尤其禁止直接 force-push `main`）。
+- upstream 本轮直接触及 OpenAI Responses、图片计费、Grok 和调度缓存；本次虽无 3-way 冲突，仍以完整 CI、embed 构建和部署健康检查作为最终验收，而非仅凭静态核对。
+- rebase 重写了带 `[deploy]` 的本地历史；经用户明确授权后，已使用 `--force-with-lease` 将 `main` 从 `9015bba18` 安全更新到 `d573478e2`，回溯分支仍保留。
 
 **验证结果**：
-- 待 GitHub Actions 验证：本机未运行 `pnpm install/build`、`go test ./...` 或 `go build`；未重启服务、未部署、未推送。
-- 本地只完成 rebase、静态受保护补丁核对及后续 `git diff --check` / 工作区检查；CI 应至少验证 embed 前端、全量 Go 测试，以及生图路由/尺寸计费/OAuth detach 相关测试。
+- GitHub Actions 均针对 `d573478e2` 成功：Security Scan `29919961207`、CI `29919961230`、Build `29919961140`。CI 的前端 typecheck/critical vitest、Go unit/integration tests、golangci-lint 均通过；Build 的前端 embed、后端测试、嵌入式二进制构建与产物上传均通过。
+- `[deploy]` 触发的 `Deploy built binary to server` job 成功完成上传、安装、重启与验证。部署后 `sub2api-modded.service` 为 `active`，宿主机 `/health` 和 `npm-app -> 172.19.0.1:18081/health` 均返回 HTTP 200。
+- 本机未运行高资源构建或全量测试；验收由 GitHub-hosted runner 和受控部署流程完成。
 
 ---
 
