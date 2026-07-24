@@ -30,9 +30,9 @@ func eventHeaders(eventType string) []eventstream.Header {
 
 func TestDecodeAssistantAndMetering(t *testing.T) {
 	var raw bytes.Buffer
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`)))
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world"}`)))
-	raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.247}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.247}`)))
 
 	dec := NewEventDecoder(&raw)
 	var text string
@@ -62,10 +62,10 @@ func TestDecodeAssistantAndMetering(t *testing.T) {
 
 func TestDecodeToolUseAndReasoning(t *testing.T) {
 	var raw bytes.Buffer
-	raw.Write(encodeFrame(t, eventHeaders("reasoningContentEvent"), []byte(`{"text":"thinking..."}`)))
-	raw.Write(encodeFrame(t, eventHeaders("toolUseEvent"),
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("reasoningContentEvent"), []byte(`{"text":"thinking..."}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("toolUseEvent"),
 		[]byte(`{"name":"read_file","toolUseId":"t1","input":"{\"path\":","stop":false}`)))
-	raw.Write(encodeFrame(t, eventHeaders("toolUseEvent"),
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("toolUseEvent"),
 		[]byte(`{"name":"read_file","toolUseId":"t1","input":"\"/x\"}","stop":true}`)))
 
 	dec := NewEventDecoder(&raw)

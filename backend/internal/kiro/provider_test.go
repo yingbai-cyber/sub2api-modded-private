@@ -15,10 +15,8 @@ import (
 // (host header is overridden but the client dials the test server). We inject a
 // custom endpoint list to point APIURL at the server.
 type fakeEndpoint struct {
-	name          string
-	url           string
-	monthly       bool
-	bearerInvalid bool
+	name string
+	url  string
 }
 
 func (e *fakeEndpoint) Name() string                      { return e.name }
@@ -53,7 +51,7 @@ func baseInput(body string) *ForwardInput {
 
 func TestProviderForwardSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "ok-body")
+		_, _ = io.WriteString(w, "ok-body")
 	}))
 	defer srv.Close()
 
@@ -64,7 +62,7 @@ func TestProviderForwardSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.Endpoint != EndpointIDE {
 		t.Errorf("endpoint = %q", resp.Endpoint)
 	}
@@ -80,11 +78,11 @@ func TestProviderFallsBackIdeToCli(t *testing.T) {
 	ide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&ideHits, 1)
 		w.WriteHeader(http.StatusInternalServerError)
-		io.WriteString(w, "boom")
+		_, _ = io.WriteString(w, "boom")
 	}))
 	defer ide.Close()
 	cli := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "cli-ok")
+		_, _ = io.WriteString(w, "cli-ok")
 	}))
 	defer cli.Close()
 
@@ -98,7 +96,7 @@ func TestProviderFallsBackIdeToCli(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.Endpoint != EndpointCLI {
 		t.Errorf("expected fallback to CLI, got %q", resp.Endpoint)
 	}
@@ -112,12 +110,12 @@ func TestProviderQuotaExhaustedNoFallback(t *testing.T) {
 	cliHit := int32(0)
 	ide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(402)
-		io.WriteString(w, `{"reason":"MONTHLY_REQUEST_COUNT"}`)
+		_, _ = io.WriteString(w, `{"reason":"MONTHLY_REQUEST_COUNT"}`)
 	}))
 	defer ide.Close()
 	cli := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&cliHit, 1)
-		io.WriteString(w, "cli-ok")
+		_, _ = io.WriteString(w, "cli-ok")
 	}))
 	defer cli.Close()
 
@@ -147,13 +145,13 @@ func TestProviderForceRefreshOnBearerInvalid(t *testing.T) {
 		n := atomic.AddInt32(&hits, 1)
 		if n == 1 {
 			w.WriteHeader(401)
-			io.WriteString(w, "the bearer token is invalid")
+			_, _ = io.WriteString(w, "the bearer token is invalid")
 			return
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer refreshed" {
 			t.Errorf("second attempt auth = %q; want refreshed token", got)
 		}
-		io.WriteString(w, "ok-after-refresh")
+		_, _ = io.WriteString(w, "ok-after-refresh")
 	}))
 	defer srv.Close()
 
@@ -171,7 +169,7 @@ func TestProviderForceRefreshOnBearerInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if atomic.LoadInt32(&refreshCalls) != 1 {
 		t.Errorf("force-refresh calls = %d; want 1", refreshCalls)
 	}
@@ -186,7 +184,7 @@ func TestProviderBadRequestNoRetry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 		w.WriteHeader(400)
-		io.WriteString(w, "bad")
+		_, _ = io.WriteString(w, "bad")
 	}))
 	defer srv.Close()
 
@@ -210,7 +208,7 @@ func TestProviderExplicitEndpointOverride(t *testing.T) {
 	}))
 	defer ide.Close()
 	cli := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "cli-only")
+		_, _ = io.WriteString(w, "cli-only")
 	}))
 	defer cli.Close()
 
@@ -226,7 +224,7 @@ func TestProviderExplicitEndpointOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.Endpoint != EndpointCLI {
 		t.Errorf("endpoint = %q; want cli", resp.Endpoint)
 	}
