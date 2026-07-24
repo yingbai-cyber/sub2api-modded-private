@@ -1228,6 +1228,44 @@
 
 ---
 
+### 2026-07-26：前端 Kiro 原生凭证录入（Create/Edit Modal，L8）
+**类型**：功能 / 新平台原生化 + 凭证脱敏修复（本地长期受保护补丁）
+
+**背景**：
+- L1–L7b 已在后端打通 Kiro 原生上游（4 种 `auth_method`：api_key/social/idc/external_idp）。但前端两个账号 Modal 只支持 **legacy passthrough**（`base_url` + kiro-rs `api_key`），管理员无法在 UI 里创建/编辑**原生**账号。L8 补齐前端录入。
+- **探索期发现的后端脱敏缺口（安全 + 正确性 bug，一并修复）**：`kiro_api_key`、`client_secret` **不在** `service.SensitiveCredentialKeys` 清单里 → ① GET `/admin/accounts` 响应明文回传这两个密钥（泄漏）；② 前端「全对象 PUT」编辑账号时，脱敏响应不带回这两个键，`MergePreservingSensitiveCreds` 只保留清单内的键，导致**编辑任意字段都会清空** native 密钥。不修则原生 Kiro 的 Edit 流程是坏的。
+
+**影响文件**：
+- **后端（薄接缝，1 行清单 + 测试）**：
+  - `backend/internal/service/account_credentials_redact.go`：`SensitiveCredentialKeys` 追加 `"kiro_api_key"`、`"client_secret"`。审计脱敏 `isAuditSensitiveBodyKey` 已自动覆盖（`auditNormalizeBodyKey` 去 `_`/`-` 后 `kiroapikey`⊃`apikey`、`clientsecret`⊃`secret`），故 `TestAuditSensitiveKeys_CoverCredentialTable` 守卫自动通过，无需改审计表。
+  - `backend/internal/service/account_credentials_redact_test.go` + `backend/internal/handler/dto/credentials_redact_test.go`：新增/扩充断言两键被脱敏、产出 `has_kiro_api_key`/`has_client_secret` 状态、且非敏感原生字段（auth_method/client_id/token_endpoint/…）保留。
+- **前端（主体在隔离组件，Modal 仅薄接缝）**：
+  - 新增 `frontend/src/components/account/KiroNativeCredentials.vue`（**native 逻辑主体**，抗 rebase）：`auth_method` 下拉 + 按方法条件渲染凭证字段；导出纯函数 `buildKiroNativeCredentials(creds, mode)`（提交前校验 + 构建 snake_case credentials）、`parseKiroNativeCreds(credentials, status)`（Edit 从脱敏账号推断模式 + 回填非敏感字段）、常量 `KIRO_NATIVE_MANAGED_KEYS`、工厂 `emptyKiroNativeCreds`、类型 `KiroNativeCreds`/`KiroAuthMethod`。
+  - 新增 `frontend/src/components/account/__tests__/KiroNativeCredentials.spec.ts` / `CreateAccountModal.kiro.spec.ts` / `EditAccountModal.kiro.spec.ts`（vitest mount；独立文件，参照 `*.grok.spec.ts` 先例，勿混入主 spec 降低 rebase 冲突）。
+  - `frontend/src/components/account/CreateAccountModal.vue`（接缝）：import 组件+纯函数；新增 ref `kiroMode`（默认 `legacy`）、`kiroNativeCreds`；Kiro 区模板加「接入模式」radio（legacy/native），native 挂 `<KiroNativeCredentials mode="create">` 并隐藏 legacy base_url/api_key/probe；submit 的 kiro 分支按 `kiroMode` 走 native（`buildKiroNativeCredentials(...,'create')`，不发 `base_url`）或 legacy；`resetForm` 重置新 ref（此前 kiro ref 从不重置，一并补齐）。
+  - `frontend/src/components/account/EditAccountModal.vue`（接缝）：import 组件+纯函数+`KIRO_NATIVE_MANAGED_KEYS`；新增 ref `editKiroMode`/`editKiroNativeCreds`；`syncFormFromAccount` 里对 kiro 调 `parseKiroNativeCreds` 推断初始模式并回填（顺手**去重**原先重复两遍的 `credits_per_dollar` 加载块）；模板加「接入模式」radio（仅 kiro 显示）、native 挂组件（传 `:credentials-status`）并把 legacy base_url/api_key 块 gate 为 `type!=='kiro' || editKiroMode==='legacy'`；submit 的 apikey/kiro 分支内按 native 拆分：native 时从脱敏 `currentCredentials` 剥离 `KIRO_NATIVE_MANAGED_KEYS` 再并入 `buildKiroNativeCredentials(...,'edit')` 结果（秘密留空=不回传→后端 Merge 保留）。
+
+**改动摘要**：
+- **接入模式显式开关**（非从 auth_method 推断）：legacy=kiro-rs 代理，native=原生直连；语义清晰，区分「代理 api_key」与「ksk_ 原生 key」两个不同概念。
+- **秘密 vs 非敏感分流**（`buildKiroNativeCredentials`）：秘密键（kiro_api_key/refresh_token/access_token/client_secret）有值才回传，Edit 留空表示保留；非敏感键（auth_method/client_id/token_endpoint/issuer_url/scopes/region/endpoint/profile_arn/expires_at）有值才回传。create 强制按 auth_method 校验必填；`refresh_token` 前端预校验 ≥100 字符（对齐后端 `ValidateRefreshToken`）。
+- **Edit 模式推断**（`parseKiroNativeCreds`，对齐后端 `EffectiveAuthMethod`）：显式 `auth_method` 优先；否则 `has_kiro_api_key`→api_key、有 `token_endpoint`→external_idp、有 `client_id`→idc、兜底 social。`isNative = has_kiro_api_key || has_refresh_token || auth_method∈{4 种}`。
+- **切 native 剥离 legacy 键**：`KIRO_NATIVE_MANAGED_KEYS` 含 `base_url`/`api_key`，Edit 切到 native 时先剥离，避免残留代理字段与 native 凭证并存造成 `UsesNativeUpstream` 语义歧义。
+
+**与官方差异原因**：
+- upstream 无 Kiro 平台，纯本地能力。native 录入逻辑集中在**单个隔离组件** + 导出纯函数，两个 Modal 只保留「import + ref + 模板 radio + submit 分支」薄接缝，把 rebase 冲突面压到最小；后端仅动 1 处共享敏感键清单（追加式）。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- `KiroNativeCredentials.vue` 及其 3 个 `*.kiro.spec.ts` / `KiroNativeCredentials.spec.ts` 整文件：upstream 从不触及，正常 rebase 不冲突。
+- `account_credentials_redact.go` 的 `SensitiveCredentialKeys` **必须保留** `"kiro_api_key"`、`"client_secret"`；upstream 若重排该清单，务必补回（否则密钥泄漏 + Edit 清空回归）。
+- 两个 Modal 的接缝：upstream 若重构 Kiro 区模板 / submit / `syncFormFromAccount` / `resetForm`，须补回：① `kiroMode`/`editKiroMode` 开关与 native 组件挂载；② submit 的 native 分支；③ Edit 的 `parseKiroNativeCreds` 初始化与 `KIRO_NATIVE_MANAGED_KEYS` 剥离；④ Create 的 `resetForm` kiro 重置。
+- **不得**把 native 录入逻辑内联进 Modal（应留在隔离组件），也不得让 legacy base_url/api_key 与 native 凭证在同一 credentials 里并存提交。
+
+**验证结果**：
+- 待 commit（不带 `[deploy]`）+ 用户授权 push 后由 GitHub Actions CI 验证（后端 `go build`/`go vet`/`golangci-lint`/`go test`；前端 lint/`vitest`）；本机不跑 build/test/vet。
+- 进度：L8 代码（后端脱敏 + 前端组件 + 两 Modal 接缝 + 测试）+ 本条登记完成；**待办**：L9（数据迁移 platform=kiro，受保护高风险，需显式授权）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
