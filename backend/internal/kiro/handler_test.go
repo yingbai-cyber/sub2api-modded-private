@@ -140,9 +140,9 @@ func collectEmit(events *[]string) EmitFunc {
 
 func TestDriveStreamEventOrdering(t *testing.T) {
 	var raw bytes.Buffer
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`)))
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world"}`)))
-	raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.5}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.5}`)))
 
 	ctx := NewStreamContext("claude-sonnet-4.5", 10, false, nil)
 	var events []string
@@ -177,8 +177,8 @@ func TestDriveStreamEventOrdering(t *testing.T) {
 
 func TestDriveStreamClientDisconnectDrainsCredits(t *testing.T) {
 	var raw bytes.Buffer
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hi"}`)))
-	raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.75}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hi"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.75}`)))
 
 	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
 	// Fail emit immediately to simulate a client disconnect on the first event.
@@ -198,14 +198,14 @@ func TestDriveStreamClientDisconnectDrainsCredits(t *testing.T) {
 
 func TestDriveStreamFatalErrorShortCircuits(t *testing.T) {
 	var raw bytes.Buffer
-	raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"start"}`)))
-	raw.Write(encodeFrame(t, []eventstream.Header{
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"start"}`)))
+	_, _ = raw.Write(encodeFrame(t, []eventstream.Header{
 		{Name: hdrMessageType, Value: eventstream.StringValue("error")},
 		{Name: hdrErrorCode, Value: eventstream.StringValue("ThrottlingException")},
 		{Name: hdrErrorMessage, Value: eventstream.StringValue("slow down")},
 	}, nil))
 	// A trailing metering frame that must NOT be reached (fatal short-circuits).
-	raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":9.0}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":9.0}`)))
 
 	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
 	var events []string
