@@ -100,6 +100,7 @@ func provideCleanup(
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
 	codexVersionSync *service.OpenAICodexVersionSyncService,
 	claudeCodeVersionSync *service.ClaudeCodeVersionSyncService,
+	kiroTokenRefresher *service.KiroTokenRefresher,
 	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
@@ -276,6 +277,10 @@ func provideCleanup(
 			}},
 			{"ClaudeCodeVersionSyncService", func() error {
 				claudeCodeVersionSync.Stop()
+				return nil
+			}},
+			{"KiroTokenRefresher", func() error {
+				kiroTokenRefresher.Stop()
 				return nil
 			}},
 			{"ProxyExpiryService", func() error {
