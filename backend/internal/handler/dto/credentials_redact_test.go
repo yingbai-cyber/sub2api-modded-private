@@ -88,6 +88,7 @@ func TestRedactCredentials_AllKnownSensitiveKeys(t *testing.T) {
 		"aws_secret_access_key", "aws_session_token",
 		"service_account_json", "service_account", "private_key",
 		"agent_private_key",
+		"kiro_api_key", "client_secret",
 	}
 	in := make(map[string]any, len(keys))
 	for _, k := range keys {
@@ -98,4 +99,40 @@ func TestRedactCredentials_AllKnownSensitiveKeys(t *testing.T) {
 	for _, k := range keys {
 		require.True(t, status["has_"+k], "key %s 应在 status 中标记为已配置", k)
 	}
+}
+
+// Kiro 原生凭证脱敏：kiro_api_key/client_secret 必须转成 has_* 状态而非明文返回；
+// 非敏感的原生配置字段（auth_method/client_id/token_endpoint 等）必须保留以便 Edit 预填。
+func TestRedactCredentials_KiroNative(t *testing.T) {
+	in := map[string]any{
+		"kiro_api_key":   "ksk_secret",
+		"refresh_token":  "rt-secret",
+		"client_secret":  "cs-secret",
+		"auth_method":    "idc",
+		"client_id":      "cid-1",
+		"token_endpoint": "https://oidc.example.com/token",
+		"issuer_url":     "https://issuer.example.com",
+		"scopes":         "openid profile",
+		"region":         "us-east-1",
+		"endpoint":       "ide",
+		"profile_arn":    "arn:aws:codewhisperer:...",
+	}
+	out, status := RedactCredentials(in)
+
+	require.NotContains(t, out, "kiro_api_key")
+	require.NotContains(t, out, "client_secret")
+	require.NotContains(t, out, "refresh_token")
+	require.True(t, status["has_kiro_api_key"])
+	require.True(t, status["has_client_secret"])
+	require.True(t, status["has_refresh_token"])
+
+	// 非敏感原生字段保留（前端 Edit 预填）。
+	require.Equal(t, "idc", out["auth_method"])
+	require.Equal(t, "cid-1", out["client_id"])
+	require.Equal(t, "https://oidc.example.com/token", out["token_endpoint"])
+	require.Equal(t, "https://issuer.example.com", out["issuer_url"])
+	require.Equal(t, "openid profile", out["scopes"])
+	require.Equal(t, "us-east-1", out["region"])
+	require.Equal(t, "ide", out["endpoint"])
+	require.Equal(t, "arn:aws:codewhisperer:...", out["profile_arn"])
 }
