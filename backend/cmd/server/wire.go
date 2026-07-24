@@ -89,6 +89,7 @@ func provideCleanup(
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
 	codexVersionSync *service.OpenAICodexVersionSyncService,
+	kiroTokenRefresher *service.KiroTokenRefresher,
 	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
@@ -239,6 +240,10 @@ func provideCleanup(
 			}},
 			{"OpenAICodexVersionSyncService", func() error {
 				codexVersionSync.Stop()
+				return nil
+			}},
+			{"KiroTokenRefresher", func() error {
+				kiroTokenRefresher.Stop()
 				return nil
 			}},
 			{"ProxyExpiryService", func() error {
