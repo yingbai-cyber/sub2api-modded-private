@@ -10,7 +10,7 @@ func buildStream(t *testing.T, frames [][2]string) []byte {
 	t.Helper()
 	var raw bytes.Buffer
 	for _, f := range frames {
-		raw.Write(encodeFrame(t, eventHeaders(f[0]), []byte(f[1])))
+		_, _ = raw.Write(encodeFrame(t, eventHeaders(f[0]), []byte(f[1])))
 	}
 	return raw.Bytes()
 }
@@ -29,7 +29,7 @@ func TestNonStreamBasicText(t *testing.T) {
 	if len(content) != 1 {
 		t.Fatalf("content blocks = %d; want 1", len(content))
 	}
-	block := content[0].(map[string]any)
+	block, _ := content[0].(map[string]any)
 	if block["type"] != "text" || block["text"] != "Hello world" {
 		t.Errorf("block = %v", block)
 	}
@@ -63,7 +63,7 @@ func TestNonStreamToolUse(t *testing.T) {
 	if len(content) != 2 {
 		t.Fatalf("content blocks = %d; want 2", len(content))
 	}
-	tool := content[1].(map[string]any)
+	tool, _ := content[1].(map[string]any)
 	if tool["type"] != "tool_use" || tool["name"] != "read_file" {
 		t.Errorf("tool block = %v", tool)
 	}
@@ -83,11 +83,11 @@ func TestNonStreamThinkingExtraction(t *testing.T) {
 	if len(content) != 2 {
 		t.Fatalf("content blocks = %d; want 2 (thinking+text)", len(content))
 	}
-	th := content[0].(map[string]any)
+	th, _ := content[0].(map[string]any)
 	if th["type"] != "thinking" || th["thinking"] != "my reasoning" {
 		t.Errorf("thinking block = %v", th)
 	}
-	txt := content[1].(map[string]any)
+	txt, _ := content[1].(map[string]any)
 	if txt["type"] != "text" || txt["text"] != "the answer" {
 		t.Errorf("text block = %v", txt)
 	}

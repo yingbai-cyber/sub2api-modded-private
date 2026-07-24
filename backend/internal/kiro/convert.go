@@ -324,7 +324,7 @@ func normalizeJSONSchema(raw json.RawMessage) json.RawMessage {
 	// required: must be an array of strings.
 	obj["required"] = normalizeRequired(obj["required"])
 	// additionalProperties: bool or object, else true.
-	if v, ok := obj["additionalProperties"]; !ok || !(isJSONBool(v) || isJSONObject(v)) {
+	if v, ok := obj["additionalProperties"]; !ok || (!isJSONBool(v) && !isJSONObject(v)) {
 		obj["additionalProperties"] = json.RawMessage(`true`)
 	}
 
@@ -452,18 +452,18 @@ func convertAssistantMessage(msg AnthropicMsg, toolNameMap map[string]string) *A
 
 	blocks, bareText, isText := decodeContentBlocks(msg.Content)
 	if isText {
-		textContent.WriteString(bareText)
+		_, _ = textContent.WriteString(bareText)
 	} else {
 		for i := range blocks {
 			b := &blocks[i]
 			switch b.Type {
 			case "thinking":
 				if b.Thinking != nil {
-					thinkingContent.WriteString(*b.Thinking)
+					_, _ = thinkingContent.WriteString(*b.Thinking)
 				}
 			case "text":
 				if b.Text != nil {
-					textContent.WriteString(*b.Text)
+					_, _ = textContent.WriteString(*b.Text)
 				}
 			case "tool_use":
 				if b.ID != nil && b.Name != nil {

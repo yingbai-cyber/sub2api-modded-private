@@ -34,11 +34,14 @@ func runStream(model string, inputTokens int, thinking bool, toolNameMap map[str
 		delta, _ := e.Data["delta"].(map[string]any)
 		switch delta["type"] {
 		case "text_delta":
-			out.text += delta["text"].(string)
+			s, _ := delta["text"].(string)
+			out.text += s
 		case "thinking_delta":
-			out.thinking += delta["thinking"].(string)
+			s, _ := delta["thinking"].(string)
+			out.thinking += s
 		case "input_json_delta":
-			out.toolJSON += delta["partial_json"].(string)
+			s, _ := delta["partial_json"].(string)
+			out.toolJSON += s
 		}
 	}
 	return out

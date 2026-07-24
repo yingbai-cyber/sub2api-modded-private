@@ -144,9 +144,9 @@ func ExtractThinkingFromCompleteText(text string) (string, bool, string) {
 
 	var remaining strings.Builder
 	if strings.TrimSpace(before) != "" {
-		remaining.WriteString(before)
+		_, _ = remaining.WriteString(before)
 	}
-	remaining.WriteString(textAfter)
+	_, _ = remaining.WriteString(textAfter)
 
 	if thinkingContent == "" {
 		return "", false, remaining.String()
