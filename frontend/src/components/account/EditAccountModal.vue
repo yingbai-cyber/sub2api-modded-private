@@ -28,6 +28,53 @@
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey' || account.type === 'kiro'" class="space-y-4">
+        <!-- Kiro 接入模式开关：legacy(kiro-rs 代理) / native(原生直连) -->
+        <div v-if="account.type === 'kiro'">
+          <label class="input-label">接入模式</label>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              @click="editKiroMode = 'legacy'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                editKiroMode === 'legacy'
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              kiro-rs 代理 (legacy)
+            </button>
+            <button
+              type="button"
+              @click="editKiroMode = 'native'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                editKiroMode === 'native'
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              原生直连 (native)
+            </button>
+          </div>
+          <p class="input-hint">
+            {{
+              editKiroMode === 'legacy'
+                ? '通过外部 kiro-rs 服务代理转发（填 Base URL + API Key）'
+                : '直连 Kiro/CodeWhisperer 上游（选择认证方式并填写凭证，无需 kiro-rs）'
+            }}
+          </p>
+        </div>
+
+        <!-- Native 直连凭证（仅 kiro native） -->
+        <KiroNativeCredentials
+          v-if="account.type === 'kiro' && editKiroMode === 'native'"
+          v-model="editKiroNativeCreds"
+          mode="edit"
+          :credentials-status="account.credentials_status"
+        />
+
+        <template v-if="account.type !== 'kiro' || editKiroMode === 'legacy'">
         <div v-if="!isCNApiKeyAccount || editApiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -76,6 +123,7 @@
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
+        </template>
         <!-- Account Mode Selection (CN providers) -->
         <div v-if="isCNApiKeyAccount">
           <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
@@ -147,7 +195,7 @@
           </div>
           <p class="input-hint mt-2">{{ t('admin.accounts.cnProviders.zhipuTeam.hint') }}</p>
         </div>
-        <div>
+        <div v-if="account.type !== 'kiro' || editKiroMode === 'legacy'">
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
           <input
             v-model="editApiKey"
@@ -2949,6 +2997,13 @@ import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import OllamaCloudUsageSettings from '@/components/account/OllamaCloudUsageSettings.vue'
+import KiroNativeCredentials, {
+  buildKiroNativeCredentials,
+  emptyKiroNativeCreds,
+  parseKiroNativeCreds,
+  KIRO_NATIVE_MANAGED_KEYS,
+  type KiroNativeCreds
+} from '@/components/account/KiroNativeCredentials.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
@@ -3231,6 +3286,9 @@ function formatPoolModeRetryStatusCodes(value: unknown): string {
 }
 const probingModels = ref(false)
 const editKiroCreditsPerDollar = ref<number>(50)
+// Kiro 接入模式：legacy = kiro-rs 代理透传；native = 原生直连(auth_method+凭证)
+const editKiroMode = ref<'legacy' | 'native'>('legacy')
+const editKiroNativeCreds = ref<KiroNativeCreds>(emptyKiroNativeCreds())
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
@@ -4071,12 +4129,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (newAccount.type === 'kiro') {
       const extra = (newAccount.extra as Record<string, unknown>) || {}
       editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
-    }
 
-    // Load credits_per_dollar for kiro type (stored in extra)
-    if (newAccount.type === 'kiro') {
-      const extra = (newAccount.extra as Record<string, unknown>) || {}
-      editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
+      // 推断 Kiro 接入模式并回填 native 凭证表单（秘密字段脱敏，留空由 status 提示已配置）。
+      const { creds, isNative } = parseKiroNativeCreds(credentials, newAccount.credentials_status)
+      editKiroMode.value = isNative ? 'native' : 'legacy'
+      editKiroNativeCreds.value = creds
     }
 
     // Load custom error codes
@@ -4774,29 +4831,30 @@ const handleSubmit = async () => {
     // For apikey/kiro type, handle credentials update
     if (props.account.type === 'apikey' || props.account.type === 'kiro') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
-      const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
 
-      // Always update credentials for apikey type to handle model mapping changes
-      const newCredentials: Record<string, unknown> = {
-        ...currentCredentials,
-        base_url: newBaseUrl
-      }
+      let newCredentials: Record<string, unknown>
 
-      // 国产供应商：模式与协议写入凭据（决定额度/余额探测与转发端点/格式）。
-      if (isCNApiKeyAccount.value) {
-        newCredentials.account_mode = editAccountMode.value
-        newCredentials.api_protocol = editApiProtocol.value
-        if (editApiProtocol.value === 'adaptive') {
-          const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, editAccountMode.value)
-          const protocolBaseUrls: Record<string, string> = {}
-          for (const item of editAdaptiveProtocolOptions.value) {
-            protocolBaseUrls[item.value] = (editAdaptiveBaseUrls.value[item.value] || defaults[item.value]).trim()
-          }
-          newCredentials.api_base_urls = protocolBaseUrls
-          newCredentials.base_url = protocolBaseUrls.chat_completions
-        } else {
-          delete newCredentials.api_base_urls
+      if (props.account.type === 'kiro' && editKiroMode.value === 'native') {
+        // 原生直连：由 native 表单构建凭证（秘密留空=保留），移除 legacy 代理字段。
+        const built = buildKiroNativeCredentials(editKiroNativeCreds.value, 'edit')
+        if (built.error) {
+          appStore.showError(built.error)
+          return
+        }
+        // 从脱敏后的 currentCredentials 起底，先剥离 native 表单托管的键（使表单成为权威，
+        // 支持清空非敏感字段；秘密键不在响应里，省略即由后端 Merge 保留），保留 model_mapping/pool_mode 等其他键。
+        newCredentials = { ...currentCredentials }
+        for (const k of KIRO_NATIVE_MANAGED_KEYS) {
+          delete newCredentials[k]
+        }
+        Object.assign(newCredentials, built.credentials)
+      } else {
+        const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
+        // Always update credentials for apikey type to handle model mapping changes
+        newCredentials = {
+          ...currentCredentials,
+          base_url: newBaseUrl
         }
         // 智谱团队版 Coding Plan：组织/项目 ID 写入凭据（非空才写，清空即移除回落个人版路径）
         if (props.account.platform === 'zhipu') {
@@ -4811,20 +4869,37 @@ const handleSubmit = async () => {
             delete newCredentials.zhipu_project
           }
         }
-      }
 
-      // Handle API key
-      // 后端响应已脱敏：currentCredentials 不会再包含 api_key 原文。
-      // 用户填入新值则覆盖；留空时优先看 credentials_status.has_api_key；
-      // 若后端尚未升级（无 credentials_status），回退读旧结构 currentCredentials.api_key。
-      // 两者都无才报错。
-      const hasExistingApiKey =
-        props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
-      if (editApiKey.value.trim()) {
-        newCredentials.api_key = editApiKey.value.trim()
-      } else if (!hasExistingApiKey) {
-        appStore.showError(t('admin.accounts.apiKeyIsRequired'))
-        return
+        // 国产供应商：模式与协议写入凭据（决定额度/余额探测与转发端点/格式）。
+        if (isCNApiKeyAccount.value) {
+          newCredentials.account_mode = editAccountMode.value
+          newCredentials.api_protocol = editApiProtocol.value
+          if (editApiProtocol.value === 'adaptive') {
+            const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, editAccountMode.value)
+            const protocolBaseUrls: Record<string, string> = {}
+            for (const item of editAdaptiveProtocolOptions.value) {
+              protocolBaseUrls[item.value] = (editAdaptiveBaseUrls.value[item.value] || defaults[item.value]).trim()
+            }
+            newCredentials.api_base_urls = protocolBaseUrls
+            newCredentials.base_url = protocolBaseUrls.chat_completions
+          } else {
+            delete newCredentials.api_base_urls
+          }
+        }
+
+        // Handle API key
+        // 后端响应已脱敏：currentCredentials 不会再包含 api_key 原文。
+        // 用户填入新值则覆盖；留空时优先看 credentials_status.has_api_key；
+        // 若后端尚未升级（无 credentials_status），回退读旧结构 currentCredentials.api_key。
+        // 两者都无才报错。
+        const hasExistingApiKey =
+          props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
+        if (editApiKey.value.trim()) {
+          newCredentials.api_key = editApiKey.value.trim()
+        } else if (!hasExistingApiKey) {
+          appStore.showError(t('admin.accounts.apiKeyIsRequired'))
+          return
+        }
       }
 
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）
