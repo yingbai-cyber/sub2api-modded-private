@@ -284,7 +284,7 @@ func postExternalIDPTokenForm(ctx context.Context, client *http.Client, c *Crede
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -388,7 +388,7 @@ func doJSON(ctx context.Context, client *http.Client, url string, headers map[st
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, nil, err

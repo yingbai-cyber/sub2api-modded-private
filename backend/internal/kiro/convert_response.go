@@ -45,7 +45,7 @@ type nonStreamAccumulator struct {
 func (a *nonStreamAccumulator) processEvent(ev *Event) {
 	switch ev.Kind {
 	case EventAssistantResponse:
-		a.textContent.WriteString(ev.Assistant.Content)
+		_, _ = a.textContent.WriteString(ev.Assistant.Content)
 	case EventToolUse:
 		a.hasToolUse = true
 		buf, ok := a.toolJSONBuffers[ev.ToolUse.ToolUseID]
@@ -54,7 +54,7 @@ func (a *nonStreamAccumulator) processEvent(ev *Event) {
 			a.toolJSONBuffers[ev.ToolUse.ToolUseID] = buf
 			a.toolOrder = append(a.toolOrder, ev.ToolUse.ToolUseID)
 		}
-		buf.WriteString(ev.ToolUse.Input)
+		_, _ = buf.WriteString(ev.ToolUse.Input)
 		if ev.ToolUse.Name != "" {
 			name := ev.ToolUse.Name
 			if orig, ok := a.toolNameMap[name]; ok {
@@ -144,8 +144,8 @@ func BuildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	var toolInputConcat strings.Builder
 	for _, id := range acc.toolOrder {
 		buf := acc.toolJSONBuffers[id]
-		toolInputConcat.WriteString(buf.String())
-		toolInputConcat.WriteByte('\n')
+		_, _ = toolInputConcat.WriteString(buf.String())
+		_ = toolInputConcat.WriteByte('\n')
 	}
 	for _, id := range acc.toolOrder {
 		content = append(content, map[string]any{
