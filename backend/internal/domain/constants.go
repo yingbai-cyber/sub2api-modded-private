@@ -39,6 +39,7 @@ const (
 	// 另有 ClinePass 订阅）。
 	PlatformCline     = "cline"
 	PlatformComposite = "composite"
+	PlatformKiro      = "kiro"
 )
 
 // Account mode constants 区分国产供应商的「按量付费（余额）」与「Coding Plan」两种接入方式。
