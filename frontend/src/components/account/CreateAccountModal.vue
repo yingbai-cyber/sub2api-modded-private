@@ -1944,7 +1944,53 @@
 
       <!-- Kiro credentials (only for Anthropic Kiro type) -->
       <div v-if="form.platform === 'anthropic' && accountCategory === 'kiro'" class="space-y-4">
+        <!-- 接入模式开关：legacy(kiro-rs 代理) / native(原生直连) -->
         <div>
+          <label class="input-label">接入模式</label>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              @click="kiroMode = 'legacy'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                kiroMode === 'legacy'
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              kiro-rs 代理 (legacy)
+            </button>
+            <button
+              type="button"
+              @click="kiroMode = 'native'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                kiroMode === 'native'
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              原生直连 (native)
+            </button>
+          </div>
+          <p class="input-hint">
+            {{
+              kiroMode === 'legacy'
+                ? '通过外部 kiro-rs 服务代理转发（填 Base URL + API Key）'
+                : '直连 Kiro/CodeWhisperer 上游（选择认证方式并填写凭证，无需 kiro-rs）'
+            }}
+          </p>
+        </div>
+
+        <!-- Native 直连凭证 -->
+        <KiroNativeCredentials
+          v-if="kiroMode === 'native'"
+          v-model="kiroNativeCreds"
+          mode="create"
+        />
+
+        <!-- Legacy kiro-rs 代理凭证 -->
+        <div v-if="kiroMode === 'legacy'">
           <label class="input-label">Base URL (kiro-rs)</label>
           <input
             v-model="kiroBaseUrl"
@@ -1954,7 +2000,7 @@
           />
           <p class="input-hint">kiro-rs 代理地址</p>
         </div>
-        <div>
+        <div v-if="kiroMode === 'legacy'">
           <label class="input-label">API Key</label>
           <input
             v-model="kiroApiKey"
@@ -3878,6 +3924,11 @@ import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
+import KiroNativeCredentials, {
+  buildKiroNativeCredentials,
+  emptyKiroNativeCreds,
+  type KiroNativeCreds
+} from '@/components/account/KiroNativeCredentials.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
@@ -4170,6 +4221,9 @@ const bedrockApiKeyValue = ref('')
 const kiroBaseUrl = ref('http://127.0.0.1:8080')
 const kiroApiKey = ref('')
 const kiroCreditsPerDollar = ref<number>(50)
+// Kiro 接入模式：legacy = kiro-rs 代理透传(base_url+api_key)；native = 原生直连(auth_method+凭证)
+const kiroMode = ref<'legacy' | 'native'>('legacy')
+const kiroNativeCreds = ref<KiroNativeCreds>(emptyKiroNativeCreds())
 const vertexServiceAccountFileInput = ref<HTMLInputElement | null>(null)
 const vertexServiceAccountJson = ref('')
 const vertexProjectId = ref('')
@@ -5042,6 +5096,11 @@ const resetForm = () => {
   antigravityProjectId.value = ''
   upstreamBaseUrl.value = ''
   upstreamApiKey.value = ''
+  kiroBaseUrl.value = 'http://127.0.0.1:8080'
+  kiroApiKey.value = ''
+  kiroCreditsPerDollar.value = 50
+  kiroMode.value = 'legacy'
+  kiroNativeCreds.value = emptyKiroNativeCreds()
   vertexServiceAccountJson.value = ''
   vertexProjectId.value = ''
   vertexClientEmail.value = ''
@@ -5403,16 +5462,24 @@ const handleSubmit = async () => {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
-    if (!kiroBaseUrl.value.trim()) {
-      appStore.showError('Please enter kiro-rs Base URL')
-      return
-    }
 
-    const credentials: Record<string, unknown> = {
-      base_url: kiroBaseUrl.value.trim(),
-    }
-    if (kiroApiKey.value.trim()) {
-      credentials.api_key = kiroApiKey.value.trim()
+    let credentials: Record<string, unknown>
+    if (kiroMode.value === 'native') {
+      const built = buildKiroNativeCredentials(kiroNativeCreds.value, 'create')
+      if (built.error) {
+        appStore.showError(built.error)
+        return
+      }
+      credentials = built.credentials as Record<string, unknown>
+    } else {
+      if (!kiroBaseUrl.value.trim()) {
+        appStore.showError('Please enter kiro-rs Base URL')
+        return
+      }
+      credentials = { base_url: kiroBaseUrl.value.trim() }
+      if (kiroApiKey.value.trim()) {
+        credentials.api_key = kiroApiKey.value.trim()
+      }
     }
 
     // Model mapping (kiro: merge whitelist + mappings simultaneously)

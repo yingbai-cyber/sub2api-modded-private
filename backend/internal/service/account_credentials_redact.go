@@ -10,6 +10,11 @@ var SensitiveCredentialKeys = []string{
 	// 云服务凭据
 	"aws_secret_access_key", "aws_session_token",
 	"service_account_json", "service_account", "private_key",
+	// Kiro 原生凭证：kiro_api_key 为 ksk_* 直连密钥，client_secret 为 IdC 刷新密钥。
+	// 二者必须脱敏（GET 响应不返回明文），并保证 Edit 全对象 PUT 时经
+	// MergePreservingSensitiveCreds 保留而非被清空。审计脱敏已自动覆盖
+	// （归一化后 kiroapikey⊃apikey、clientsecret⊃secret）。
+	"kiro_api_key", "client_secret",
 }
 
 var sensitiveCredentialKeySet = func() map[string]struct{} {
