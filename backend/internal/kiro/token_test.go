@@ -72,7 +72,7 @@ func TestRefreshSocialSuccess(t *testing.T) {
 			t.Errorf("social request missing refreshToken: %s", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"accessToken":"new-access","refreshToken":"new-refresh","profileArn":"arn:p","expiresIn":3600}`)
+		_, _ = io.WriteString(w, `{"accessToken":"new-access","refreshToken":"new-refresh","profileArn":"arn:p","expiresIn":3600}`)
 	}))
 	defer srv.Close()
 
@@ -92,7 +92,7 @@ func TestRefreshSocialSuccess(t *testing.T) {
 func TestRefreshInvalidGrantIsPermanent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":"invalid_grant","error_description":"Invalid refresh token provided"}`)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant","error_description":"Invalid refresh token provided"}`)
 	}))
 	defer srv.Close()
 
@@ -108,7 +108,7 @@ func TestRefreshExternalIDPForm(t *testing.T) {
 		if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "x-www-form-urlencoded") {
 			t.Errorf("external idp content-type = %q; want form-urlencoded", ct)
 		}
-		r.ParseForm()
+		_ = r.ParseForm()
 		if r.FormValue("grant_type") != "refresh_token" {
 			t.Errorf("grant_type = %q", r.FormValue("grant_type"))
 		}
@@ -116,7 +116,7 @@ func TestRefreshExternalIDPForm(t *testing.T) {
 			t.Errorf("scope missing offline_access: %q", r.FormValue("scope"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"access_token":"ext-access","refresh_token":"ext-refresh","expires_in":7200}`)
+		_, _ = io.WriteString(w, `{"access_token":"ext-access","refresh_token":"ext-refresh","expires_in":7200}`)
 	}))
 	defer srv.Close()
 
