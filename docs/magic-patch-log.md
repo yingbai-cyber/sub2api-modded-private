@@ -1183,6 +1183,51 @@
 
 ---
 
+### 2026-07-25：Kiro 后台 token 刷新（`KiroTokenRefresher`，L7b-2）
+**类型**：功能 / 新平台原生化（本地长期受保护补丁）
+
+**背景**：
+- L7b-1 已实现请求期惰性刷新（`KiroTokenProvider.Resolve`）。L7b-2 补齐**后台主动刷新**，让空闲 Kiro 账号的 native OAuth 凭证（social/idc/external_idp）在过期前被提前刷新，避免长时间空闲后首个请求踩到过期延迟或 refresh_token 过期。
+- **关键设计决策：拒绝并入共享 `TokenRefreshService`（探索后否决）**。探索证实并入会破坏「独立包 + 薄接缝 + 抗 rebase」不变量：
+  1. 共享后台循环按 `account.Platform` 分组（`token_refresh_service.go:623`）、候选查询按 `platform = ANY($1)` 过滤（`account_repo.go:1025`）。Kiro 账号当前 `Platform == "anthropic"`（由 `gateway_forward_as_chat_completions.go:76/78` 的 `account.Platform == PlatformAnthropic && account.Type != AccountTypeKiro` 反证），并入必须先做 L9 platform 迁移。
+  2. 共享候选查询硬编码 `type IN ('oauth','setup-token')`（`account_repo.go:1031-1033`），Kiro 是 `type='kiro'`，并入必须修改这条**全平台共用**的 SQL——高 rebase 冲突风险的厚接缝。
+- **最终方案：独立后台服务 `KiroTokenRefresher`（复刻 `AccountExpiryService` 生命周期）**，键控 `type='kiro'`，与 L9（platform 迁移）**完全解耦**——即便 Kiro 账号仍是 `platform='anthropic'` 也能正确刷新。**（修正 L7b-1 记录中「L7b-2 含 platform=kiro 键控迁移」的旧表述：L7b-2 不再依赖 L9。）**
+
+**影响文件**：
+- 新增 `backend/internal/service/kiro_token_refresher.go`（kiro 自有，主逻辑在此）：`KiroTokenRefresher` 结构体 + `NewKiroTokenRefresher`/`SetLeaderLock`/`Start`/`Stop`/`runOnce`；窄接口 `kiroRefreshCandidateLister`（本文件私有，非共享接口）。
+- 新增 `backend/internal/service/kiro_token_refresher_test.go`：native 过期→刷新 / api_key+未过期+legacy+无 expires_at→跳过 / invalid_grant 不阻断整批 / leader 被 peer 持有→跳过。
+- 主干接缝（薄，追加式，精确到锚点）：
+  1. `backend/internal/repository/account_repo.go`（`ListByPlatform` 之后）新增 `ListKiroRefreshCandidates(ctx)`：`WHERE deleted_at IS NULL AND type='kiro' AND status='active'`。**不加入 `AccountRepository` 共享接口**——靠窄接口类型断言消费，零测试桩破坏。
+  2. `backend/internal/service/wire.go`：新增 `ProvideKiroTokenRefresher(accountRepo, cfg, lockCache, db)`（复刻 `ProvideSubscriptionExpiryService` 的 leader-lock 注入）+ `ProviderSet` 追加 `ProvideKiroTokenRefresher,`（紧邻 `ProvideAccountExpiryService`）。
+  3. `backend/cmd/server/wire.go`（`//go:build wireinject`）：`provideCleanup` 形参追加 `kiroTokenRefresher *service.KiroTokenRefresher,` + cleanup 注册块追加 `{"KiroTokenRefresher", func() error { kiroTokenRefresher.Stop(); return nil }}`（均紧邻 `AccountExpiryService`）。
+  4. `backend/cmd/server/wire_gen.go`（生成物**手改**，因约束不本机跑 `wire`）：构造行 `kiroTokenRefresher := service.ProvideKiroTokenRefresher(accountRepository, configConfig, leaderLockCache, db)` + `provideCleanup(...)` 调用实参 + 形参 + cleanup 注册块，四点与 `AccountExpiryService` 同位插入。
+
+**改动摘要**：
+- **键控 `type='kiro'`，与 L9 解耦**：repo 查询按 type 而非 platform 过滤，L9 迁移前后均正确工作。
+- **凭证类型门控**（服务层）：`IsAPIKey()`（静态 ksk_*）与 `!UsesNativeUpstream()`（legacy passthrough）跳过；`ValidateRefreshToken` 防截断；`IsTokenExpiringWithin(cred, window)` 仅在预刷新窗口内且 `expires_at` 可解析时刷新（未解析交给请求期惰性路径，后台保守不 churn）。
+- **多实例安全**：`tryAcquireSingletonLeaderLock`（Redis 锁 + DB advisory 兜底 + 无后端 ungated）保证每周期仅一个实例扫描刷新，降低 refresh_token 轮转竞争。
+- **复用 L7b-1 原语**：`refreshFn` 默认绑定 `KiroTokenProvider.refreshAndPersist`（同包），刷新+持久化+代理 client 逻辑零重复；测试用 spy 覆盖以避免真实 HTTP。
+- **配置复用**：读 `cfg.TokenRefresh`（`Enabled`/`CheckIntervalMinutes`/`RefreshBeforeExpiryHours`），**不新增配置字段**；默认关联同源开关，`Enabled=false` 时后台不启动（惰性刷新仍兜底）。
+
+**与官方差异原因**：
+- upstream 无 Kiro 平台，纯本地能力。独立后台服务而非并入共享 `TokenRefreshService`，是为了不碰全平台共用的候选查询/分组逻辑，把 rebase 冲突面锁在 kiro 自有文件 + 4 处追加式薄接缝。
+
+**身份键控（务必保持）**：
+- 后台刷新键控 `type='kiro'`（`ListKiroRefreshCandidates` 的 `dbaccount.TypeEQ(service.AccountTypeKiro)`），**不是 platform 键控**，与 `Account.IsKiro()`（`account.go:1214`）一致。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- `kiro_token_refresher.go` / `_test.go` 整文件：upstream 从不触及，正常 rebase 不应冲突。
+- `account_repo.go` 的 `ListKiroRefreshCandidates`：追加式方法，勿随 upstream repo 演进丢失；**切勿**为它去改共享 `AccountRepository` 接口或共享候选查询 `ListOAuthRefreshCandidatePage` 的 `type IN (...)`。
+- `wire.go` / `cmd/server/wire.go` / `wire_gen.go` 的 4 处接缝：upstream 若增删后台服务导致 `provideCleanup` 签名/`ProviderSet` 变动，务必补回 `ProvideKiroTokenRefresher` 注册与 `KiroTokenRefresher` Stop 项；`wire_gen.go` 手改须与 `wire.go` 声明一致（否则 CI `go build` 失败）。
+- **不得并入共享 `TokenRefreshService`**：那会重新引入 L9 硬依赖 + 改全平台共用 SQL，破坏薄接缝不变量。
+- **已知限制**：同实例内请求期惰性刷新与后台刷新存在窄竞争窗口（refresh_token 轮转），属既有可容忍风险（惰性路径本就无 per-account 分布式锁），本方案不新增 per-account 分布式锁。
+
+**验证结果**：
+- 待 commit（不带 `[deploy]`）+ 用户授权 push 后由 GitHub Actions CI 验证（`go build`/`go vet`/`golangci-lint`/`go test`）；本机不跑 build/test/vet。
+- 进度：L7b-2 代码 + 测试 + 4 处薄接缝 + 本条 magic-patch-log 登记完成；**待办**：L8（前端 Create/Edit Modal auth_method + 凭证字段）、L9（数据迁移 platform=kiro，受保护高风险，需显式授权）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
