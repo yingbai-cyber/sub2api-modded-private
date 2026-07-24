@@ -405,6 +405,17 @@ func ProvideOpenAICodexVersionSyncService(
 	return svc
 }
 
+// ProvideKiroTokenRefresher creates and starts the standalone Kiro background
+// token refresher. Magic-patch seam (L7b-2): keeps native Kiro OAuth credentials
+// warm independently of the shared TokenRefreshService and the L9 platform
+// migration. Mirrors ProvideSubscriptionExpiryService's leader-lock wiring.
+func ProvideKiroTokenRefresher(accountRepo AccountRepository, cfg *config.Config, lockCache LeaderLockCache, db *sql.DB) *KiroTokenRefresher {
+	svc := NewKiroTokenRefresher(accountRepo, cfg)
+	svc.SetLeaderLock(lockCache, db)
+	svc.Start()
+	return svc
+}
+
 // ProvideProxyExpiryService creates and starts ProxyExpiryService.
 func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
 	svc := NewProxyExpiryService(proxyRepo, time.Minute)
@@ -908,6 +919,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(GrokOAuthReconciler), new(*TokenRefreshService)),
 	ProvideAccountExpiryService,
 	ProvideOpenAICodexVersionSyncService,
+	ProvideKiroTokenRefresher,
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,

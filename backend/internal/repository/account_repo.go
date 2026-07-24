@@ -1301,6 +1301,29 @@ func (r *accountRepository) ListByPlatform(ctx context.Context, platform string)
 	return r.accountsToService(ctx, accounts)
 }
 
+// ListKiroRefreshCandidates returns active Kiro-type accounts for the background
+// token refresher (service.KiroTokenRefresher). It is keyed on type='kiro'
+// rather than platform, so it works independently of the L9 platform migration
+// (Kiro accounts currently carry platform='anthropic'). This is a magic-patch
+// seam: additive only, and deliberately NOT added to the shared AccountRepository
+// interface — the refresher narrows to it via type assertion, so no test stub of
+// AccountRepository breaks. Credential-type gating (api_key / legacy passthrough
+// / expiry window) is applied in the service layer, keeping this query simple.
+func (r *accountRepository) ListKiroRefreshCandidates(ctx context.Context) ([]service.Account, error) {
+	accounts, err := r.client.Account.Query().
+		Where(
+			dbaccount.DeletedAtIsNil(),
+			dbaccount.TypeEQ(service.AccountTypeKiro),
+			dbaccount.StatusEQ(service.StatusActive),
+		).
+		Order(dbent.Asc(dbaccount.FieldPriority)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.accountsToService(ctx, accounts)
+}
+
 func (r *accountRepository) UpdateLastUsed(ctx context.Context, id int64) error {
 	now := time.Now()
 	_, err := r.client.Account.Update().
