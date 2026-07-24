@@ -1261,8 +1261,31 @@
 - **不得**把 native 录入逻辑内联进 Modal（应留在隔离组件），也不得让 legacy base_url/api_key 与 native 凭证在同一 credentials 里并存提交。
 
 **验证结果**：
-- 待 commit（不带 `[deploy]`）+ 用户授权 push 后由 GitHub Actions CI 验证（后端 `go build`/`go vet`/`golangci-lint`/`go test`；前端 lint/`vitest`）；本机不跑 build/test/vet。
-- 进度：L8 代码（后端脱敏 + 前端组件 + 两 Modal 接缝 + 测试）+ 本条登记完成；**待办**：L9（数据迁移 platform=kiro，受保护高风险，需显式授权）。
+- commit `a315fec3c`（不带 `[deploy]`，用户授权后 push 到 fork `origin/main`）。GitHub Actions（**fork 仓 `yingbai-cyber/sub2api-modded-private`**，非 upstream）三个 push workflow：**CI = success**、**Build sub2api modded = success**（前端 `pnpm build` + `go test ./...` + embed 二进制）、Security Scan = failure（**既有失败**：`frontend-security: Check audit exceptions` 在前 6 个提交上以相同步骤持续红灯，本次未新增依赖，非本次回归）。本机不跑 build/test/vet。
+- **运维备忘**：查 CI 必须显式 `-R yingbai-cyber/sub2api-modded-private`；`gh` 默认会解析到 upstream `Wei-Shaw/sub2api` 导致误判「push 未触发 CI」。
+- 进度：L8 代码（后端脱敏 + 前端组件 + 两 Modal 接缝 + 测试）+ 本条登记 + CI 全绿完成；**待办**：L9（数据迁移 platform=kiro，受保护高风险，需显式授权）。
+
+---
+
+### 2026-07-26：Kiro 接缝不变量审计 + web_search 逻辑接缝补登记
+**类型**：受保护补丁复核 / 文档补记（无源码改动）
+
+**背景**：
+- L8 新增接缝后，对「核心逻辑在 `internal/kiro` 独立包 + 主干接缝薄 + 全部登记为受保护补丁（抗 rebase）」不变量做全量审计取证。
+
+**审计证据**：
+- **核心逻辑独立（叶子包）**：`internal/kiro`（36 文件）**零反向 import**——包内无任何 `internal/service|handler|repository|server` 依赖（grep 确认无匹配）。`service/kiro_gateway.go` 为纯适配层，全部委托 `kiro.ParseCredentials`/`PrepareRequest`/`NewProvider`/`DriveStream`/`BuildNonStreamResponse`，无逻辑重复。
+- **主干接缝薄**：全平台共用文件中的 Kiro 引用经逐一核实，均为身份键控（`account.IsKiro()` / `Type == AccountTypeKiro`）、credits 字段传递、模型映射条件、web_search 单函数过滤或纯注释——**无核心逻辑泄漏到主干**。
+- **登记覆盖**：L1–L7b（7 处核心接缝）+ credits 长期补丁 + 第 918 行「7 大长期补丁总纲」+ L7b-2（4 处）+ L8 各条目已覆盖绝大部分；**唯一此前从未点名的逻辑接缝** = `gateway_forward_as_responses.go` / `gateway_forward_as_chat_completions.go` 的 `filterOutWebSearchTools`（`IsKiro() && len(Tools) > 1`）。
+
+**补登记**：
+- rebase-playbook 的 Kiro 章节新增「其余主干共享文件接缝」清单，点名 web_search 过滤（逻辑接缝，最易漏）+ 模型映射条件 + 401 冷却 + credits 链路 + DTO/测试锚点，供每轮 rebase 逐条核对。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- `filterOutWebSearchTools` 的 Kiro 过滤：upstream 无此逻辑，重构两个 forward 文件时务必补回（Kiro/CodeWhisperer 拒绝 web_search 与其他 tool 混用）。
+
+**验证结果**：
+- 纯文档/复核，无源码改动，不触发 CI 语义变化。审计结论：不变量在 L8 后依然成立，登记缺口已补齐。
 
 ---
 
