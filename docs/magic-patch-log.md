@@ -1135,6 +1135,54 @@
 
 ---
 
+### 2026-07-24：Kiro 原生上游复刻（`internal/kiro` 独立包，L1–L7b-1）
+**类型**：功能 / 新平台原生化（本地长期受保护补丁）
+
+**背景**：
+- 官方 upstream **无 Kiro 平台**。此前本地 `AccountTypeKiro` 账号靠转发到本机独立的 `kiro-rs`（Rust）服务，再代理到 AWS CodeWhisperer / Kiro 上游。
+- 目标：把 kiro-rs 的核心上游能力用 Go 原生复刻进 sub2api，让 Kiro 账号直连上游，不再依赖独立 kiro-rs 进程。
+- 设计原则：核心逻辑全部收敛在 `internal/kiro` **独立包**，主干接缝**尽量薄**，登记为受保护补丁以抗未来 rebase。
+
+**影响文件**：
+- 新增独立包 `backend/internal/kiro/`（**36 个 Go 文件，约 6709 行含测试**）：types / anthropic_types / credentials / convert / convert_response / stream / stream_util / handler / provider / token / eventstream / events / machineid / model_map / count_tokens / config / effort / parse / profile / thinking_scan / sse / endpoint + 对应 `_test.go`。
+- 主干接缝（薄，精确到行）：
+  1. `backend/internal/domain/constants.go:26` 新增 `PlatformKiro = "kiro"`。
+  2. `backend/internal/service/domain_constants.go:46` 新增别名 `PlatformKiro = domain.PlatformKiro`。
+  3. `backend/internal/service/gateway_forward.go:125-126` 在 `Forward` 分发点按 `account.IsKiro()` 调 `s.forwardKiro(...)`。
+  4. `backend/internal/service/gateway_service.go:699` 结构体加 `kiroTokenProvider *KiroTokenProvider` 字段；`:772` 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值（**不改 `NewGatewayService` 签名、不入 wire**）。
+  5. 新增 `backend/internal/service/kiro_gateway.go`：`forwardKiro`(26 分发) / `forwardKiroNative`(43) / `streamKiroNative`(115) / `nonStreamKiroNative`(170) / `classifyKiroDisposition`(240) / `forwardKiroLegacy`(321)。
+  6. 新增 `backend/internal/service/kiro_token_provider.go`：`NewKiroTokenProvider`(31) / `Resolve`(39 惰性刷新) / `ForceRefresh`(75) / `refreshAndPersist`(86)。
+  7. 新增 `backend/internal/service/kiro_gateway_classify_test.go`（`classifyKiroDisposition` 纯函数表驱动测试）。
+
+**改动摘要**：
+- **四种凭证类型全部支持**：api_key / social / idc / external_idp（`kiro.ParseCredentials` 解析 + `Credentials.UsesNativeUpstream()` 判定原生/legacy）。
+- **上游多端点重试**：IDE + CLI 两套端点按 `ide→cli` 顺序尝试（`internal/kiro` `Provider.Forward`）。
+- **请求期惰性刷新**：`KiroTokenProvider.Resolve` 在 token 过期时刷新并持久化（复用主干 `persistAccountCredentials`），bearer 失效时 `ForceRefresh`。
+- **Disposition→failover 映射**：`classifyKiroDisposition` 把上游处置分类映射为「同账号重试 / 跨账号 failover / 客户端错误」，桥接到主干 `UpstreamFailoverError`。
+- **native/legacy 分发**：带原生 auth（kiro_api_key / refresh_token / 显式 auth_method）走 in-process CodeWhisperer；仅带 `base_url + api_key` 的旧凭证回退透明 passthrough 到外部 kiro-rs，**保留旧行为兼容**。
+
+**与官方差异原因**：
+- upstream 完全没有 Kiro 平台，这是纯本地能力；原生化后可去掉本机独立 kiro-rs 进程，降低运维面。
+- 刻意把核心逻辑收进 `internal/kiro` 独立包 + 主干仅留 7 处薄接缝，正是为了让每轮 rebase 冲突面最小、可解释、可快速复核。
+
+**身份键控（务必保持）**：
+- 分发与凭证解析统一按 `Account.IsKiro()` 判定，其定义为 `a.Type == AccountTypeKiro`（`account.go:1214`）——即 **type=kiro**，不是 platform 键控。`gateway_forward.go` 分发与 `KiroTokenProvider` 均以此为准。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- `backend/internal/kiro/` 整包：upstream 从不触及，正常 rebase **不应产生冲突**；若出现冲突几乎必是误操作，应整体保留本地版。
+- `gateway_forward.go` 的 `Forward` 中 `if account != nil && account.IsKiro() { return s.forwardKiro(...) }` 分发点：upstream 若重构 `Forward`，务必补回此分发（历史教训：monolith 恢复曾丢失 Kiro 分发入口，靠 `unused` linter 才发现）。
+- `gateway_service.go` 的 `kiroTokenProvider` 字段(:699) + 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值(:772)：不得随 upstream 结构体/构造器演进而丢失；保持不改 `NewGatewayService` 签名、不入 wire 的薄接缝策略。
+- `domain/constants.go` 的 `PlatformKiro`、`service/domain_constants.go` 别名、`account.go` 的 `Account.IsKiro()` / `AccountTypeKiro`：作为身份键控锚点必须存在。
+- `internal/kiro` 新代码遵循仓库 `errcheck` 严格模式（`disable-default-exclusions:true`）：所有 `WriteString`/`Write`/`Close`/`io.WriteString`/`ParseForm` 返回值必须显式处理，类型断言用双值形式，避免 rebase 后 golangci-lint 回归。
+
+**验证结果**：
+- commit：`71dccdfb2`（L1–L7a 独立包）→ `2a5d7720d`（L7b-1 wire + 惰性刷新）→ `9fd2a2a5f`（golangci-lint 修复）。HEAD = `v0.1.163-145-g9fd2a2a5f`，`VERSION` = `0.1.163`。
+- **GitHub Actions CI（run 30071131243）全绿**：`frontend` / `golangci-lint` / `shell` / `test`（含 Integration tests）均 conclusion=success；`internal/kiro` 91 个单测 + `classifyKiroDisposition` 表驱动测试随全量 `go test` 通过。
+- 本机未跑 build/test/vet（遵循 rebase-playbook，全部交 GitHub Actions）；commit message 不带 `[deploy]`，**未触发生产部署**。
+- 进度：L1–L7a（独立包）+ L7b-1（wire + 请求期惰性刷新）已完成并 CI 全绿；**待办**：L7b-2（`KiroTokenRefresher` + 后台刷新注册，含 `platform=kiro` 键控迁移）、L8（前端 Create/Edit Modal 加 auth_method + 凭证字段）、L9（数据迁移 platform=kiro，受保护高风险，需显式授权）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
