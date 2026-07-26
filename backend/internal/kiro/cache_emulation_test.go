@@ -204,7 +204,7 @@ func TestNonStreamCacheEmulation(t *testing.T) {
 	var decoded map[string]any
 	_ = json.Unmarshal(b, &decoded)
 	du, _ := decoded["usage"].(map[string]any)
-	if du["cache_read_input_tokens"].(float64) != 800 {
+	if v, ok := du["cache_read_input_tokens"].(float64); !ok || v != 800 {
 		t.Errorf("marshaled usage = %v", du)
 	}
 }
