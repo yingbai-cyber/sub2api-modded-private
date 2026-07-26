@@ -158,7 +158,8 @@ func (m *SseStateManager) handleContentBlockStop(index int) (SseEvent, bool) {
 }
 
 // generateFinalEvents closes open blocks then emits message_delta + message_stop.
-func (m *SseStateManager) generateFinalEvents(inputTokens, outputTokens int, credits float64) []SseEvent {
+// cacheReadTokens > 0 adds an emulated cache_read_input_tokens usage field.
+func (m *SseStateManager) generateFinalEvents(inputTokens, cacheReadTokens, outputTokens int, credits float64) []SseEvent {
 	var events []SseEvent
 	for idx, b := range m.activeBlocks {
 		if b.started && !b.stopped {
@@ -170,17 +171,21 @@ func (m *SseStateManager) generateFinalEvents(inputTokens, outputTokens int, cre
 	}
 	if !m.messageDeltaSent {
 		m.messageDeltaSent = true
+		usage := map[string]any{
+			"input_tokens":  inputTokens,
+			"output_tokens": outputTokens,
+			"kiro_credits":  credits,
+		}
+		if cacheReadTokens > 0 {
+			usage["cache_read_input_tokens"] = cacheReadTokens
+		}
 		events = append(events, NewSseEvent("message_delta", map[string]any{
 			"type": "message_delta",
 			"delta": map[string]any{
 				"stop_reason":   m.getStopReason(),
 				"stop_sequence": nil,
 			},
-			"usage": map[string]any{
-				"input_tokens":  inputTokens,
-				"output_tokens": outputTokens,
-				"kiro_credits":  credits,
-			},
+			"usage": usage,
 		}))
 	}
 	if !m.messageEnded {

@@ -1289,6 +1289,40 @@
 
 ---
 
+### 2026-07-26：Kiro 模拟缓存（假缓存，cache emulation）
+**类型**：功能
+
+**背景**：
+- Kiro 上游不返回 prompt cache 信息，下游客户端永远看到 `cache_read_input_tokens = 0`。参考社区 fork（nianzs/sub2api "支持模拟缓存/分组可调模拟比例"）为 native 直连路径实现出口侧缓存模拟：按账号级比例把 input tokens 拆为 `input_tokens + cache_read_input_tokens`，仅影响下游 usage 展示与 token 计价展示，不影响上游 credits 消耗与 credits 计费覆盖。
+
+**影响文件**：
+- `backend/internal/kiro/cache_emulation.go`（新增，叶子包纯函数 `splitCacheTokens`）
+- `backend/internal/kiro/handler.go`（`PrepareOptions`/`PreparedRequest`/`StreamOutcome` 增字段 + `outcomeFrom` 拆分）
+- `backend/internal/kiro/stream.go`（`StreamContext.CacheEmulationRatio`；message_start / final usage 拆分）
+- `backend/internal/kiro/sse.go`（`generateFinalEvents` 增 `cacheReadTokens` 参数）
+- `backend/internal/kiro/convert_response.go`（新增 `BuildNonStreamResponseFor`；旧 `BuildNonStreamResponse` 签名不变=ratio 0）
+- `backend/internal/kiro/cache_emulation_test.go`（新增）
+- `backend/internal/service/account.go`（新增 `GetKiroCacheEmulationRatio()`，读 `extra.cache_emulation_ratio`，clamp [0,1]）
+- `backend/internal/service/kiro_gateway.go`（native 路径传 ratio；ForwardResult.Usage 填 `CacheReadInputTokens`）
+- `frontend/.../CreateAccountModal.vue` / `EditAccountModal.vue`（Kiro 卡片"模拟缓存比例(%)"输入，0=关闭）
+
+**改动摘要**：
+- 账号 extra 增加 `cache_emulation_ratio`（0~1 小数，前端以百分比录入）。ratio=0 或未配置时输出与改动前完全一致（`cache_read_input_tokens` 字段不出现）。拆分保证守恒（real+cache=总量）且 real ≥ 1。仅 native 直连路径生效；legacy kiro-rs 透传不改（usage 由外部 kiro-rs 生成）。
+
+**与官方差异原因**：
+- upstream 无 Kiro 平台。核心逻辑仍全部在 `internal/kiro` 叶子包；主干接缝仅 service 两文件的字段传递（追加式），接缝不变量保持成立。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- `internal/kiro/cache_emulation.go` + 测试整文件（upstream 不触及）。
+- `service/kiro_gateway.go` 的 `CacheEmulationRatio` 传参与 `CacheReadInputTokens` 回填、`service/account.go` 的 `GetKiroCacheEmulationRatio()`：upstream 重构 forward/账号方法时须补回。
+- 两 Modal 的 `cache_emulation_ratio` 读写（Create submit extra / Edit 回填+submit）。
+- 语义护栏：**credits 计费不吃拆分**——`gateway_usage_billing.go` 的 credits 覆盖分支基于 `KiroCredits`，与 token 拆分无关；rebase 后须确认拆分未被错误接入 credits 换算。
+
+**验证结果**：
+- （提交后回填 commit 与 CI 结论）
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称

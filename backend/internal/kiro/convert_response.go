@@ -16,10 +16,13 @@ type NonStreamResult struct {
 	Response     map[string]any
 	InputTokens  int
 	OutputTokens int
-	Credits      float64
-	StopReason   string
-	FatalError   string
-	HasFatal     bool
+	// CacheReadTokens is the emulated cache_read_input_tokens portion already
+	// subtracted from InputTokens (0 when cache emulation is disabled).
+	CacheReadTokens int
+	Credits         float64
+	StopReason      string
+	FatalError      string
+	HasFatal        bool
 }
 
 // nonStreamAccumulator collects events for a non-streaming response.
@@ -95,8 +98,19 @@ func tuInput(buf *strings.Builder) json.RawMessage {
 
 // BuildNonStreamResponse decodes the full event stream from r and assembles a
 // non-streaming Anthropic response. inputTokens is the estimated fallback used
-// when no contextUsageEvent is present.
+// when no contextUsageEvent is present. Cache emulation (when the prepared
+// request carries a positive ratio) is applied by BuildNonStreamResponseFor.
 func BuildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inputTokens int, toolNameMap map[string]string) (*NonStreamResult, error) {
+	return buildNonStreamResponse(r, model, thinkingEnabled, inputTokens, toolNameMap, 0)
+}
+
+// BuildNonStreamResponseFor is BuildNonStreamResponse driven by a
+// PreparedRequest, applying its CacheEmulationRatio to the reported usage.
+func BuildNonStreamResponseFor(r io.Reader, pr *PreparedRequest) (*NonStreamResult, error) {
+	return buildNonStreamResponse(r, pr.ResponseModel, pr.ThinkingEnabled, pr.InputTokens, pr.ToolNameMap, pr.CacheEmulationRatio)
+}
+
+func buildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inputTokens int, toolNameMap map[string]string, cacheEmulationRatio float64) (*NonStreamResult, error) {
 	if toolNameMap == nil {
 		toolNameMap = map[string]string{}
 	}
@@ -164,6 +178,16 @@ func BuildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	if acc.hasContextTokens {
 		finalInput = acc.contextTokens
 	}
+	realInput, cacheRead := splitCacheTokens(finalInput, cacheEmulationRatio)
+
+	usage := map[string]any{
+		"input_tokens":  realInput,
+		"output_tokens": outputTokens,
+		"kiro_credits":  acc.totalCredits,
+	}
+	if cacheRead > 0 {
+		usage["cache_read_input_tokens"] = cacheRead
+	}
 
 	resp := map[string]any{
 		"id":            "msg_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
@@ -173,20 +197,17 @@ func BuildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 		"model":         model,
 		"stop_reason":   acc.stopReason,
 		"stop_sequence": nil,
-		"usage": map[string]any{
-			"input_tokens":  finalInput,
-			"output_tokens": outputTokens,
-			"kiro_credits":  acc.totalCredits,
-		},
+		"usage":         usage,
 	}
 
 	return &NonStreamResult{
-		Response:     resp,
-		InputTokens:  finalInput,
-		OutputTokens: outputTokens,
-		Credits:      acc.totalCredits,
-		StopReason:   acc.stopReason,
-		FatalError:   acc.fatalError,
-		HasFatal:     acc.hasFatal,
+		Response:        resp,
+		InputTokens:     realInput,
+		OutputTokens:    outputTokens,
+		CacheReadTokens: cacheRead,
+		Credits:         acc.totalCredits,
+		StopReason:      acc.stopReason,
+		FatalError:      acc.fatalError,
+		HasFatal:        acc.hasFatal,
 	}, nil
 }
