@@ -1346,6 +1346,39 @@
 
 ---
 
+### 2026-07-26：fable-5 强制思考强度覆写（env 开关）
+**类型**：功能（本地魔改，默认关闭）
+
+**背景**：
+- fable-5 为自适应思考模型，客户端不传 `output_config.effort` 时由模型自行决定思考深度。需要一个可随时开关的手段把该模型思考强度强制为固定档（如 max），且不增加 rebase 负担、可秒级回撤。
+
+**影响文件**：
+- `backend/internal/service/gateway_fable_effort_override.go`（新增，逻辑主体 + 回撤说明注释）
+- `backend/internal/service/gateway_fable_effort_override_test.go`（新增）
+- `backend/internal/service/gateway_forward.go`（接缝 ~8 行：NormalizeChineseLLMThinking 块之后调用改写）
+- `backend/internal/service/gateway_service.go`（接缝 ~3 行：`fableForceEffort` 字段 + 构造时读 env）
+
+**改动摘要**：
+- env `SUB2API_FABLE_FORCE_EFFORT`（low/medium/high/xhigh/max；未设置/空/非法 = 完全关闭，行为与无此补丁逐字节一致）。命中「映射后模型名含 fable」时无条件覆写 `output_config.effort`，thinking 未开启时补 `thinking.type=adaptive`。值校验复用 `NormalizeClaudeOutputEffort`。仅 Anthropic 原生转发路径生效（Bedrock 剥 output_config、Kiro/OpenAI 路径不经过此接缝）。
+
+**⚠️ 如何回撤（重要，两级）**：
+1. **秒级回撤（不动代码）**：编辑 `/root/sub2api-modded.env`，删除/注释 `SUB2API_FABLE_FORCE_EFFORT` 行 → 重启 `sub2api-modded.service`（经用户授权或走 Actions deploy 流程）。代码保留但完全不生效。
+2. **彻底回撤（删代码）**：`git revert <本条登记的功能 commit>` → push 触发 Actions 构建部署。涉及上述 4 个文件（两个新文件整删 + 两处接缝还原）。
+3. 验证回撤成功：发一条不带 thinking 的 fable-5 请求，`thinking_tokens` 回落到个位数/低两位数（简单问题），日志不再出现 `forced output_config.effort` 行。
+
+**与官方差异原因**：
+- upstream 无按模型强制思考强度的机制（其 MaxReasoningEffort 仅覆盖 OpenAI/Codex 路径的分组上限，语义是"限高"不是"强制"）。
+
+**rebase 时必须检查/保留（受保护补丁）**：
+- 两个新文件整文件（upstream 不触及）。
+- `gateway_forward.go` 接缝：upstream 若重构 Anthropic 转发前置改写链（FilterThinkingBlocks / NormalizeChineseLLMThinking 一带），须把 `ForceFableOutputEffort` 调用块补回原位置（在最后一次 body 改写之后、重试循环之前）。
+- `gateway_service.go` 的 `fableForceEffort` 字段与 `ReadFableForceEffortFromEnv()` 赋值（紧邻 debugModelRouting 的 env 读取）。
+
+**验证结果**：
+- （提交后回填 commit 与 CI 结论；部署后回填 env 开启与实测 thinking_tokens 对比）
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
