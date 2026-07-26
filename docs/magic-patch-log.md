@@ -1375,7 +1375,9 @@
 - `gateway_service.go` 的 `fableForceEffort` 字段与 `ReadFableForceEffortFromEnv()` 赋值（紧邻 debugModelRouting 的 env 读取）。
 
 **验证结果**：
-- （提交后回填 commit 与 CI 结论；部署后回填 env 开启与实测 thinking_tokens 对比）
+- commit `86e5f9dae`（带 `[deploy]`）。三 workflow：Security Scan success、Build sub2api modded success（Deploy job 真实执行），CI 由 Actions 全量验证。部署重启后 env `SUB2API_FABLE_FORCE_EFFORT=max` 生效（`/root/sub2api-modded.env` 已加注回撤注释）。
+- 实测（不带 thinking 配置的裸请求）：日志出现 `forced output_config.effort=max`；简单问题 thinking_tokens **17（覆写前）→ 138（覆写后）**，证明题 284。覆写前后行为符合预期，simple 请求也全量深思——成本/延迟代价与方案预警一致。
+- 首次验证时出现一次 `output_tokens=4, content=[]` 空响应（账号 4725/4726 上游抖动，重测即恢复），与本补丁无关（补丁只改请求体两个字段）。
 
 ---
 
