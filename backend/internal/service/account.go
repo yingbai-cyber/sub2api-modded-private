@@ -1291,6 +1291,20 @@ func (a *Account) IsCreditsBasedBilling() bool {
 	return a.IsKiro() && a.GetCreditsPerDollar() > 0
 }
 
+// GetKiroCacheEmulationRatio 获取 Kiro 模拟缓存比例（从 extra 字段，0~1）。
+// 0 表示关闭；越界值 clamp 到 [0,1]。仅影响下游可见 usage 的 token 拆分，
+// 不影响上游 credits 消耗与 credits 计费。
+func (a *Account) GetKiroCacheEmulationRatio() float64 {
+	r := a.getExtraFloat64("cache_emulation_ratio")
+	if r < 0 {
+		return 0
+	}
+	if r > 1 {
+		return 1
+	}
+	return r
+}
+
 func (a *Account) IsOpenAI() bool {
 	return a.Platform == PlatformOpenAI
 }
