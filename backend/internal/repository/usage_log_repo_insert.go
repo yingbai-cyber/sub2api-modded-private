@@ -1344,8 +1344,8 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			billingTier,
 			billingMode,
 			log.AccountStatsCost, // account_stats_cost
-			sessionID,       // session_id
-			log.KiroCredits, // kiro_credits
+			sessionID,            // session_id
+			log.KiroCredits,      // kiro_credits
 			createdAt,
 		},
 	}
