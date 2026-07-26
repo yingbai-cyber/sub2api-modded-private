@@ -1319,7 +1319,7 @@
 - 语义护栏：**credits 计费不吃拆分**——`gateway_usage_billing.go` 的 credits 覆盖分支基于 `KiroCredits`，与 token 拆分无关；rebase 后须确认拆分未被错误接入 credits 换算。
 
 **验证结果**：
-- （提交后回填 commit 与 CI 结论）
+- commit `0a87ae690`（功能）+ `4e3291b19`（errcheck lint 修复：测试内类型断言改为 checked 形式）。首轮 CI 的 golangci-lint 失败仅此一处，Build 与 Security Scan 均绿；修复后三个 push workflow **CI / Build sub2api modded / Security Scan = 全部 success**（fork 仓 `yingbai-cyber/sub2api-modded-private`）。本机未跑任何 build/test/vet。不带 `[deploy]`，生产未更新，上线与否另行决定。
 
 ---
 
