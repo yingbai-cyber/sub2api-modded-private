@@ -242,6 +242,24 @@
           <p class="input-hint">1 USD 对应多少 Kiro credits，用于计费换算</p>
         </div>
 
+        <!-- Cache Emulation Ratio (kiro only) -->
+        <div v-if="account.type === 'kiro'">
+          <label class="input-label">模拟缓存比例 (%)</label>
+          <input
+            v-model.number="editKiroCacheEmulationPercent"
+            type="number"
+            step="1"
+            min="0"
+            max="100"
+            class="input"
+            placeholder="0 = 关闭（如 80）"
+          />
+          <p class="input-hint">
+            Kiro 上游无缓存信息；开启后按比例将 input tokens 拆为
+            cache_read_input_tokens 展示给下游（仅影响 usage 展示，不影响上游 credits 消耗）
+          </p>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -3184,6 +3202,8 @@ function formatPoolModeRetryStatusCodes(value: unknown): string {
 }
 const probingModels = ref(false)
 const editKiroCreditsPerDollar = ref<number>(50)
+// Kiro 模拟缓存比例（百分比 0-100，0=关闭；存 extra.cache_emulation_ratio 为 0~1 小数）
+const editKiroCacheEmulationPercent = ref<number>(0)
 // Kiro 接入模式：legacy = kiro-rs 代理透传；native = 原生直连(auth_method+凭证)
 const editKiroMode = ref<'legacy' | 'native'>('legacy')
 const editKiroNativeCreds = ref<KiroNativeCreds>(emptyKiroNativeCreds())
@@ -4014,6 +4034,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (newAccount.type === 'kiro') {
       const extra = (newAccount.extra as Record<string, unknown>) || {}
       editKiroCreditsPerDollar.value = typeof extra.credits_per_dollar === 'number' ? extra.credits_per_dollar : 50
+      editKiroCacheEmulationPercent.value =
+        typeof extra.cache_emulation_ratio === 'number'
+          ? Math.round(Math.min(Math.max(extra.cache_emulation_ratio, 0), 1) * 100)
+          : 0
 
       // 推断 Kiro 接入模式并回填 native 凭证表单（秘密字段脱敏，留空由 status 提示已配置）。
       const { creds, isNative } = parseKiroNativeCreds(credentials, newAccount.credentials_status)
@@ -5093,6 +5117,11 @@ const handleSubmit = async () => {
         newExtra.credits_per_dollar = editKiroCreditsPerDollar.value
       } else {
         delete newExtra.credits_per_dollar
+      }
+      if (editKiroCacheEmulationPercent.value > 0) {
+        newExtra.cache_emulation_ratio = Math.min(editKiroCacheEmulationPercent.value, 100) / 100
+      } else {
+        delete newExtra.cache_emulation_ratio
       }
       updatePayload.extra = newExtra
     }

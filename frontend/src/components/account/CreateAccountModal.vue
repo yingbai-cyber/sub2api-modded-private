@@ -2206,6 +2206,22 @@
           />
           <p class="input-hint">1 USD 对应多少 Kiro credits，用于计费换算</p>
         </div>
+        <div>
+          <label class="input-label">模拟缓存比例 (%)</label>
+          <input
+            v-model.number="kiroCacheEmulationPercent"
+            type="number"
+            step="1"
+            min="0"
+            max="100"
+            class="input"
+            placeholder="0 = 关闭（如 80）"
+          />
+          <p class="input-hint">
+            Kiro 上游无缓存信息；开启后按比例将 input tokens 拆为
+            cache_read_input_tokens 展示给下游（仅影响 usage 展示，不影响上游 credits 消耗）
+          </p>
+        </div>
 
         <!-- Model Restriction Section for Kiro -->
         <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -4566,6 +4582,8 @@ const bedrockApiKeyValue = ref('')
 const kiroBaseUrl = ref('http://127.0.0.1:8080')
 const kiroApiKey = ref('')
 const kiroCreditsPerDollar = ref<number>(50)
+// Kiro 模拟缓存比例（百分比 0-100，0=关闭；存 extra.cache_emulation_ratio 为 0~1 小数）
+const kiroCacheEmulationPercent = ref<number>(0)
 // Kiro 接入模式：legacy = kiro-rs 代理透传(base_url+api_key)；native = 原生直连(auth_method+凭证)
 const kiroMode = ref<'legacy' | 'native'>('legacy')
 const kiroNativeCreds = ref<KiroNativeCreds>(emptyKiroNativeCreds())
@@ -5452,6 +5470,7 @@ const resetForm = () => {
   kiroBaseUrl.value = 'http://127.0.0.1:8080'
   kiroApiKey.value = ''
   kiroCreditsPerDollar.value = 50
+  kiroCacheEmulationPercent.value = 0
   kiroMode.value = 'legacy'
   kiroNativeCreds.value = emptyKiroNativeCreds()
   vertexServiceAccountJson.value = ''
@@ -5857,6 +5876,9 @@ const handleSubmit = async () => {
     const extra: Record<string, unknown> = {}
     if (kiroCreditsPerDollar.value > 0) {
       extra.credits_per_dollar = kiroCreditsPerDollar.value
+    }
+    if (kiroCacheEmulationPercent.value > 0) {
+      extra.cache_emulation_ratio = Math.min(kiroCacheEmulationPercent.value, 100) / 100
     }
 
     await createAccountAndFinish('anthropic', 'kiro' as AccountType, credentials, extra)

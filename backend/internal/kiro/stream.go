@@ -41,6 +41,10 @@ type StreamContext struct {
 
 	stripThinkingLeadingNewline bool
 
+	// CacheEmulationRatio (0~1) splits client-visible input tokens into
+	// input_tokens + emulated cache_read_input_tokens. 0 disables.
+	CacheEmulationRatio float64
+
 	TotalCredits float64
 
 	FatalError    string
@@ -63,8 +67,17 @@ func NewStreamContext(model string, inputTokens int, thinkingEnabled bool, toolN
 	}
 }
 
-// createMessageStartEvent builds the message_start payload.
+// createMessageStartEvent builds the message_start payload. Cache emulation
+// applies to the initial estimate too, so clients see a consistent split.
 func (c *StreamContext) createMessageStartEvent() map[string]any {
+	realInput, cacheRead := splitCacheTokens(c.InputTokens, c.CacheEmulationRatio)
+	usage := map[string]any{
+		"input_tokens":  realInput,
+		"output_tokens": 1,
+	}
+	if cacheRead > 0 {
+		usage["cache_read_input_tokens"] = cacheRead
+	}
 	return map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
@@ -75,10 +88,7 @@ func (c *StreamContext) createMessageStartEvent() map[string]any {
 			"model":         c.Model,
 			"stop_reason":   nil,
 			"stop_sequence": nil,
-			"usage": map[string]any{
-				"input_tokens":  c.InputTokens,
-				"output_tokens": 1,
-			},
+			"usage":         usage,
 		},
 	}
 }
@@ -517,6 +527,7 @@ func (c *StreamContext) GenerateFinalEvents() []SseEvent {
 	if c.hasContextTokens {
 		finalInputTokens = c.ContextInputTokens
 	}
-	events = append(events, c.State.generateFinalEvents(finalInputTokens, c.OutputTokens, c.TotalCredits)...)
+	realInput, cacheRead := splitCacheTokens(finalInputTokens, c.CacheEmulationRatio)
+	events = append(events, c.State.generateFinalEvents(realInput, cacheRead, c.OutputTokens, c.TotalCredits)...)
 	return events
 }
