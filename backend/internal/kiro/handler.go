@@ -33,6 +33,9 @@ type PrepareOptions struct {
 	// SupportedEfforts overrides the model's supported effort tiers. Nil =>
 	// FallbackSupportedEfforts(upstreamModel).
 	SupportedEfforts []EffortLevel
+	// CacheEmulationRatio (0~1) splits reported input tokens into input +
+	// emulated cache_read_input_tokens in client-visible usage. 0 disables.
+	CacheEmulationRatio float64
 }
 
 // PreparedRequest is the output of PrepareRequest: everything the caller needs
@@ -61,6 +64,8 @@ type PreparedRequest struct {
 	EffortNative bool
 	// EffortLevel is the resolved native effort tier (valid when EffortNative).
 	EffortLevel EffortLevel
+	// CacheEmulationRatio is carried from PrepareOptions (see there).
+	CacheEmulationRatio float64
 }
 
 // PrepareRequest parses an inbound Anthropic Messages request body and builds
@@ -122,21 +127,24 @@ func PrepareRequest(rawBody []byte, opts PrepareOptions) (*PreparedRequest, erro
 	thinkingEnabled := req.Thinking.IsEnabled() || decision.Result == DecideNative
 
 	return &PreparedRequest{
-		RequestBody:     string(bodyJSON),
-		UpstreamModel:   upstreamModel,
-		ResponseModel:   responseModel,
-		ThinkingEnabled: thinkingEnabled,
-		ToolNameMap:     conv.ToolNameMap,
-		InputTokens:     CountInputTokens(&req),
-		Stream:          req.Stream,
-		EffortNative:    decision.Result == DecideNative,
-		EffortLevel:     decision.Level,
+		RequestBody:         string(bodyJSON),
+		UpstreamModel:       upstreamModel,
+		ResponseModel:       responseModel,
+		ThinkingEnabled:     thinkingEnabled,
+		ToolNameMap:         conv.ToolNameMap,
+		InputTokens:         CountInputTokens(&req),
+		Stream:              req.Stream,
+		EffortNative:        decision.Result == DecideNative,
+		EffortLevel:         decision.Level,
+		CacheEmulationRatio: opts.CacheEmulationRatio,
 	}, nil
 }
 
 // NewStreamContext builds a StreamContext primed for this prepared request.
 func (pr *PreparedRequest) NewStreamContext() *StreamContext {
-	return NewStreamContext(pr.ResponseModel, pr.InputTokens, pr.ThinkingEnabled, pr.ToolNameMap)
+	sc := NewStreamContext(pr.ResponseModel, pr.InputTokens, pr.ThinkingEnabled, pr.ToolNameMap)
+	sc.CacheEmulationRatio = pr.CacheEmulationRatio
+	return sc
 }
 
 // resolveEffortDecision mirrors kiro-rs resolve_effort_for_request. Go has no
@@ -195,6 +203,9 @@ type StreamOutcome struct {
 	InputTokens int
 	// OutputTokens is the accumulated output token estimate.
 	OutputTokens int
+	// CacheReadTokens is the emulated cache_read_input_tokens portion already
+	// subtracted from InputTokens (0 when cache emulation is disabled).
+	CacheReadTokens int
 	// Credits is the summed meteringEvent usage (billable Kiro credits).
 	Credits float64
 	// ClientDisconnected reports that the emit callback failed (client hung up);
@@ -262,9 +273,11 @@ func outcomeFrom(ctx *StreamContext, disconnected bool) *StreamOutcome {
 	if ctx.hasContextTokens {
 		inputTokens = ctx.ContextInputTokens
 	}
+	realInput, cacheRead := splitCacheTokens(inputTokens, ctx.CacheEmulationRatio)
 	return &StreamOutcome{
-		InputTokens:        inputTokens,
+		InputTokens:        realInput,
 		OutputTokens:       ctx.OutputTokens,
+		CacheReadTokens:    cacheRead,
 		Credits:            ctx.TotalCredits,
 		ClientDisconnected: disconnected,
 		FatalError:         ctx.FatalError,

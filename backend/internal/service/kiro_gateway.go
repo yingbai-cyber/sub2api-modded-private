@@ -63,8 +63,9 @@ func (s *GatewayService) forwardKiroNative(
 	originalModel := parsed.Model
 	mappedModel := account.GetMappedModel(originalModel)
 	pr, err := kiro.PrepareRequest(parsed.Body.Bytes(), kiro.PrepareOptions{
-		MappedModel:   mappedModel,
-		ResponseModel: originalModel,
+		MappedModel:         mappedModel,
+		ResponseModel:       originalModel,
+		CacheEmulationRatio: account.GetKiroCacheEmulationRatio(),
 	})
 	if err != nil {
 		// Unsupported model / malformed request: client error, do not fail over.
@@ -158,9 +159,10 @@ func (s *GatewayService) streamKiroNative(
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: outcome.ClientDisconnected,
 		Usage: ClaudeUsage{
-			InputTokens:  outcome.InputTokens,
-			OutputTokens: outcome.OutputTokens,
-			KiroCredits:  outcome.Credits,
+			InputTokens:          outcome.InputTokens,
+			OutputTokens:         outcome.OutputTokens,
+			CacheReadInputTokens: outcome.CacheReadTokens,
+			KiroCredits:          outcome.Credits,
 		},
 	}, nil
 }
@@ -174,7 +176,7 @@ func (s *GatewayService) nonStreamKiroNative(
 	parsed *ParsedRequest,
 	startTime time.Time,
 ) (*ForwardResult, error) {
-	res, err := kiro.BuildNonStreamResponse(resp.Body, pr.ResponseModel, pr.ThinkingEnabled, pr.InputTokens, pr.ToolNameMap)
+	res, err := kiro.BuildNonStreamResponseFor(resp.Body, pr)
 	if err != nil {
 		return nil, fmt.Errorf("kiro: build non-stream response: %w", err)
 	}
@@ -197,9 +199,10 @@ func (s *GatewayService) nonStreamKiroNative(
 		Stream:        false,
 		Duration:      duration,
 		Usage: ClaudeUsage{
-			InputTokens:  res.InputTokens,
-			OutputTokens: res.OutputTokens,
-			KiroCredits:  res.Credits,
+			InputTokens:          res.InputTokens,
+			OutputTokens:         res.OutputTokens,
+			CacheReadInputTokens: res.CacheReadTokens,
+			KiroCredits:          res.Credits,
 		},
 	}, nil
 }
