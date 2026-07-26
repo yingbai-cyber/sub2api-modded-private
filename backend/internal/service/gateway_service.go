@@ -778,6 +778,7 @@ type GatewayService struct {
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	debugModelRouting     atomic.Bool
 	debugClaudeMimic      atomic.Bool
+	fableForceEffort      string // 本地魔改：fable-5 强制思考强度（SUB2API_FABLE_FORCE_EFFORT，空=关闭；回撤见 gateway_fable_effort_override.go 顶部注释）
 	channelService        *ChannelService
 	resolver              *ModelPricingResolver
 	compositeResolver     *CompositeRouteResolver
@@ -865,6 +866,7 @@ func NewGatewayService(
 	)
 	svc.debugModelRouting.Store(parseDebugEnvBool(os.Getenv("SUB2API_DEBUG_MODEL_ROUTING")))
 	svc.debugClaudeMimic.Store(parseDebugEnvBool(os.Getenv("SUB2API_DEBUG_CLAUDE_MIMIC")))
+	svc.fableForceEffort = ReadFableForceEffortFromEnv()
 	if path := strings.TrimSpace(os.Getenv(debugGatewayBodyEnv)); path != "" {
 		svc.initDebugGatewayBodyFile(path)
 	}
