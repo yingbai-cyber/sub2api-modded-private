@@ -362,6 +362,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			logger.LegacyPrintf("service.gateway", "Account %d: rewrote thinking.type for %s (Anthropic-SDK default 'enabled' -> vendor-specific)", account.ID, reqModel)
 		}
 	}
+	// 本地魔改：fable-5 强制思考强度（env 开关，空=关闭；回撤方法见
+	// gateway_fable_effort_override.go 顶部注释与 magic-patch-log 登记条目）。
+	if rewritten, applied := ForceFableOutputEffort(body, reqModel, s.fableForceEffort); applied {
+		if err := replaceBody(rewritten); err != nil {
+			return nil, err
+		}
+		logger.LegacyPrintf("service.gateway", "Account %d: forced output_config.effort=%s for %s (SUB2API_FABLE_FORCE_EFFORT)", account.ID, s.fableForceEffort, reqModel)
+	}
 
 	// 重试循环
 	var resp *http.Response
