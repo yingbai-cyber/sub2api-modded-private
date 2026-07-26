@@ -1323,6 +1323,29 @@
 
 ---
 
+### 2026-07-26：rebase 到 upstream v0.1.165（60013c5f1 → 2730c1c43）
+**类型**：运维适配（upstream 跟进）
+
+**背景**：
+- upstream 新增 97 个提交（v0.1.163 → v0.1.165），含 OpenAI Live gateway、Ollama 云用量、composite groups、Available Models 页、usage_logs 新列 `session_id`、claude-opus-5 适配、postcss 安全升级、注册别名查重收紧等。本地 154 个提交全部重放成功。
+
+**冲突文件与合并策略**（8 个提交冲突，均为"两边都保留"型）：
+- `handler/openai_images.go`：保留本地 capability 检测块 + 采用 upstream 新 `routingModel` 参数。
+- `server/routes/gateway.go`：保留本地 `/images/capability` 路由 + 全部 images/videos 路由补上 upstream 新增的 `compositeTarget` 中间件。
+- `service/domain_constants.go`：`SettingKeyOllamaCloudUsageSettings`（upstream）与 `SettingKeyAvailableModelsEnabled`（upstream 后续提交）并存；`PlatformComposite`（upstream）与 `PlatformKiro`（本地锚点）并存（`domain/constants.go` 同）。
+- `frontend/api/admin/accounts.ts`：export 列表合并（ollama 系列 + probeModels）。
+- `repository/usage_log_repo_insert.go` / `_query.go` / `_request_type_test.go`：**usage_logs 列合并**——upstream 新增 `session_id`，本地补丁列 `kiro_credits`，最终列序 `... account_stats_cost, session_id, kiro_credits, created_at`（58 列）；单行 INSERT 占位符扩到 `$58`；batch args 容量改用 `len(usageLogInsertArgTypes)` 基准；scan/回填两字段并存。
+- `cmd/server/wire_gen.go`：`provideCleanup` 调用点同时传 `kiroTokenRefresher`（本地 L7b-2）与 `ollamaCloudUsageService`（upstream），与签名一致。
+- `frontend/EditAccountModal.vue`：import 合并（OllamaCloudUsageSettings + KiroNativeCredentials）。
+
+**受保护补丁核对**（rebase 后逐项验证通过）：
+- `internal/kiro` 整包（38 文件，含假缓存 2 文件）✅；`Forward` 的 `IsKiro()` 分发点 ✅；`kiroTokenProvider` 字段+构造 ✅；`PlatformKiro` 双锚点 ✅；L7b-2 四接缝（refresher 文件/`ListKiroRefreshCandidates`/`ProvideKiroTokenRefresher`/`provideCleanup` 声明+调用+Stop）✅；`SensitiveCredentialKeys` 的 kiro 键 ✅；web_search 过滤两处 ✅；Kiro 401 冷却 ✅;credits 链路 ✅；假缓存 ratio 接线 ✅；L8 前端组件与两 Modal 接缝（含 cache_emulation_ratio）✅；web2api 路由 ✅；OAuth legacy detachUpstreamContext ✅。
+
+**验证结果**：
+- 待 GitHub Actions 验证（push 后回填三 workflow 结论）。rebase 前生产已部署假缓存版本（`d240fcc20`，Deploy job success，/health 宿主机+npm-app 均 ok）；本次 rebase push 不带 `[deploy]`，CI 全绿后另行决定上线。本机未跑任何 build/test/vet。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
