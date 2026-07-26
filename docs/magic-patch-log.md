@@ -1342,7 +1342,7 @@
 - `internal/kiro` 整包（38 文件，含假缓存 2 文件）✅；`Forward` 的 `IsKiro()` 分发点 ✅；`kiroTokenProvider` 字段+构造 ✅；`PlatformKiro` 双锚点 ✅；L7b-2 四接缝（refresher 文件/`ListKiroRefreshCandidates`/`ProvideKiroTokenRefresher`/`provideCleanup` 声明+调用+Stop）✅；`SensitiveCredentialKeys` 的 kiro 键 ✅；web_search 过滤两处 ✅；Kiro 401 冷却 ✅;credits 链路 ✅；假缓存 ratio 接线 ✅；L8 前端组件与两 Modal 接缝（含 cache_emulation_ratio）✅；web2api 路由 ✅；OAuth legacy detachUpstreamContext ✅。
 
 **验证结果**：
-- 待 GitHub Actions 验证（push 后回填三 workflow 结论）。rebase 前生产已部署假缓存版本（`d240fcc20`，Deploy job success，/health 宿主机+npm-app 均 ok）；本次 rebase push 不带 `[deploy]`，CI 全绿后另行决定上线。本机未跑任何 build/test/vet。
+- rebase push `0ca9702ad` 首轮 CI 失败两处（Build/Security Scan 均绿）：① gofmt——`usage_log_repo_insert.go:1323` 冲突合并后注释对齐；② upstream 新单测 `TestPrepareUsageLogInsert_SessionID*` 断言 session_id 为倒数第 2 参且表长 57——本地多 `kiro_credits` 列（58 列，session_id 倒数第 3）。修复 `ff042b87b`：gofmt + 测试断言改为「57→58、-2→-3」并补 kiro_credits 类型断言（该测试文件已成为 kiro_credits 列的新锚点，后续 rebase 若 upstream 改此测试需重新对位）。修复后三 workflow **CI / Build sub2api modded / Security Scan = 全部 success**。本机仅运行了 gofmt 格式化器（轻量），未跑任何 build/test/vet。rebase 前生产已部署假缓存版本（`d240fcc20`，Deploy success，/health 宿主机+npm-app 均 ok）；rebase 后版本尚未部署，上线另行决定。
 
 ---
 
