@@ -479,7 +479,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 			}
 
 			// Stream kiro response events to client (raw passthrough of the SSE).
-			s.sendEvent(c, TestEvent{Type: "test_info", Text: fmt.Sprintf("endpoint: %s", epName)})
+			s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("endpoint: %s", epName)})
 			scanner := bufio.NewScanner(resp.Body)
 			scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 			var gotContent bool
@@ -492,11 +492,11 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 				}
 			}
 			if gotContent {
-				s.sendEvent(c, TestEvent{Type: "test_result", Text: "Kiro native upstream responded successfully"})
+				s.sendEvent(c, TestEvent{Type: "content", Text: "Kiro native upstream responded successfully"})
 			} else {
-				s.sendEvent(c, TestEvent{Type: "test_result", Text: "Kiro native upstream connected (no streaming data)"})
+				s.sendEvent(c, TestEvent{Type: "content", Text: "Kiro native upstream connected (no streaming data)"})
 			}
-			s.sendEvent(c, TestEvent{Type: "test_end"})
+			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		}
 
