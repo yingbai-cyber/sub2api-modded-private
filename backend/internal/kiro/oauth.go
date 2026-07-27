@@ -40,8 +40,8 @@ const (
 	DefaultOIDCRegion = "us-east-1"
 
 	// Redirect URIs (localhost loopback, matching Kiro IDE).
-	SocialRedirectURI     = "http://localhost:49153"
-	IDCRedirectURI        = "http://127.0.0.1:9876/oauth/callback"
+	SocialRedirectURI      = "http://localhost:49153"
+	IDCRedirectURI         = "http://127.0.0.1:9876/oauth/callback"
 	ExternalIdPRedirectURI = "http://localhost:3128/oauth/callback"
 
 	// IDC client registration parameters.
@@ -154,7 +154,7 @@ func ExchangeSocialToken(ctx context.Context, client *http.Client, code, codeVer
 	if err != nil {
 		return nil, fmt.Errorf("kiro oauth: social token exchange: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -225,7 +225,7 @@ func RegisterIDCClient(ctx context.Context, client *http.Client, region, startUR
 	if err != nil {
 		return nil, fmt.Errorf("kiro oauth: IDC register client: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -273,12 +273,12 @@ func ExchangeIDCToken(ctx context.Context, client *http.Client, code, codeVerifi
 	endpoint := oidcEndpoint(region) + "/token"
 
 	payload := map[string]string{
-		"clientId":      clientID,
-		"clientSecret":  clientSecret,
-		"code":          code,
-		"codeVerifier":  codeVerifier,
-		"redirectUri":   redirectURI,
-		"grantType":     "authorization_code",
+		"clientId":     clientID,
+		"clientSecret": clientSecret,
+		"code":         code,
+		"codeVerifier": codeVerifier,
+		"redirectUri":  redirectURI,
+		"grantType":    "authorization_code",
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -296,7 +296,7 @@ func ExchangeIDCToken(ctx context.Context, client *http.Client, code, codeVerifi
 	if err != nil {
 		return nil, fmt.Errorf("kiro oauth: IDC token exchange: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -365,7 +365,7 @@ func OIDCDiscovery(ctx context.Context, client *http.Client, issuerURL string) (
 	if err != nil {
 		return "", "", fmt.Errorf("kiro oauth: OIDC discovery: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != 200 {
@@ -436,7 +436,7 @@ func ExchangeExternalIdPToken(ctx context.Context, client *http.Client, tokenEnd
 	if err != nil {
 		return nil, fmt.Errorf("kiro oauth: external IdP token exchange: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
