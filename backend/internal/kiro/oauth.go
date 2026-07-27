@@ -47,6 +47,11 @@ const (
 	// IDC client registration parameters.
 	IDCClientName = "Kiro IDE"
 	IDCClientType = "public"
+
+	// External SSO (Microsoft Enterprise) two-leg flow constants.
+	ExternalSSOBaseURI       = "http://localhost:3128"
+	ExternalSSOCallbackPath  = "/oauth/callback"
+	ExternalSSODefaultScopes = "codewhisperer:conversations codewhisperer:completions offline_access"
 )
 
 // IDC scopes for CodeWhisperer / Kiro.
@@ -184,13 +189,100 @@ func ExchangeSocialToken(ctx context.Context, client *http.Client, code, codeVer
 	return info, nil
 }
 
-// --- IDC (Builder ID / IAM Identity Center) flow ---
+// --- External SSO callback parser ---
 
-// oidcEndpoint returns the OIDC endpoint for the given region.
-func oidcEndpoint(region string) string {
-	if region == "" {
-		region = DefaultOIDCRegion
+// ExternalSSOCallbackParsed holds the parsed callback URL parameters.
+type ExternalSSOCallbackParsed struct {
+	Phase     string // "external_descriptor" or "oauth_callback"
+	IssuerURL string
+	ClientID  string
+	Scopes    string
+	LoginHint string
+	Code      string
+	State     string
+}
+
+// ParseExternalSSOCallback parses a callback URL from the External SSO flow.
+// It determines whether this is a leg-1 descriptor (portal returns IdP info)
+// or a leg-2 OAuth callback (Microsoft returns code).
+func ParseExternalSSOCallback(callbackURL string) (*ExternalSSOCallbackParsed, error) {
+	parsed, err := url.Parse(strings.TrimSpace(callbackURL))
+	if err != nil {
+		return nil, fmt.Errorf("invalid callback URL: %w", err)
 	}
+
+	// Merge query and fragment params (some redirects put params in fragment).
+	params := make(map[string]string)
+	for k, v := range parsed.Query() {
+		if len(v) > 0 && v[0] != "" {
+			params[k] = v[0]
+		}
+	}
+	if parsed.Fragment != "" {
+		fragParsed, err := url.ParseQuery(parsed.Fragment)
+		if err == nil {
+			for k, v := range fragParsed {
+				if _, exists := params[k]; !exists && len(v) > 0 && v[0] != "" {
+					params[k] = v[0]
+				}
+			}
+		}
+	}
+
+	// Check if this is a leg-1 external descriptor.
+	loginOption := firstOf(params, "login_option", "loginOption")
+	issuerURL := firstOf(params, "issuer_url", "issuerUrl", "issuer")
+	isExternalDescriptor := (strings.EqualFold(loginOption, "external_idp") || issuerURL != "") &&
+		parsed.Path != ExternalSSOCallbackPath
+
+	if isExternalDescriptor {
+		clientID := firstOf(params, "client_id", "clientId", "client")
+		if issuerURL == "" {
+			return nil, errors.New("external IdP descriptor 缺少 issuer_url")
+		}
+		if clientID == "" {
+			return nil, errors.New("external IdP descriptor 缺少 client_id")
+		}
+		return &ExternalSSOCallbackParsed{
+			Phase:     "external_descriptor",
+			IssuerURL: issuerURL,
+			ClientID:  clientID,
+			Scopes:    firstOf(params, "scopes", "scope"),
+			LoginHint: firstOf(params, "login_hint", "loginHint"),
+		}, nil
+	}
+
+	// Leg-2: OAuth callback with code.
+	if parsed.Path == ExternalSSOCallbackPath {
+		code := firstOf(params, "code")
+		state := firstOf(params, "state")
+		if errParam := firstOf(params, "error"); errParam != "" {
+			desc := firstOf(params, "error_description", "errorDescription")
+			return nil, fmt.Errorf("external IdP 授权错误: %s %s", errParam, desc)
+		}
+		if code == "" {
+			return nil, errors.New("回调 URL 缺少 code 参数")
+		}
+		return &ExternalSSOCallbackParsed{
+			Phase: "oauth_callback",
+			Code:  code,
+			State: state,
+		}, nil
+	}
+
+	return nil, errors.New("无法识别的回调 URL 格式")
+}
+
+// firstOf returns the first non-empty value from params for the given keys.
+func firstOf(params map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v := params[k]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 	return "https://oidc." + region + ".amazonaws.com"
 }
 

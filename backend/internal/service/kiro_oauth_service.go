@@ -318,6 +318,149 @@ func (s *KiroOAuthService) ImportToken(ctx context.Context, tokenJSON string, pr
 	return info, nil
 }
 
+// --- External SSO (two-leg callback flow) ---
+
+// KiroExternalSSOStartResult is returned by StartExternalSSO.
+type KiroExternalSSOStartResult struct {
+	SessionID    string `json:"session_id"`
+	AuthorizeURL string `json:"authorize_url"`
+}
+
+// KiroExternalSSOCallbackInput is the input for HandleExternalSSOCallback.
+type KiroExternalSSOCallbackInput struct {
+	SessionID   string `json:"session_id"`
+	CallbackURL string `json:"callback_url"`
+	ProxyID     *int64 `json:"proxy_id"`
+}
+
+// KiroExternalSSOCallbackResult represents the callback processing outcome.
+type KiroExternalSSOCallbackResult struct {
+	// Phase "need_open_url": frontend must open AuthorizeURL in a new popup.
+	// Phase "completed": token exchange is done, TokenInfo is populated.
+	Phase        string             `json:"phase"` // "need_open_url" or "completed"
+	AuthorizeURL string             `json:"authorize_url,omitempty"`
+	TokenInfo    *kiro.OAuthTokenInfo `json:"token_info,omitempty"`
+}
+
+// StartExternalSSO begins the Microsoft Enterprise SSO flow (two-leg).
+// Leg 1: open app.kiro.dev/signin with redirect_uri=localhost:3128.
+// The portal detects enterprise account and redirects back with issuer/client_id.
+func (s *KiroOAuthService) StartExternalSSO(ctx context.Context, proxyID *int64) (*KiroExternalSSOStartResult, error) {
+	state, err := kiro.GenerateState()
+	if err != nil {
+		return nil, fmt.Errorf("生成 state 失败: %w", err)
+	}
+	_, codeChallenge, err := kiro.GeneratePKCE()
+	if err != nil {
+		return nil, fmt.Errorf("生成 PKCE 失败: %w", err)
+	}
+	sessionID := uuid.NewString()
+
+	// Build Kiro portal URL with external SSO redirect (localhost:3128).
+	authURL := kiro.BuildSocialAuthURL(state, codeChallenge, kiro.ExternalSSOBaseURI)
+
+	session := &KiroOAuthSession{
+		AuthMethod: "external_sso",
+		State:      state,
+		Region:     kiro.DefaultOIDCRegion,
+		ProxyID:    proxyID,
+		CreatedAt:  time.Now(),
+	}
+	s.sessions.Store(sessionID, session)
+
+	return &KiroExternalSSOStartResult{
+		SessionID:    sessionID,
+		AuthorizeURL: authURL,
+	}, nil
+}
+
+// HandleExternalSSOCallback processes a callback URL from the external SSO flow.
+// Two possible outcomes:
+//   - Leg 1 callback: URL contains login_option=external_idp + issuer_url + client_id
+//     → perform OIDC discovery, build leg 2 authorize URL, return "need_open_url"
+//   - Leg 2 callback: URL contains code + state (from Microsoft Entra)
+//     → exchange code for tokens, return "completed"
+func (s *KiroOAuthService) HandleExternalSSOCallback(ctx context.Context, input *KiroExternalSSOCallbackInput) (*KiroExternalSSOCallbackResult, error) {
+	val, ok := s.sessions.Load(input.SessionID)
+	if !ok {
+		return nil, errors.New("External SSO 会话不存在或已过期")
+	}
+	session, _ := val.(*KiroOAuthSession)
+	if time.Since(session.CreatedAt) > kiroOAuthSessionTTL {
+		s.sessions.Delete(input.SessionID)
+		return nil, errors.New("External SSO 会话已过期")
+	}
+
+	parsed, err := kiro.ParseExternalSSOCallback(input.CallbackURL)
+	if err != nil {
+		return nil, fmt.Errorf("解析回调 URL 失败: %w", err)
+	}
+
+	switch parsed.Phase {
+	case "external_descriptor":
+		// Leg 1: portal returned issuer/client info → do OIDC discovery → build leg 2 URL.
+		httpClient := s.buildHTTPClient(input.ProxyID)
+		authEndpoint, tokenEndpoint, err := kiro.OIDCDiscovery(ctx, httpClient, parsed.IssuerURL)
+		if err != nil {
+			return nil, fmt.Errorf("OIDC 发现失败: %w", err)
+		}
+
+		// Generate new PKCE for leg 2.
+		codeVerifier2, codeChallenge2, err := kiro.GeneratePKCE()
+		if err != nil {
+			return nil, fmt.Errorf("生成 PKCE 失败: %w", err)
+		}
+		state2, err := kiro.GenerateState()
+		if err != nil {
+			return nil, fmt.Errorf("生成 state 失败: %w", err)
+		}
+
+		redirectURI := kiro.ExternalSSOBaseURI + kiro.ExternalSSOCallbackPath
+		scopes := parsed.Scopes
+		if scopes == "" {
+			scopes = kiro.ExternalSSODefaultScopes
+		}
+		authorizeURL := kiro.BuildExternalIdPAuthURL(authEndpoint, parsed.ClientID, state2, codeChallenge2, redirectURI, scopes)
+
+		// Update session with leg 2 data.
+		session.CodeVerifier = codeVerifier2
+		session.State = state2
+		session.TokenEndpoint = tokenEndpoint
+		session.IssuerURL = parsed.IssuerURL
+		session.ClientIDExt = parsed.ClientID
+		session.Scopes = scopes
+		session.AuthMethod = "external_idp"
+		s.sessions.Store(input.SessionID, session)
+
+		return &KiroExternalSSOCallbackResult{
+			Phase:        "need_open_url",
+			AuthorizeURL: authorizeURL,
+		}, nil
+
+	case "oauth_callback":
+		// Leg 2: Microsoft returned code → exchange for tokens.
+		if session.State != parsed.State {
+			return nil, errors.New("OAuth state 不匹配")
+		}
+		s.sessions.Delete(input.SessionID)
+
+		httpClient := s.buildHTTPClient(input.ProxyID)
+		redirectURI := kiro.ExternalSSOBaseURI + kiro.ExternalSSOCallbackPath
+		tokenInfo, err := kiro.ExchangeExternalIdPToken(ctx, httpClient, session.TokenEndpoint, parsed.Code, session.CodeVerifier, session.ClientIDExt, redirectURI, session.Scopes)
+		if err != nil {
+			return nil, fmt.Errorf("Token 交换失败: %w", err)
+		}
+
+		return &KiroExternalSSOCallbackResult{
+			Phase:     "completed",
+			TokenInfo: tokenInfo,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("无法识别的回调类型: %s", parsed.Phase)
+	}
+}
+
 // --- Internal helpers ---
 
 // buildHTTPClient creates an HTTP client, optionally with proxy.
