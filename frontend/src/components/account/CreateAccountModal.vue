@@ -364,7 +364,7 @@
           v-if="accountCategory === 'kiro'"
           class="mt-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800/40 dark:bg-teal-900/20 dark:text-teal-200"
         >
-          <p>通过 kiro-rs 代理接入 Kiro IDE 账号，使用 credits 计费模式。需要先部署 kiro-rs 服务。</p>
+          <p>Kiro IDE 账号（credits 计费），支持原生直连或通过 kiro-rs 代理。</p>
         </div>
       </div>
       <div v-if="form.platform === 'openai'">
@@ -4648,7 +4648,7 @@ const kiroCreditsPerDollar = ref<number>(50)
 // Kiro 模拟缓存比例（百分比 0-100，0=关闭；存 extra.cache_emulation_ratio 为 0~1 小数）
 const kiroCacheEmulationPercent = ref<number>(0)
 // Kiro 接入模式：legacy = kiro-rs 代理透传(base_url+api_key)；native = 原生直连(auth_method+凭证)
-const kiroMode = ref<'legacy' | 'native'>('legacy')
+const kiroMode = ref<'legacy' | 'native'>('native')
 const kiroNativeCreds = ref<KiroNativeCreds>(emptyKiroNativeCreds())
 const vertexServiceAccountFileInput = ref<HTMLInputElement | null>(null)
 const vertexServiceAccountJson = ref('')
