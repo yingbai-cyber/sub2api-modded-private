@@ -567,6 +567,7 @@ const iamSsoStartUrl = ref('')
 const showManualCallback = ref(false)
 const manualCallbackUrl = ref('')
 const currentSessionId = ref('')
+const currentSessionState = ref('')
 
 // OAuth 弹窗轮询间隔
 const POLL_INTERVAL = 500
@@ -620,6 +621,7 @@ async function startOAuth(method: string) {
 
     // 打开弹窗
     currentSessionId.value = result.session_id
+    currentSessionState.value = result.state || ''
     const popup = window.open(result.auth_url, 'kiro_oauth', 'width=600,height=700')
     if (!popup) {
       oauthError.value = '浏览器阻止了弹窗，请允许弹窗后重试'
@@ -883,14 +885,16 @@ async function submitManualCallback() {
       }
     } else {
       // 普通 OAuth (social / idc / iam_sso): 提取 code + state 交换 token
-      if (!state) {
-        oauthError.value = '回调 URL 中未找到 state 参数'
+      // IDC 回调可能不带 state，用 session 中保存的 state 兜底
+      const effectiveState = state || currentSessionState.value
+      if (!effectiveState) {
+        oauthError.value = '回调 URL 中未找到 state 参数，且无法从会话恢复'
         oauthLoading.value = false
         return
       }
       const tokenInfo = await kiroApi.exchangeCode({
         session_id: currentSessionId.value,
-        state,
+        state: effectiveState,
         code
       })
       const method = oauthMethod.value === 'iam_sso' ? 'idc' : (oauthMethod.value || 'social')
