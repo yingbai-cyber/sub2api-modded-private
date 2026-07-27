@@ -327,8 +327,9 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 			s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
-			// Build HTTP request with endpoint decoration.
-			reqBody := []byte(pr.RequestBody)
+			// Build HTTP request with endpoint decoration (inject profileArn etc).
+			transformedBody := ep.TransformAPIBody(pr.RequestBody, reqCtx)
+			reqBody := []byte(transformedBody)
 			req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(reqBody))
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create kiro request")
