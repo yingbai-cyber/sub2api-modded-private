@@ -402,7 +402,6 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 			if err != nil {
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro token resolve failed: %s", err.Error()))
 			}
-			authToken = token
 
 			// Build upstream URL via kiro endpoint registry.
 			reqCtx := &kiro.RequestContext{
