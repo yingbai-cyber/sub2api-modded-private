@@ -283,6 +283,11 @@ func firstOf(params map[string]string, keys ...string) string {
 	return ""
 }
 
+// oidcEndpoint constructs the AWS SSO OIDC base endpoint for a region.
+func oidcEndpoint(region string) string {
+	if region == "" {
+		region = DefaultOIDCRegion
+	}
 	return "https://oidc." + region + ".amazonaws.com"
 }
 
