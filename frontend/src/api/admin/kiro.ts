@@ -66,6 +66,23 @@ export interface KiroTokenInfo {
   auth_method?: string
 }
 
+export interface KiroExternalSSOStartResponse {
+  session_id: string
+  authorize_url: string
+}
+
+export interface KiroExternalSSOCallbackRequest {
+  session_id: string
+  callback_url: string
+  proxy_id?: number
+}
+
+export interface KiroExternalSSOCallbackResponse {
+  phase: 'need_open_url' | 'completed'
+  authorize_url?: string
+  token_info?: KiroTokenInfo
+}
+
 // --- API calls ---
 
 /** Generate a social or external IdP authorization URL. */
@@ -118,6 +135,28 @@ export async function importToken(
 ): Promise<KiroTokenInfo> {
   const { data } = await apiClient.post<KiroTokenInfo>(
     '/admin/kiro/oauth/import-token',
+    payload
+  )
+  return data
+}
+
+/** Start a Microsoft Enterprise SSO two-leg flow. */
+export async function startExternalSSO(
+  payload?: { proxy_id?: number }
+): Promise<KiroExternalSSOStartResponse> {
+  const { data } = await apiClient.post<KiroExternalSSOStartResponse>(
+    '/admin/kiro/oauth/external-sso/start',
+    payload || {}
+  )
+  return data
+}
+
+/** Process a callback URL from the External SSO flow. */
+export async function externalSSOCallback(
+  payload: KiroExternalSSOCallbackRequest
+): Promise<KiroExternalSSOCallbackResponse> {
+  const { data } = await apiClient.post<KiroExternalSSOCallbackResponse>(
+    '/admin/kiro/oauth/external-sso/callback',
     payload
   )
   return data
