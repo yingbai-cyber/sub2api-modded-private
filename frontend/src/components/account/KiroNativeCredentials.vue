@@ -67,7 +67,36 @@
       </div>
       <p v-if="oauthError" class="text-xs text-error mt-1">{{ oauthError }}</p>
       <p v-if="oauthSuccess" class="text-xs text-success mt-1">{{ oauthSuccess }}</p>
-      <p class="text-xs text-base-content/60 mt-1">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入下方。</p>
+      <!-- 手动粘贴回调 URL 兜底 -->
+      <div class="mt-2">
+        <button
+          type="button"
+          class="text-xs text-base-content/50 hover:text-base-content/80 underline"
+          @click="showManualCallback = !showManualCallback"
+        >
+          弹窗无反应？手动粘贴回调地址
+        </button>
+        <div v-if="showManualCallback" class="mt-2 flex gap-2 items-end">
+          <div class="flex-1">
+            <label class="input-label text-xs">回调 URL（从弹窗地址栏复制）</label>
+            <input
+              v-model="manualCallbackUrl"
+              type="text"
+              class="input input-sm font-mono text-xs"
+              placeholder="http://localhost:9876/oauth/callback?code=...&state=..."
+            />
+          </div>
+          <button
+            type="button"
+            class="btn btn-sm btn-primary"
+            :disabled="oauthLoading || !manualCallbackUrl.trim()"
+            @click="submitManualCallback"
+          >
+            {{ oauthLoading ? '处理中...' : '提交' }}
+          </button>
+        </div>
+      </div>
+      <p class="text-xs text-base-content/60 mt-1">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入；若弹窗无法自动回传，可手动粘贴回调地址。</p>
     </div>
 
     <!-- Token JSON 导入对话框 -->
@@ -535,6 +564,9 @@ const showImportDialog = ref(false)
 const importTokenJSON = ref('')
 const showIamSsoInput = ref(false)
 const iamSsoStartUrl = ref('')
+const showManualCallback = ref(false)
+const manualCallbackUrl = ref('')
+const currentSessionId = ref('')
 
 // OAuth 弹窗轮询间隔
 const POLL_INTERVAL = 500
@@ -587,6 +619,7 @@ async function startOAuth(method: string) {
     }
 
     // 打开弹窗
+    currentSessionId.value = result.session_id
     const popup = window.open(result.auth_url, 'kiro_oauth', 'width=600,height=700')
     if (!popup) {
       oauthError.value = '浏览器阻止了弹窗，请允许弹窗后重试'
@@ -651,6 +684,7 @@ async function startExternalSSO() {
     // Step 1: Get Kiro portal URL from backend.
     const startResult = await kiroApi.startExternalSSO()
     const sessionId = startResult.session_id
+    currentSessionId.value = sessionId
 
     // Open Kiro portal in popup (user logs in with enterprise account).
     const popup = window.open(startResult.authorize_url, 'kiro_external_sso', 'width=600,height=700')
@@ -801,6 +835,75 @@ async function doImportToken() {
     oauthError.value = `Token 导入失败: ${e instanceof Error ? e.message : String(e)}`
   }
   oauthLoading.value = false
+}
+
+/** 手动粘贴回调 URL 兜底提交 */
+async function submitManualCallback() {
+  const raw = manualCallbackUrl.value.trim()
+  if (!raw) return
+
+  oauthLoading.value = true
+  oauthError.value = ''
+  oauthSuccess.value = ''
+
+  try {
+    const parsed = new URL(raw)
+    const code = parsed.searchParams.get('code')
+    const state = parsed.searchParams.get('state')
+
+    if (!currentSessionId.value) {
+      oauthError.value = '请先点击上方 OAuth 按钮发起授权，再粘贴回调地址'
+      oauthLoading.value = false
+      return
+    }
+
+    if (!code) {
+      oauthError.value = '回调 URL 中未找到 code 参数'
+      oauthLoading.value = false
+      return
+    }
+
+    // 判断是 External SSO 回调还是普通 OAuth 回调
+    if (oauthMethod.value === 'external_sso') {
+      // External SSO: 把整个 URL 发给后端处理
+      const cbResult = await kiroApi.externalSSOCallback({
+        session_id: currentSessionId.value,
+        callback_url: raw
+      })
+      if (cbResult.phase === 'need_open_url' && cbResult.authorize_url) {
+        // Leg 2: 需要再开一个弹窗（或提示用户手动打开）
+        await handleExternalSSOLeg2(currentSessionId.value, cbResult.authorize_url)
+      } else if (cbResult.phase === 'completed' && cbResult.token_info) {
+        applyTokenInfo(cbResult.token_info, 'external_idp')
+        oauthSuccess.value = '授权成功，凭据已填入'
+        oauthLoading.value = false
+      } else {
+        oauthError.value = '未知的回调状态'
+        oauthLoading.value = false
+      }
+    } else {
+      // 普通 OAuth (social / idc / iam_sso): 提取 code + state 交换 token
+      if (!state) {
+        oauthError.value = '回调 URL 中未找到 state 参数'
+        oauthLoading.value = false
+        return
+      }
+      const tokenInfo = await kiroApi.exchangeCode({
+        session_id: currentSessionId.value,
+        state,
+        code
+      })
+      const method = oauthMethod.value === 'iam_sso' ? 'idc' : (oauthMethod.value || 'social')
+      applyTokenInfo(tokenInfo, method)
+      oauthSuccess.value = '授权成功，凭据已填入'
+      oauthLoading.value = false
+    }
+    manualCallbackUrl.value = ''
+    showManualCallback.value = false
+  } catch (e: unknown) {
+    oauthError.value = `手动回调处理失败: ${e instanceof Error ? e.message : String(e)}`
+    oauthLoading.value = false
+  }
 }
 
 /** 将 OAuth 获取的 tokenInfo 填入表单 */
