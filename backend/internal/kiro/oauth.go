@@ -416,13 +416,18 @@ func ExchangeExternalIdPToken(ctx context.Context, client *http.Client, tokenEnd
 		scopes = "codewhisperer:conversations codewhisperer:completions offline_access"
 	}
 
+	// Ensure offline_access is included for token refresh capability.
+	if !strings.Contains(scopes, "offline_access") {
+		scopes = scopes + " offline_access"
+	}
+
 	form := url.Values{
 		"client_id":     {clientID},
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"code_verifier": {codeVerifier},
 		"redirect_uri":  {redirectURI},
-		"scope":         {scopes + " offline_access"},
+		"scope":         {scopes},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
