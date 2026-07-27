@@ -1,8 +1,8 @@
 <template>
   <div class="space-y-4">
     <!-- OAuth 快捷登录 -->
-    <div v-if="mode === 'create'" class="border border-blue-200 rounded-lg p-4 bg-blue-50/50">
-      <p class="text-sm font-medium text-blue-800 mb-3">OAuth 快捷登录（自动获取凭据）</p>
+    <div v-if="mode === 'create'" class="border border-primary/20 rounded-lg p-4 bg-primary/5">
+      <p class="text-sm font-medium text-base-content mb-3">OAuth 快捷登录（自动获取凭据）</p>
       <div class="flex flex-wrap gap-2 mb-2">
         <button
           type="button"
@@ -24,9 +24,17 @@
           type="button"
           class="btn btn-sm btn-outline"
           :disabled="oauthLoading"
-          @click="startOAuth('external_idp')"
+          @click="showIamSsoInput = !showIamSsoInput"
         >
-          {{ oauthLoading && oauthMethod === 'external_idp' ? '等待授权...' : 'External IdP' }}
+          IAM SSO
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline btn-secondary"
+          :disabled="oauthLoading"
+          @click="startExternalSSO()"
+        >
+          {{ oauthLoading && oauthMethod === 'external_sso' ? '等待授权...' : 'Microsoft 企业 SSO' }}
         </button>
         <button
           type="button"
@@ -37,13 +45,33 @@
           导入 Token JSON
         </button>
       </div>
-      <p v-if="oauthError" class="text-xs text-red-600 mt-1">{{ oauthError }}</p>
-      <p v-if="oauthSuccess" class="text-xs text-green-600 mt-1">{{ oauthSuccess }}</p>
-      <p class="text-xs text-gray-500">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入下方。</p>
+      <!-- IAM SSO start_url 输入 -->
+      <div v-if="showIamSsoInput" class="mt-2 flex gap-2 items-end">
+        <div class="flex-1">
+          <label class="input-label text-xs">企业 Start URL</label>
+          <input
+            v-model="iamSsoStartUrl"
+            type="text"
+            class="input input-sm"
+            placeholder="https://your-org.awsapps.com/start"
+          />
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-primary"
+          :disabled="oauthLoading || !iamSsoStartUrl.trim()"
+          @click="startOAuth('iam_sso')"
+        >
+          {{ oauthLoading && oauthMethod === 'iam_sso' ? '等待...' : '开始授权' }}
+        </button>
+      </div>
+      <p v-if="oauthError" class="text-xs text-error mt-1">{{ oauthError }}</p>
+      <p v-if="oauthSuccess" class="text-xs text-success mt-1">{{ oauthSuccess }}</p>
+      <p class="text-xs text-base-content/60 mt-1">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入下方。</p>
     </div>
 
     <!-- Token JSON 导入对话框 -->
-    <div v-if="showImportDialog" class="border border-gray-200 rounded-lg p-4 bg-gray-50">
+    <div v-if="showImportDialog" class="border border-base-300 rounded-lg p-4 bg-base-200/50">
       <label class="input-label">粘贴 Kiro IDE Token JSON</label>
       <textarea
         v-model="importTokenJSON"
@@ -505,6 +533,8 @@ const oauthError = ref('')
 const oauthSuccess = ref('')
 const showImportDialog = ref(false)
 const importTokenJSON = ref('')
+const showIamSsoInput = ref(false)
+const iamSsoStartUrl = ref('')
 
 // OAuth 弹窗轮询间隔
 const POLL_INTERVAL = 500
@@ -540,18 +570,17 @@ async function startOAuth(method: string) {
       result = await kiroApi.generateIDCAuthUrl({
         region: props.modelValue.region || undefined
       })
-    } else if (method === 'external_idp') {
-      if (!props.modelValue.issuer_url) {
-        oauthError.value = 'External IdP 需要先填写 Issuer URL'
+    } else if (method === 'iam_sso') {
+      // IAM SSO uses the same IDC flow but with custom start_url.
+      const startUrl = iamSsoStartUrl.value.trim()
+      if (!startUrl) {
+        oauthError.value = '请填写企业 Start URL'
         oauthLoading.value = false
         return
       }
-      result = await kiroApi.generateAuthUrl({
-        auth_method: 'external_idp',
+      result = await kiroApi.generateIDCAuthUrl({
         region: props.modelValue.region || undefined,
-        issuer_url: props.modelValue.issuer_url,
-        client_id: props.modelValue.client_id || undefined,
-        scopes: props.modelValue.scopes || undefined
+        start_url: startUrl
       })
     } else {
       result = await kiroApi.generateAuthUrl({ auth_method: 'social' })
@@ -587,7 +616,7 @@ async function startOAuth(method: string) {
             state: params.state,
             code: params.code
           })
-          applyTokenInfo(tokenInfo, method)
+          applyTokenInfo(tokenInfo, method === 'iam_sso' ? 'idc' : method)
           oauthSuccess.value = '授权成功，凭据已填入'
         } catch (e: unknown) {
           oauthError.value = `Token 交换失败: ${e instanceof Error ? e.message : String(e)}`
@@ -609,6 +638,147 @@ async function startOAuth(method: string) {
     oauthError.value = `生成授权链接失败: ${e instanceof Error ? e.message : String(e)}`
     oauthLoading.value = false
   }
+}
+
+/** Microsoft 企业 SSO 两阶段流程 */
+async function startExternalSSO() {
+  oauthLoading.value = true
+  oauthMethod.value = 'external_sso'
+  oauthError.value = ''
+  oauthSuccess.value = ''
+
+  try {
+    // Step 1: Get Kiro portal URL from backend.
+    const startResult = await kiroApi.startExternalSSO()
+    const sessionId = startResult.session_id
+
+    // Open Kiro portal in popup (user logs in with enterprise account).
+    const popup = window.open(startResult.authorize_url, 'kiro_external_sso', 'width=600,height=700')
+    if (!popup) {
+      oauthError.value = '浏览器阻止了弹窗，请允许弹窗后重试'
+      oauthLoading.value = false
+      return
+    }
+
+    // Poll popup URL for leg-1 callback (portal redirects to localhost:3128).
+    const poll = setInterval(async () => {
+      if (popup.closed) {
+        clearInterval(poll)
+        if (oauthLoading.value) {
+          oauthError.value = '授权窗口被关闭'
+          oauthLoading.value = false
+        }
+        return
+      }
+
+      const callbackUrl = extractPopupUrl(popup)
+      if (!callbackUrl) return
+      clearInterval(poll)
+      popup.close()
+
+      try {
+        // Send callback URL to backend for processing.
+        const cbResult = await kiroApi.externalSSOCallback({
+          session_id: sessionId,
+          callback_url: callbackUrl
+        })
+
+        if (cbResult.phase === 'need_open_url' && cbResult.authorize_url) {
+          // Leg 2: open Microsoft Entra authorize URL.
+          await handleExternalSSOLeg2(sessionId, cbResult.authorize_url)
+        } else if (cbResult.phase === 'completed' && cbResult.token_info) {
+          applyTokenInfo(cbResult.token_info, 'external_idp')
+          oauthSuccess.value = 'Microsoft 企业 SSO 授权成功，凭据已填入'
+          oauthLoading.value = false
+        } else {
+          oauthError.value = '未知的回调状态'
+          oauthLoading.value = false
+        }
+      } catch (e: unknown) {
+        oauthError.value = `External SSO 处理失败: ${e instanceof Error ? e.message : String(e)}`
+        oauthLoading.value = false
+      }
+    }, POLL_INTERVAL)
+
+    // Timeout 5 minutes.
+    setTimeout(() => {
+      if (oauthLoading.value && oauthMethod.value === 'external_sso') {
+        clearInterval(poll)
+        if (!popup.closed) popup.close()
+        oauthError.value = '授权超时（5分钟），请重试'
+        oauthLoading.value = false
+      }
+    }, 5 * 60 * 1000)
+  } catch (e: unknown) {
+    oauthError.value = `启动 External SSO 失败: ${e instanceof Error ? e.message : String(e)}`
+    oauthLoading.value = false
+  }
+}
+
+/** Handle External SSO Leg 2 (Microsoft Entra authorization). */
+async function handleExternalSSOLeg2(sessionId: string, authorizeUrl: string) {
+  const popup2 = window.open(authorizeUrl, 'kiro_external_sso_leg2', 'width=600,height=700')
+  if (!popup2) {
+    oauthError.value = '浏览器阻止了第二阶段弹窗，请允许弹窗后重试'
+    oauthLoading.value = false
+    return
+  }
+
+  const poll2 = setInterval(async () => {
+    if (popup2.closed) {
+      clearInterval(poll2)
+      if (oauthLoading.value) {
+        oauthError.value = '第二阶段授权窗口被关闭'
+        oauthLoading.value = false
+      }
+      return
+    }
+
+    const callbackUrl = extractPopupUrl(popup2)
+    if (!callbackUrl) return
+    clearInterval(poll2)
+    popup2.close()
+
+    try {
+      const cbResult = await kiroApi.externalSSOCallback({
+        session_id: sessionId,
+        callback_url: callbackUrl
+      })
+
+      if (cbResult.phase === 'completed' && cbResult.token_info) {
+        applyTokenInfo(cbResult.token_info, 'external_idp')
+        oauthSuccess.value = 'Microsoft 企业 SSO 授权成功，凭据已填入'
+      } else {
+        oauthError.value = '第二阶段回调处理异常'
+      }
+    } catch (e: unknown) {
+      oauthError.value = `第二阶段 Token 交换失败: ${e instanceof Error ? e.message : String(e)}`
+    }
+    oauthLoading.value = false
+  }, POLL_INTERVAL)
+
+  setTimeout(() => {
+    if (oauthLoading.value && oauthMethod.value === 'external_sso') {
+      clearInterval(poll2)
+      if (!popup2.closed) popup2.close()
+      oauthError.value = '第二阶段授权超时，请重试'
+      oauthLoading.value = false
+    }
+  }, 5 * 60 * 1000)
+}
+
+/** Extract popup URL when it has navigated to localhost (any port). */
+function extractPopupUrl(popup: Window): string | null {
+  try {
+    const url = popup.location.href
+    if (!url || url === 'about:blank') return null
+    if (url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:')) {
+      return url
+    }
+  } catch {
+    // Cross-origin: cannot read location.
+  }
+  return null
 }
 
 /** 导入 Token JSON */
