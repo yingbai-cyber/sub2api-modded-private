@@ -6,7 +6,7 @@
       <div class="flex flex-wrap gap-2 mb-2">
         <button
           type="button"
-          class="btn btn-sm btn-primary"
+          class="btn btn-sm btn-outline"
           :disabled="oauthLoading"
           @click="startOAuth('social')"
         >
