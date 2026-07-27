@@ -1,5 +1,63 @@
 <template>
   <div class="space-y-4">
+    <!-- OAuth 快捷登录 -->
+    <div v-if="mode === 'create'" class="border border-blue-200 rounded-lg p-4 bg-blue-50/50">
+      <p class="text-sm font-medium text-blue-800 mb-3">OAuth 快捷登录（自动获取凭据）</p>
+      <div class="flex flex-wrap gap-2 mb-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-primary"
+          :disabled="oauthLoading"
+          @click="startOAuth('social')"
+        >
+          {{ oauthLoading && oauthMethod === 'social' ? '等待授权...' : 'Social 登录' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline"
+          :disabled="oauthLoading"
+          @click="startOAuth('idc')"
+        >
+          {{ oauthLoading && oauthMethod === 'idc' ? '等待授权...' : 'Builder ID' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline"
+          :disabled="oauthLoading"
+          @click="startOAuth('external_idp')"
+        >
+          {{ oauthLoading && oauthMethod === 'external_idp' ? '等待授权...' : 'External IdP' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost"
+          :disabled="oauthLoading"
+          @click="showImportDialog = true"
+        >
+          导入 Token JSON
+        </button>
+      </div>
+      <p v-if="oauthError" class="text-xs text-red-600 mt-1">{{ oauthError }}</p>
+      <p v-if="oauthSuccess" class="text-xs text-green-600 mt-1">{{ oauthSuccess }}</p>
+      <p class="text-xs text-gray-500">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入下方。</p>
+    </div>
+
+    <!-- Token JSON 导入对话框 -->
+    <div v-if="showImportDialog" class="border border-gray-200 rounded-lg p-4 bg-gray-50">
+      <label class="input-label">粘贴 Kiro IDE Token JSON</label>
+      <textarea
+        v-model="importTokenJSON"
+        rows="4"
+        class="input font-mono text-xs"
+        placeholder='{"refreshToken":"...","authMethod":"social",...}'
+      />
+      <div class="flex gap-2 mt-2">
+        <button type="button" class="btn btn-sm btn-primary" :disabled="oauthLoading" @click="doImportToken">
+          {{ oauthLoading ? '导入中...' : '导入' }}
+        </button>
+        <button type="button" class="btn btn-sm btn-ghost" @click="showImportDialog = false">取消</button>
+      </div>
+    </div>
     <!-- 认证方式 auth_method -->
     <div>
       <label class="input-label">认证方式 (auth_method)</label>
@@ -377,7 +435,8 @@ export function buildKiroNativeCredentials(
 </script>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import * as kiroApi from '@/api/admin/kiro'
 
 const props = defineProps<{
   modelValue: KiroNativeCreds
@@ -437,6 +496,155 @@ function secretPlaceholder(statusKey: string, fallback: string): string {
 
 function keepHint(statusKey: string): string {
   return isConfigured(statusKey) ? '留空则保留原有值。' : ''
+}
+
+// --- OAuth flow state ---
+const oauthLoading = ref(false)
+const oauthMethod = ref<string>('')
+const oauthError = ref('')
+const oauthSuccess = ref('')
+const showImportDialog = ref(false)
+const importTokenJSON = ref('')
+
+// OAuth 弹窗轮询间隔
+const POLL_INTERVAL = 500
+
+/** 从弹窗 URL 提取 code 和 state 参数 */
+function extractCallbackParams(popup: Window): { code: string; state: string } | null {
+  try {
+    const url = popup.location.href
+    if (!url || url === 'about:blank') return null
+    // 检查是否已经跳到 localhost callback
+    if (!url.startsWith('http://localhost:') && !url.startsWith('http://127.0.0.1:')) return null
+    const params = new URL(url).searchParams
+    const code = params.get('code')
+    const state = params.get('state')
+    if (code && state) return { code, state }
+  } catch {
+    // 跨域时无法读取 location，忽略
+  }
+  return null
+}
+
+/** 启动 OAuth 登录流 */
+async function startOAuth(method: string) {
+  oauthLoading.value = true
+  oauthMethod.value = method
+  oauthError.value = ''
+  oauthSuccess.value = ''
+
+  try {
+    let result: kiroApi.KiroAuthUrlResponse
+
+    if (method === 'idc') {
+      result = await kiroApi.generateIDCAuthUrl({
+        region: props.modelValue.region || undefined
+      })
+    } else if (method === 'external_idp') {
+      if (!props.modelValue.issuer_url) {
+        oauthError.value = 'External IdP 需要先填写 Issuer URL'
+        oauthLoading.value = false
+        return
+      }
+      result = await kiroApi.generateAuthUrl({
+        auth_method: 'external_idp',
+        region: props.modelValue.region || undefined,
+        issuer_url: props.modelValue.issuer_url,
+        client_id: props.modelValue.client_id || undefined,
+        scopes: props.modelValue.scopes || undefined
+      })
+    } else {
+      result = await kiroApi.generateAuthUrl({ auth_method: 'social' })
+    }
+
+    // 打开弹窗
+    const popup = window.open(result.auth_url, 'kiro_oauth', 'width=600,height=700')
+    if (!popup) {
+      oauthError.value = '浏览器阻止了弹窗，请允许弹窗后重试'
+      oauthLoading.value = false
+      return
+    }
+
+    // 轮询弹窗 URL 等待回调
+    const poll = setInterval(async () => {
+      if (popup.closed) {
+        clearInterval(poll)
+        if (oauthLoading.value) {
+          oauthError.value = '授权窗口被关闭'
+          oauthLoading.value = false
+        }
+        return
+      }
+
+      const params = extractCallbackParams(popup)
+      if (params) {
+        clearInterval(poll)
+        popup.close()
+
+        try {
+          const tokenInfo = await kiroApi.exchangeCode({
+            session_id: result.session_id,
+            state: params.state,
+            code: params.code
+          })
+          applyTokenInfo(tokenInfo, method)
+          oauthSuccess.value = '授权成功，凭据已填入'
+        } catch (e: unknown) {
+          oauthError.value = `Token 交换失败: ${e instanceof Error ? e.message : String(e)}`
+        }
+        oauthLoading.value = false
+      }
+    }, POLL_INTERVAL)
+
+    // 超时 5 分钟自动取消
+    setTimeout(() => {
+      if (oauthLoading.value) {
+        clearInterval(poll)
+        if (!popup.closed) popup.close()
+        oauthError.value = '授权超时（5分钟），请重试'
+        oauthLoading.value = false
+      }
+    }, 5 * 60 * 1000)
+  } catch (e: unknown) {
+    oauthError.value = `生成授权链接失败: ${e instanceof Error ? e.message : String(e)}`
+    oauthLoading.value = false
+  }
+}
+
+/** 导入 Token JSON */
+async function doImportToken() {
+  if (!importTokenJSON.value.trim()) {
+    oauthError.value = '请粘贴 Token JSON'
+    return
+  }
+  oauthLoading.value = true
+  oauthError.value = ''
+  oauthSuccess.value = ''
+
+  try {
+    const tokenInfo = await kiroApi.importToken({ token_json: importTokenJSON.value.trim() })
+    applyTokenInfo(tokenInfo, tokenInfo.auth_method || 'social')
+    oauthSuccess.value = 'Token 导入成功，凭据已填入'
+    showImportDialog.value = false
+    importTokenJSON.value = ''
+  } catch (e: unknown) {
+    oauthError.value = `Token 导入失败: ${e instanceof Error ? e.message : String(e)}`
+  }
+  oauthLoading.value = false
+}
+
+/** 将 OAuth 获取的 tokenInfo 填入表单 */
+function applyTokenInfo(tokenInfo: kiroApi.KiroTokenInfo, method: string) {
+  const patch: Partial<KiroNativeCreds> = {
+    auth_method: canonicalizeAuthMethod(method)
+  }
+  if (tokenInfo.refresh_token) patch.refresh_token = tokenInfo.refresh_token
+  if (tokenInfo.access_token) patch.access_token = tokenInfo.access_token
+  if (tokenInfo.expires_at) patch.expires_at = tokenInfo.expires_at
+  if (tokenInfo.profile_arn) patch.profile_arn = tokenInfo.profile_arn
+  if (tokenInfo.client_id) patch.client_id = tokenInfo.client_id
+  if (tokenInfo.client_secret) patch.client_secret = tokenInfo.client_secret
+  emitPatch(patch)
 }
 </script>
 
