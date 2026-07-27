@@ -2713,6 +2713,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle Kiro accounts: return kiro-supported models.
+	if account.Type == service.AccountTypeKiro {
+		response.Success(c, kiroAvailableModels())
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
@@ -2752,6 +2758,20 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+// kiroAvailableModels returns the list of models supported by Kiro native upstream.
+// These map to kiro.MapModel supported entries.
+func kiroAvailableModels() []claude.Model {
+	return []claude.Model{
+		{ID: "claude-opus-4.8", Type: "model", DisplayName: "Claude Opus 4.8"},
+		{ID: "claude-opus-4.7", Type: "model", DisplayName: "Claude Opus 4.7"},
+		{ID: "claude-opus-4.6", Type: "model", DisplayName: "Claude Opus 4.6"},
+		{ID: "claude-opus-4.5", Type: "model", DisplayName: "Claude Opus 4.5"},
+		{ID: "claude-sonnet-4.6", Type: "model", DisplayName: "Claude Sonnet 4.6"},
+		{ID: "claude-sonnet-4.5", Type: "model", DisplayName: "Claude Sonnet 4.5"},
+		{ID: "claude-haiku-4.5", Type: "model", DisplayName: "Claude Haiku 4.5"},
+	}
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
