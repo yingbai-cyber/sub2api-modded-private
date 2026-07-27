@@ -202,7 +202,7 @@ func RegisterIDCClient(ctx context.Context, client *http.Client, region, startUR
 	}
 	endpoint := oidcEndpoint(region) + "/client/register"
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"clientName":   IDCClientName,
 		"clientType":   IDCClientType,
 		"scopes":       IDCScopes,
