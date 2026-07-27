@@ -573,6 +573,11 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 		return nil, nil, newUpstreamModelSyncConfigError("Account is required", nil)
 	}
 
+	// Kiro accounts: return the static model list (no upstream /models endpoint).
+	if account.IsKiro() {
+		return kiroSupportedModelIDs(), nil
+	}
+
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
 		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
 		return models, nil, err
@@ -1363,4 +1368,18 @@ func dedupeAndSortModelIDs(models []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// kiroSupportedModelIDs returns the static list of model IDs supported by the
+// Kiro native upstream (no live /models endpoint exists).
+func kiroSupportedModelIDs() []string {
+	return []string{
+		"claude-haiku-4.5",
+		"claude-opus-4.5",
+		"claude-opus-4.6",
+		"claude-opus-4.7",
+		"claude-opus-4.8",
+		"claude-sonnet-4.5",
+		"claude-sonnet-4.6",
+	}
 }
