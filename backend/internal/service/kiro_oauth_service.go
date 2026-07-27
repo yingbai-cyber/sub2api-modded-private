@@ -352,7 +352,7 @@ func (s *KiroOAuthService) startCleanup() {
 			ticker := time.NewTicker(2 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				s.sessions.Range(func(key, value interface{}) bool {
+				s.sessions.Range(func(key, value any) bool {
 					session, _ := value.(*KiroOAuthSession)
 					if session != nil && time.Since(session.CreatedAt) > kiroOAuthSessionTTL {
 						s.sessions.Delete(key)
