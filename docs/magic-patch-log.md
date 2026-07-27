@@ -1381,6 +1381,47 @@
 
 ---
 
+### 2026-07-27：Kiro OAuth 浏览器授权登录
+**类型**：功能
+
+**背景**：
+- 需要支持通过浏览器完成 AWS Builder ID / IAM Identity Center / 外部 IdP 的 OAuth 授权流程
+- 官方 sub2api 无此功能，仅支持直接填入 refresh token
+- 本魔改让管理员在前端点击授权后自动完成 device code → browser login → token 获取 → 账号入库
+
+**影响文件**：
+- `backend/internal/kiro/oauth.go` — 底层 OAuth 协议函数（register client、device auth、token poll、refresh）
+- `backend/internal/service/kiro_oauth_service.go` — Service 层会话管理与轮询
+- `backend/internal/handler/admin/kiro_oauth_handler.go` — HTTP handler（start/status/cancel）
+- `backend/internal/handler/admin/wire.go` — DI 注入
+- `backend/internal/handler/admin/wire_gen.go` — Wire 生成代码
+- `backend/internal/router/admin_router.go` — 路由注册
+- `frontend/src/api/kiro-oauth.ts` — 前端 API 封装
+- `frontend/src/views/admin/kiro/KiroOAuthDialog.vue` — Vue 授权对话框组件
+
+**改动摘要**：
+- 实现完整 OAuth 2.0 Device Authorization Grant 流程（RFC 8628）
+- 支持三种 start URL：Builder ID、IDC（自定义）、外部 IdP（自定义 issuer + clientId + scopes）
+- 前端对话框展示验证 URL 和 user code，自动轮询状态直到成功/超时/取消
+- 授权成功后自动将 refresh token 存入 Kiro 账号
+- golangci-lint 合规：errcheck 处理、interface{} → any、offline_access 去重
+
+**与官方差异原因**：
+- 官方无 Kiro 账号体系和 OAuth 设备授权支持，这是完全新增的功能模块
+
+**rebase 风险点**：
+- `wire.go` / `wire_gen.go`：如果官方在 admin handler 层加了新 provider，需要手动合并 DI 注入
+- `admin_router.go`：路由表可能有位置冲突，但路径 `/kiro/oauth/*` 不太会与官方冲突
+- `internal/kiro/` 目录为本魔改独有，不会有上游冲突
+
+**验证结果**：
+- CI 全 4 job 通过（frontend + shell + golangci-lint + test）
+- GitHub Actions 构建+部署成功（run 30232643005）
+- 服务 health check 正常：`{"status":"ok"}`
+- 部署 commit：`d62207a61`
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
