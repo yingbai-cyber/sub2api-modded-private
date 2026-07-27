@@ -467,23 +467,26 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream returned %d: %s", resp.StatusCode, string(body)))
 			}
 
-			// Stream kiro response events to client (raw passthrough of the SSE).
+			// Decode kiro EventStream response and extract assistant text.
 			s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("endpoint: %s", epName)})
-			scanner := bufio.NewScanner(resp.Body)
-			scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+			decoder := kiro.NewEventDecoder(resp.Body)
 			var gotContent bool
-			for scanner.Scan() {
-				line := scanner.Text()
-				if strings.HasPrefix(line, "data:") || strings.HasPrefix(line, "data: ") {
-					if !gotContent {
-						gotContent = true
-					}
+			for {
+				ev, err := decoder.Next()
+				if err != nil {
+					break // io.EOF or decode error
+				}
+				if ev.Kind == kiro.EventAssistantResponse && ev.Assistant != nil && ev.Assistant.Content != "" {
+					gotContent = true
+					s.sendEvent(c, TestEvent{Type: "content", Text: ev.Assistant.Content})
+				}
+				if ev.Kind == kiro.EventError {
+					s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("[error] %s", ev.ErrorMessage)})
+					break
 				}
 			}
-			if gotContent {
-				s.sendEvent(c, TestEvent{Type: "content", Text: "Kiro native upstream responded successfully"})
-			} else {
-				s.sendEvent(c, TestEvent{Type: "content", Text: "Kiro native upstream connected (no streaming data)"})
+			if !gotContent {
+				s.sendEvent(c, TestEvent{Type: "content", Text: "(no text content received)"})
 			}
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
