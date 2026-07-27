@@ -198,7 +198,7 @@ jobs:
 
       - name: Configure SSH
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || 'REDACTED' }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -218,7 +218,7 @@ jobs:
 
       - name: Upload binary to server
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || 'REDACTED' }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
         run: |
@@ -226,7 +226,7 @@ jobs:
 
       - name: Install, restart and verify
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || 'REDACTED' }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
         run: |
