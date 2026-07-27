@@ -337,8 +337,8 @@ type KiroExternalSSOCallbackInput struct {
 type KiroExternalSSOCallbackResult struct {
 	// Phase "need_open_url": frontend must open AuthorizeURL in a new popup.
 	// Phase "completed": token exchange is done, TokenInfo is populated.
-	Phase        string             `json:"phase"` // "need_open_url" or "completed"
-	AuthorizeURL string             `json:"authorize_url,omitempty"`
+	Phase        string               `json:"phase"` // "need_open_url" or "completed"
+	AuthorizeURL string               `json:"authorize_url,omitempty"`
 	TokenInfo    *kiro.OAuthTokenInfo `json:"token_info,omitempty"`
 }
 
@@ -383,12 +383,12 @@ func (s *KiroOAuthService) StartExternalSSO(ctx context.Context, proxyID *int64)
 func (s *KiroOAuthService) HandleExternalSSOCallback(ctx context.Context, input *KiroExternalSSOCallbackInput) (*KiroExternalSSOCallbackResult, error) {
 	val, ok := s.sessions.Load(input.SessionID)
 	if !ok {
-		return nil, errors.New("External SSO 会话不存在或已过期")
+		return nil, errors.New("external SSO 会话不存在或已过期")
 	}
 	session, _ := val.(*KiroOAuthSession)
 	if time.Since(session.CreatedAt) > kiroOAuthSessionTTL {
 		s.sessions.Delete(input.SessionID)
-		return nil, errors.New("External SSO 会话已过期")
+		return nil, errors.New("external SSO 会话已过期")
 	}
 
 	parsed, err := kiro.ParseExternalSSOCallback(input.CallbackURL)
@@ -448,7 +448,7 @@ func (s *KiroOAuthService) HandleExternalSSOCallback(ctx context.Context, input 
 		redirectURI := kiro.ExternalSSOBaseURI + kiro.ExternalSSOCallbackPath
 		tokenInfo, err := kiro.ExchangeExternalIdPToken(ctx, httpClient, session.TokenEndpoint, parsed.Code, session.CodeVerifier, session.ClientIDExt, redirectURI, session.Scopes)
 		if err != nil {
-			return nil, fmt.Errorf("Token 交换失败: %w", err)
+			return nil, fmt.Errorf("token 交换失败: %w", err)
 		}
 
 		return &KiroExternalSSOCallbackResult{
