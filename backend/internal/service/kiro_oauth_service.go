@@ -207,7 +207,7 @@ func (s *KiroOAuthService) ExchangeCode(ctx context.Context, input *KiroOAuthExc
 	if !ok {
 		return nil, errors.New("OAuth 会话不存在或已过期")
 	}
-	session := val.(*KiroOAuthSession)
+	session, _ := val.(*KiroOAuthSession)
 
 	// Validate state.
 	if session.State != input.State {
@@ -338,7 +338,8 @@ func (s *KiroOAuthService) buildHTTPClient(proxyID *int64) *http.Client {
 	if err != nil || proxyURL == nil {
 		return client
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport, _ := http.DefaultTransport.(*http.Transport)
+	transport := baseTransport.Clone()
 	transport.Proxy = http.ProxyURL(proxyURL)
 	client.Transport = transport
 	return client
@@ -352,8 +353,8 @@ func (s *KiroOAuthService) startCleanup() {
 			defer ticker.Stop()
 			for range ticker.C {
 				s.sessions.Range(func(key, value interface{}) bool {
-					session := value.(*KiroOAuthSession)
-					if time.Since(session.CreatedAt) > kiroOAuthSessionTTL {
+					session, _ := value.(*KiroOAuthSession)
+					if session != nil && time.Since(session.CreatedAt) > kiroOAuthSessionTTL {
 						s.sessions.Delete(key)
 					}
 					return true
