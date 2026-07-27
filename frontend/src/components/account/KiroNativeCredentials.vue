@@ -67,18 +67,28 @@
       </div>
       <p v-if="oauthError" class="text-xs text-error mt-1">{{ oauthError }}</p>
       <p v-if="oauthSuccess" class="text-xs text-success mt-1">{{ oauthSuccess }}</p>
-      <!-- 手动粘贴回调 URL 兜底 -->
-      <div class="mt-2">
-        <button
-          type="button"
-          class="text-xs text-base-content/50 hover:text-base-content/80 underline"
-          @click="showManualCallback = !showManualCallback"
-        >
-          弹窗无反应？手动粘贴回调地址
-        </button>
-        <div v-if="showManualCallback" class="mt-2 flex gap-2 items-end">
+      <!-- 授权链接展示 + 回调 URL 粘贴 -->
+      <div v-if="oauthAuthUrl" class="mt-3 border border-base-300 rounded-lg p-3 bg-base-200/50 space-y-2">
+        <p class="text-xs font-medium text-base-content">1. 在新标签页中打开授权链接完成登录：</p>
+        <div class="flex gap-2 items-center">
+          <a
+            :href="oauthAuthUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-xs text-primary underline break-all flex-1"
+          >{{ oauthAuthUrl.length > 120 ? oauthAuthUrl.slice(0, 120) + '...' : oauthAuthUrl }}</a>
+          <button
+            type="button"
+            class="btn btn-xs btn-ghost"
+            title="复制链接"
+            @click="copyAuthUrl"
+          >
+            {{ copyBtnText }}
+          </button>
+        </div>
+        <p class="text-xs font-medium text-base-content mt-2">2. 授权完成后，复制浏览器地址栏的回调 URL 粘贴到下方：</p>
+        <div class="flex gap-2 items-end">
           <div class="flex-1">
-            <label class="input-label text-xs">回调 URL（从弹窗地址栏复制）</label>
             <input
               v-model="manualCallbackUrl"
               type="text"
@@ -96,7 +106,7 @@
           </button>
         </div>
       </div>
-      <p class="text-xs text-base-content/60 mt-1">点击后浏览器将打开 Kiro 登录页，完成授权后凭据自动填入；若弹窗无法自动回传，可手动粘贴回调地址。</p>
+      <p class="text-xs text-base-content/60 mt-1">点击按钮后会生成授权链接，在新标签页完成登录，然后将回调 URL 粘贴回来即可。</p>
     </div>
 
     <!-- Token JSON 导入对话框 -->
@@ -564,37 +574,34 @@ const showImportDialog = ref(false)
 const importTokenJSON = ref('')
 const showIamSsoInput = ref(false)
 const iamSsoStartUrl = ref('')
-const showManualCallback = ref(false)
 const manualCallbackUrl = ref('')
 const currentSessionId = ref('')
 const currentSessionState = ref('')
+const oauthAuthUrl = ref('')
+const copyBtnText = ref('复制')
 
-// OAuth 弹窗轮询间隔
+// OAuth 弹窗轮询间隔（仅 External SSO 仍用弹窗）
 const POLL_INTERVAL = 500
 
-/** 从弹窗 URL 提取 code 和 state 参数 */
-function extractCallbackParams(popup: Window): { code: string; state: string } | null {
+/** 复制授权链接到剪贴板 */
+async function copyAuthUrl() {
   try {
-    const url = popup.location.href
-    if (!url || url === 'about:blank') return null
-    // 检查是否已经跳到 localhost callback
-    if (!url.startsWith('http://localhost:') && !url.startsWith('http://127.0.0.1:')) return null
-    const params = new URL(url).searchParams
-    const code = params.get('code')
-    const state = params.get('state')
-    if (code && state) return { code, state }
+    await navigator.clipboard.writeText(oauthAuthUrl.value)
+    copyBtnText.value = '已复制'
+    setTimeout(() => { copyBtnText.value = '复制' }, 2000)
   } catch {
-    // 跨域时无法读取 location，忽略
+    copyBtnText.value = '失败'
+    setTimeout(() => { copyBtnText.value = '复制' }, 2000)
   }
-  return null
 }
 
-/** 启动 OAuth 登录流 */
+/** 启动 OAuth 登录流（生成链接，不打开弹窗） */
 async function startOAuth(method: string) {
   oauthLoading.value = true
   oauthMethod.value = method
   oauthError.value = ''
   oauthSuccess.value = ''
+  oauthAuthUrl.value = ''
 
   try {
     let result: kiroApi.KiroAuthUrlResponse
@@ -604,7 +611,6 @@ async function startOAuth(method: string) {
         region: props.modelValue.region || undefined
       })
     } else if (method === 'iam_sso') {
-      // IAM SSO uses the same IDC flow but with custom start_url.
       const startUrl = iamSsoStartUrl.value.trim()
       if (!startUrl) {
         oauthError.value = '请填写企业 Start URL'
@@ -619,56 +625,11 @@ async function startOAuth(method: string) {
       result = await kiroApi.generateAuthUrl({ auth_method: 'social' })
     }
 
-    // 打开弹窗
+    // 保存 session 信息和授权链接，展示给用户
     currentSessionId.value = result.session_id
     currentSessionState.value = result.state || ''
-    const popup = window.open(result.auth_url, 'kiro_oauth', 'width=600,height=700')
-    if (!popup) {
-      oauthError.value = '浏览器阻止了弹窗，请允许弹窗后重试'
-      oauthLoading.value = false
-      return
-    }
-
-    // 轮询弹窗 URL 等待回调
-    const poll = setInterval(async () => {
-      if (popup.closed) {
-        clearInterval(poll)
-        if (oauthLoading.value) {
-          oauthError.value = '授权窗口被关闭'
-          oauthLoading.value = false
-        }
-        return
-      }
-
-      const params = extractCallbackParams(popup)
-      if (params) {
-        clearInterval(poll)
-        popup.close()
-
-        try {
-          const tokenInfo = await kiroApi.exchangeCode({
-            session_id: result.session_id,
-            state: params.state,
-            code: params.code
-          })
-          applyTokenInfo(tokenInfo, method === 'iam_sso' ? 'idc' : method)
-          oauthSuccess.value = '授权成功，凭据已填入'
-        } catch (e: unknown) {
-          oauthError.value = `Token 交换失败: ${e instanceof Error ? e.message : String(e)}`
-        }
-        oauthLoading.value = false
-      }
-    }, POLL_INTERVAL)
-
-    // 超时 5 分钟自动取消
-    setTimeout(() => {
-      if (oauthLoading.value) {
-        clearInterval(poll)
-        if (!popup.closed) popup.close()
-        oauthError.value = '授权超时（5分钟），请重试'
-        oauthLoading.value = false
-      }
-    }, 5 * 60 * 1000)
+    oauthAuthUrl.value = result.auth_url
+    oauthLoading.value = false
   } catch (e: unknown) {
     oauthError.value = `生成授权链接失败: ${e instanceof Error ? e.message : String(e)}`
     oauthLoading.value = false
@@ -903,7 +864,7 @@ async function submitManualCallback() {
       oauthLoading.value = false
     }
     manualCallbackUrl.value = ''
-    showManualCallback.value = false
+    oauthAuthUrl.value = ''
   } catch (e: unknown) {
     oauthError.value = `手动回调处理失败: ${e instanceof Error ? e.message : String(e)}`
     oauthLoading.value = false
