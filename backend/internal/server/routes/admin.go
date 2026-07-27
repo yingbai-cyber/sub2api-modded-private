@@ -481,6 +481,8 @@ func registerKiroOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		kiro.POST("/oauth/exchange-code", h.Admin.KiroOAuth.ExchangeCode)
 		kiro.POST("/oauth/refresh-token", h.Admin.KiroOAuth.RefreshToken)
 		kiro.POST("/oauth/import-token", h.Admin.KiroOAuth.ImportToken)
+		kiro.POST("/oauth/external-sso/start", h.Admin.KiroOAuth.ExternalSSOStart)
+		kiro.POST("/oauth/external-sso/callback", h.Admin.KiroOAuth.ExternalSSOCallback)
 	}
 }
 
