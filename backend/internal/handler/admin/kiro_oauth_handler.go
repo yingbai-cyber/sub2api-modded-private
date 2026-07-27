@@ -61,6 +61,18 @@ type KiroImportTokenRequest struct {
 	ProxyID   *int64 `json:"proxy_id"`
 }
 
+// KiroExternalSSOCallbackRequest is the request for external SSO callback processing.
+type KiroExternalSSOCallbackRequest struct {
+	SessionID   string `json:"session_id" binding:"required"`
+	CallbackURL string `json:"callback_url" binding:"required"`
+	ProxyID     *int64 `json:"proxy_id"`
+}
+
+// KiroExternalSSOStartRequest is the request for starting external SSO.
+type KiroExternalSSOStartRequest struct {
+	ProxyID *int64 `json:"proxy_id"`
+}
+
 // --- Handlers ---
 
 // GenerateAuthURL generates a Kiro social or external IdP authorization URL.
@@ -176,4 +188,44 @@ func (h *KiroOAuthHandler) ImportToken(c *gin.Context) {
 	}
 
 	response.Success(c, tokenInfo)
+}
+
+// ExternalSSOStart starts the Microsoft Enterprise SSO two-leg flow.
+// POST /api/v1/admin/kiro/oauth/external-sso/start
+func (h *KiroOAuthHandler) ExternalSSOStart(c *gin.Context) {
+	var req KiroExternalSSOStartRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Allow empty body (no proxy needed).
+		req = KiroExternalSSOStartRequest{}
+	}
+
+	result, err := h.kiroOAuthService.StartExternalSSO(c.Request.Context(), req.ProxyID)
+	if err != nil {
+		response.InternalError(c, "启动 External SSO 失败: "+err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// ExternalSSOCallback processes a callback URL from the External SSO flow.
+// POST /api/v1/admin/kiro/oauth/external-sso/callback
+func (h *KiroOAuthHandler) ExternalSSOCallback(c *gin.Context) {
+	var req KiroExternalSSOCallbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请求无效: "+err.Error())
+		return
+	}
+
+	result, err := h.kiroOAuthService.HandleExternalSSOCallback(c.Request.Context(), &service.KiroExternalSSOCallbackInput{
+		SessionID:   req.SessionID,
+		CallbackURL: req.CallbackURL,
+		ProxyID:     req.ProxyID,
+	})
+	if err != nil {
+		response.BadRequest(c, "External SSO 回调处理失败: "+err.Error())
+		return
+	}
+
+	response.Success(c, result)
 }
