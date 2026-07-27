@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -144,6 +145,7 @@ type AccountTestService struct {
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
+	kiroTokenProvider         *KiroTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
@@ -178,6 +180,7 @@ func NewAccountTestService(
 	geminiTokenProvider *GeminiTokenProvider,
 	claudeTokenProvider *ClaudeTokenProvider,
 	grokTokenProvider *GrokTokenProvider,
+	kiroTokenProvider *KiroTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
@@ -188,6 +191,7 @@ func NewAccountTestService(
 		geminiTokenProvider:       geminiTokenProvider,
 		claudeTokenProvider:       claudeTokenProvider,
 		grokTokenProvider:         grokTokenProvider,
+		kiroTokenProvider:         kiroTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
@@ -400,12 +404,107 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		}
 		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages?beta=true"
 	} else if account.Type == "kiro" {
-		// Kiro - use Bearer token via kiro-rs proxy
-		authToken = account.GetCredential("api_key")
+		// Kiro accounts: native path (token resolve via kiroTokenProvider) or
+		// legacy path (base_url + api_key proxy).
+		cred := kiro.ParseCredentials(account.ID, account.Credentials, account.Extra)
+		if cred.UsesNativeUpstream() {
+			// Native kiro: resolve token (lazy refresh if expired).
+			_, token, err := s.kiroTokenProvider.Resolve(ctx, account)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro token resolve failed: %s", err.Error()))
+			}
+			authToken = token
 
+			// Build upstream URL via kiro endpoint registry.
+			reqCtx := &kiro.RequestContext{
+				Credentials: cred,
+				Token:       token,
+				MachineID:   kiro.GenerateMachineID(cred, ""),
+				Config:      kiro.DefaultConfig(),
+			}
+			eps := kiro.NewEndpointRegistry()
+			epName := kiro.EndpointIDE
+			if cred.Endpoint != "" {
+				epName = cred.Endpoint
+			}
+			ep, ok := eps[epName]
+			if !ok {
+				ep = eps[kiro.EndpointIDE]
+			}
+			apiURL = ep.APIURL(reqCtx)
+
+			// Kiro native requires a different request format; use kiro.PrepareRequest
+			// to build the body, then send directly.
+			testPayload, err := createTestPayload(testModelID)
+			if err != nil {
+				return s.sendErrorAndEnd(c, "Failed to create test payload")
+			}
+			testPayloadBytes, _ := json.Marshal(testPayload)
+			pr, err := kiro.PrepareRequest(testPayloadBytes, kiro.PrepareOptions{
+				MappedModel:   testModelID,
+				ResponseModel: testModelID,
+			})
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro prepare request failed: %s", err.Error()))
+			}
+
+			// Set SSE headers.
+			c.Writer.Header().Set("Content-Type", "text/event-stream")
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Connection", "keep-alive")
+			c.Writer.Header().Set("X-Accel-Buffering", "no")
+			c.Writer.Flush()
+
+			s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+			// Build HTTP request with endpoint decoration.
+			reqBody := []byte(pr.RequestBody)
+			req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(reqBody))
+			if err != nil {
+				return s.sendErrorAndEnd(c, "Failed to create kiro request")
+			}
+			req.Header.Set("Content-Type", "application/json")
+			ep.DecorateAPI(req.Header, reqCtx)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream request failed: %s", err.Error()))
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode >= 400 {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream returned %d: %s", resp.StatusCode, string(body)))
+			}
+
+			// Stream kiro response events to client (raw passthrough of the SSE).
+			s.sendEvent(c, TestEvent{Type: "test_info", Text: fmt.Sprintf("endpoint: %s", epName)})
+			scanner := bufio.NewScanner(resp.Body)
+			scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+			var gotContent bool
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "data:") || strings.HasPrefix(line, "data: ") {
+					if !gotContent {
+						gotContent = true
+					}
+				}
+			}
+			if gotContent {
+				s.sendEvent(c, TestEvent{Type: "test_result", Text: "Kiro native upstream responded successfully"})
+			} else {
+				s.sendEvent(c, TestEvent{Type: "test_result", Text: "Kiro native upstream connected (no streaming data)"})
+			}
+			s.sendEvent(c, TestEvent{Type: "test_end"})
+			return nil
+		}
+
+		// Legacy kiro: base_url + api_key proxy.
+		authToken = account.GetCredential("api_key")
 		baseURL := account.GetCredential("base_url")
 		if baseURL == "" {
-			return s.sendErrorAndEnd(c, "No base_url configured for kiro account")
+			return s.sendErrorAndEnd(c, "No base_url configured for kiro account (legacy mode requires base_url)")
 		}
 		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
