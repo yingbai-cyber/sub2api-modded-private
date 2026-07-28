@@ -2761,16 +2761,25 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 }
 
 // kiroAvailableModels returns the list of models supported by Kiro native upstream.
-// These map to kiro.MapModel supported entries.
+// Synced from kiro_models_config.json enabledModels.
 func kiroAvailableModels() []claude.Model {
 	return []claude.Model{
+		{ID: "claude-opus-5", Type: "model", DisplayName: "Claude Opus 5"},
 		{ID: "claude-opus-4.8", Type: "model", DisplayName: "Claude Opus 4.8"},
 		{ID: "claude-opus-4.7", Type: "model", DisplayName: "Claude Opus 4.7"},
 		{ID: "claude-opus-4.6", Type: "model", DisplayName: "Claude Opus 4.6"},
 		{ID: "claude-opus-4.5", Type: "model", DisplayName: "Claude Opus 4.5"},
+		{ID: "claude-sonnet-5", Type: "model", DisplayName: "Claude Sonnet 5"},
 		{ID: "claude-sonnet-4.6", Type: "model", DisplayName: "Claude Sonnet 4.6"},
 		{ID: "claude-sonnet-4.5", Type: "model", DisplayName: "Claude Sonnet 4.5"},
+		{ID: "claude-sonnet-4", Type: "model", DisplayName: "Claude Sonnet 4"},
 		{ID: "claude-haiku-4.5", Type: "model", DisplayName: "Claude Haiku 4.5"},
+		{ID: "gpt-5.6-sol", Type: "model", DisplayName: "GPT-5.6 Sol"},
+		{ID: "gpt-5.6-terra", Type: "model", DisplayName: "GPT-5.6 Terra"},
+		{ID: "gpt-5.6-luna", Type: "model", DisplayName: "GPT-5.6 Luna"},
+		{ID: "minimax-m2.5", Type: "model", DisplayName: "MiniMax M2.5"},
+		{ID: "minimax-m2.1", Type: "model", DisplayName: "MiniMax M2.1"},
+		{ID: "qwen3-coder-next", Type: "model", DisplayName: "Qwen3 Coder Next"},
 	}
 }
 
