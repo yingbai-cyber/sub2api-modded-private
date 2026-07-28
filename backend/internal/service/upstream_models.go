@@ -615,7 +615,7 @@ func dedupeAndSortModelIDs(models []string) []string {
 }
 
 // kiroSupportedModelIDs returns the static list of model IDs supported by the
-// Kiro native upstream (no live /models endpoint exists).
+// Kiro native upstream. Synced from kiro_models_config.json enabledModels.
 func kiroSupportedModelIDs() []string {
 	return []string{
 		"claude-haiku-4.5",
@@ -623,7 +623,16 @@ func kiroSupportedModelIDs() []string {
 		"claude-opus-4.6",
 		"claude-opus-4.7",
 		"claude-opus-4.8",
+		"claude-opus-5",
+		"claude-sonnet-4",
 		"claude-sonnet-4.5",
 		"claude-sonnet-4.6",
+		"claude-sonnet-5",
+		"gpt-5.6-luna",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"minimax-m2.1",
+		"minimax-m2.5",
+		"qwen3-coder-next",
 	}
 }

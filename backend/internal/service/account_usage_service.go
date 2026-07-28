@@ -241,6 +241,9 @@ type UsageInfo struct {
 	// 错误码（机器可读）：forbidden / unauthenticated / rate_limited / network_error
 	ErrorCode string `json:"error_code,omitempty"`
 
+	// Kiro 余量（原生直连 getUsageLimits）
+	KiroBalance *KiroBalanceInfo `json:"kiro_balance,omitempty"`
+
 	// 获取 usage 时的错误信息（降级返回，而非 500）
 	Error string `json:"error,omitempty"`
 }
@@ -297,6 +300,7 @@ type AccountUsageService struct {
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
 	openAIQuotaService      *OpenAIQuotaService
+	kiroTokenProvider       *KiroTokenProvider
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -380,6 +384,15 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 	if account.Platform == PlatformGrok {
 		usage, err := s.getGrokUsage(ctx, account, forceProbe)
 		if err == nil && usage != nil && usage.Error == "" {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	// Kiro 平台原生余量查询
+	if account.Platform == PlatformAnthropic && account.Type == AccountTypeKiro {
+		usage, err := s.getKiroUsage(ctx, account)
+		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
