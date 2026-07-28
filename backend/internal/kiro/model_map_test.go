@@ -8,19 +8,35 @@ func TestMapModel(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"claude-sonnet-4-20250514", "claude-sonnet-4.5", true},
+		// Sonnet family
+		{"claude-sonnet-4-20250514", "claude-sonnet-4", true},
 		{"claude-sonnet-4-5-20250929-thinking", "claude-sonnet-4.5", true},
 		{"claude-sonnet-4-6", "claude-sonnet-4.6", true},
 		{"claude-sonnet-4.6-thinking", "claude-sonnet-4.6", true},
+		{"claude-sonnet-5", "claude-sonnet-5", true},
+		{"claude-sonnet-5-thinking", "claude-sonnet-5", true},
+		{"claude-sonnet-4", "claude-sonnet-4", true},
+		{"claude-3-7-sonnet-20250219", "claude-sonnet-4.5", true},
+		// Opus family
 		{"claude-opus-4-20250514", "claude-opus-4.6", true},
 		{"claude-opus-4-5-20251101-thinking", "claude-opus-4.5", true},
 		{"claude-opus-4-6-thinking", "claude-opus-4.6", true},
 		{"claude-opus-4-7", "claude-opus-4.7", true},
 		{"claude-opus-4.8", "claude-opus-4.8", true},
+		{"claude-opus-5", "claude-opus-5", true},
+		{"claude-opus-5-thinking", "claude-opus-5", true},
+		// Haiku
 		{"claude-haiku-4-5-20251001-thinking", "claude-haiku-4.5", true},
 		{"claude-haiku-4-20250514", "claude-haiku-4.5", true},
+		// GPT passthrough
 		{"gpt-5.2", "gpt-5.2", true},
 		{"GPT-5-Codex", "gpt-5-codex", true},
+		// Non-Claude passthrough
+		{"minimax-m2.5", "minimax-m2.5", true},
+		{"qwen3-coder-next", "qwen3-coder-next", true},
+		// Unknown claude-* passthrough
+		{"claude-fable-5", "claude-fable-5", true},
+		// Completely unknown
 		{"unknown-model", "", false},
 	}
 	for _, c := range cases {
@@ -37,10 +53,13 @@ func TestContextWindowSize(t *testing.T) {
 		want int
 	}{
 		{"claude-sonnet-4-6", 1_000_000},
+		{"claude-sonnet-5", 1_000_000},
 		{"claude-opus-4-6", 1_000_000},
 		{"claude-opus-4-7", 1_000_000},
 		{"claude-opus-4.8", 1_000_000},
+		{"claude-opus-5", 1_000_000},
 		{"claude-sonnet-4-5", 200_000},
+		{"claude-sonnet-4", 200_000},
 		{"claude-opus-4-5", 200_000},
 		{"claude-haiku-4-5", 200_000},
 		{"unknown-model", 200_000},
