@@ -35,7 +35,9 @@ type ListModelsResponse struct {
 
 // ListAvailableModels calls the Kiro upstream ListAvailableModels API.
 // URL: GET https://q.{region}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&maxResults=50
-func ListAvailableModels(ctx context.Context, cred *Credentials, token string, cfg *Config) ([]UpstreamModelInfo, error) {
+// client may be nil (a default 30s client is used); pass a proxied client to
+// preserve IP consistency with the account's streaming requests.
+func ListAvailableModels(ctx context.Context, client *http.Client, cred *Credentials, token string, cfg *Config) ([]UpstreamModelInfo, error) {
 	region := cred.EffectiveAPIRegion(cfg)
 	host := "q." + region + ".amazonaws.com"
 	url := "https://" + host + "/ListAvailableModels?origin=AI_EDITOR&maxResults=50"
@@ -47,10 +49,11 @@ func ListAvailableModels(ctx context.Context, cred *Credentials, token string, c
 		return nil, fmt.Errorf("kiro ListAvailableModels: build request: %w", err)
 	}
 
-	setIDEHeaders(req.Header, host, machineID, cfg, cred, token)
-	req.Header.Set("Accept", "application/json")
+	setListModelsHeaders(req.Header, host, machineID, cfg, cred, token)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("kiro ListAvailableModels: request failed: %w", err)
@@ -75,9 +78,9 @@ func ListAvailableModels(ctx context.Context, cred *Credentials, token string, c
 
 // UsageLimitsResponse mirrors kiro-rs usage_limits::UsageLimitsResponse.
 type UsageLimitsResponse struct {
-	NextDateReset      *float64           `json:"nextDateReset,omitempty"`
-	SubscriptionInfo   *SubscriptionInfo  `json:"subscriptionInfo,omitempty"`
-	UsageBreakdownList []UsageBreakdown   `json:"usageBreakdownList"`
+	NextDateReset      *float64          `json:"nextDateReset,omitempty"`
+	SubscriptionInfo   *SubscriptionInfo `json:"subscriptionInfo,omitempty"`
+	UsageBreakdownList []UsageBreakdown  `json:"usageBreakdownList"`
 }
 
 // SubscriptionInfo holds the subscription tier.
@@ -105,11 +108,11 @@ type UsageBonus struct {
 
 // FreeTrialInfo holds free trial details.
 type FreeTrialInfo struct {
-	CurrentUsage              int64    `json:"currentUsage"`
-	CurrentUsageWithPrecision float64  `json:"currentUsageWithPrecision"`
-	UsageLimit                int64    `json:"usageLimit"`
-	UsageLimitWithPrecision   float64  `json:"usageLimitWithPrecision"`
-	FreeTrialStatus           *string  `json:"freeTrialStatus,omitempty"`
+	CurrentUsage              int64   `json:"currentUsage"`
+	CurrentUsageWithPrecision float64 `json:"currentUsageWithPrecision"`
+	UsageLimit                int64   `json:"usageLimit"`
+	UsageLimitWithPrecision   float64 `json:"usageLimitWithPrecision"`
+	FreeTrialStatus           *string `json:"freeTrialStatus,omitempty"`
 }
 
 // BalanceResult is the computed balance from UsageLimitsResponse.
@@ -181,7 +184,9 @@ func (r *UsageLimitsResponse) ComputeBalance() BalanceResult {
 
 // GetUsageLimits calls the Kiro upstream getUsageLimits API.
 // URL: GET https://q.{region}.amazonaws.com/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST
-func GetUsageLimits(ctx context.Context, cred *Credentials, token string, cfg *Config) (*UsageLimitsResponse, error) {
+// client may be nil (a default 60s client is used); pass a proxied client to
+// preserve IP consistency with the account's streaming requests.
+func GetUsageLimits(ctx context.Context, client *http.Client, cred *Credentials, token string, cfg *Config) (*UsageLimitsResponse, error) {
 	region := cred.EffectiveAPIRegion(cfg)
 	host := "q." + region + ".amazonaws.com"
 	url := "https://" + host + "/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST"
@@ -193,9 +198,11 @@ func GetUsageLimits(ctx context.Context, cred *Credentials, token string, cfg *C
 		return nil, fmt.Errorf("kiro getUsageLimits: build request: %w", err)
 	}
 
-	setIDEHeaders(req.Header, host, machineID, cfg, cred, token)
+	setUsageLimitsHeaders(req.Header, host, machineID, cfg, cred, token)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("kiro getUsageLimits: request failed: %w", err)
@@ -215,24 +222,52 @@ func GetUsageLimits(ctx context.Context, cred *Credentials, token string, cfg *C
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Shared header helpers
+// Header helpers
 // ──────────────────────────────────────────────────────────────────────────────
+//
+// The two upstream GET endpoints use *different* SDK version strings and header
+// sets. These are transcribed verbatim from kiro-rs to preserve the IDE request
+// fingerprint (matters for upstream anti-abuse):
+//   - ListAvailableModels: models_cache.rs fetch_models_from_api
+//   - getUsageLimits:      token_manager.rs get_usage_limits
 
-// setIDEHeaders sets the common IDE-style request headers for Kiro upstream calls.
-func setIDEHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
+// setListModelsHeaders mirrors kiro-rs models_cache.rs.
+// UA: codewhispererstreaming#1.0.34; includes Accept + optout; no amz-sdk-* / Connection.
+func setListModelsHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
 	kiroVer := cfg.kiroVersion()
-	nodeVer := cfg.nodeVersion()
-	sysVer := cfg.systemVersion()
-
-	userAgent := "aws-sdk-js/1.0.34 ua/2.1 os/" + sysVer +
-		" lang/js md/nodejs#" + nodeVer +
+	userAgent := "aws-sdk-js/1.0.34 ua/2.1 os/" + cfg.systemVersion() +
+		" lang/js md/nodejs#" + cfg.nodeVersion() +
 		" api/codewhispererstreaming#1.0.34 m/E KiroIDE-" +
 		kiroVer + "-" + machineID
 	amzUserAgent := "aws-sdk-js/1.0.34 KiroIDE-" + kiroVer + "-" + machineID
 
+	h.Set("Accept", "application/json")
 	h.Set("user-agent", userAgent)
 	h.Set("x-amz-user-agent", amzUserAgent)
 	h.Set("x-amzn-codewhisperer-optout", "true")
+	h.Set("host", host)
+	h.Set("Authorization", "Bearer "+token)
+
+	if cred.ProfileArn != "" {
+		h.Set("x-amzn-kiro-profile-arn", cred.ProfileArn)
+	}
+	if tt := cred.TokenTypeHeader(); tt != "" {
+		h.Set("TokenType", tt)
+	}
+}
+
+// setUsageLimitsHeaders mirrors kiro-rs token_manager.rs get_usage_limits.
+// UA: codewhispererruntime#1.0.0 (m/N,E); includes amz-sdk-* + Connection; no Accept/optout.
+func setUsageLimitsHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
+	kiroVer := cfg.kiroVersion()
+	userAgent := "aws-sdk-js/1.0.0 ua/2.1 os/" + cfg.systemVersion() +
+		" lang/js md/nodejs#" + cfg.nodeVersion() +
+		" api/codewhispererruntime#1.0.0 m/N,E KiroIDE-" +
+		kiroVer + "-" + machineID
+	amzUserAgent := "aws-sdk-js/1.0.0 KiroIDE-" + kiroVer + "-" + machineID
+
+	h.Set("user-agent", userAgent)
+	h.Set("x-amz-user-agent", amzUserAgent)
 	h.Set("host", host)
 	h.Set("amz-sdk-invocation-id", uuid.NewString())
 	h.Set("amz-sdk-request", "attempt=1; max=1")
