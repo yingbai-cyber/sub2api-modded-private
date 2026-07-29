@@ -668,7 +668,6 @@ const exportToCSV = async () => {
       'Rate Multiplier',
       'Billed Cost',
       'Original Cost',
-      'Kiro Credits',
       'First Token (ms)',
       'Duration (ms)',
     ]
@@ -688,7 +687,6 @@ const exportToCSV = async () => {
       log.rate_multiplier,
       (log.actual_cost ?? 0).toFixed(8),
       (log.total_cost ?? 0).toFixed(8),
-      log.kiro_credits ?? '',
       log.first_token_ms ?? '',
       log.duration_ms ?? '',
     ].map(escapeCSVValue))

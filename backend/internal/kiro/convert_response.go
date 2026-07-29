@@ -180,10 +180,12 @@ func buildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	}
 	realInput, cacheRead := splitCacheTokens(finalInput, cacheEmulationRatio)
 
+	// Kiro credits are deliberately omitted from the client-visible usage payload:
+	// they are an internal cost metric for admins only. The consumed amount still
+	// reaches the billing layer via NonStreamResult.Credits.
 	usage := map[string]any{
 		"input_tokens":  realInput,
 		"output_tokens": outputTokens,
-		"kiro_credits":  acc.totalCredits,
 	}
 	if cacheRead > 0 {
 		usage["cache_read_input_tokens"] = cacheRead
