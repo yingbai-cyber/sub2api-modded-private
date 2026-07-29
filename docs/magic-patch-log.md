@@ -1422,6 +1422,81 @@
 
 ---
 
+### 2026-07-29：Kiro 原生直连改按 token 计费 + credits 收紧为仅管理员可见
+**类型**：功能（计费口径变更 + 权限收紧）
+
+**背景**：
+- `IsCreditsBasedBilling()` 原判据只看 `IsKiro() && GetCreditsPerDollar() > 0`，**不区分原生直连与 legacy kiro-rs 代理**，导致原生直连账号也走 credits 换算计费。
+- credits 换算分支把 `InputCost / OutputCost / CacheCreationCost / CacheReadCost` 全部清零，**使模拟缓存比例对计费完全无效**（假缓存拆出的 cache_read 白拆，仅影响 usage 展示）。
+- credits 是上游成本指标，不应暴露给终端用户，但此前有三处泄漏。
+
+**影响文件**：
+- `service/account.go`：新增 `UsesNativeKiroUpstream()`；`IsCreditsBasedBilling()` 加 `&& !UsesNativeKiroUpstream()`；`GetKiroCacheEmulationRatio()` 注释更新（原生直连下影响计费）；新增 import `internal/kiro`
+- `service/domain_constants.go`：`AccountTypeKiro` 注释修正（原生按 token / legacy 按 credits）
+- `handler/dto/types.go`：`KiroCredits` 从 `UsageLog` 移到 `AdminUsageLog`
+- `handler/dto/mappers.go`：`usageLogFromServiceUser` 移除 credits，`UsageLogFromServiceAdmin` 补上
+- `kiro/sse.go`：`generateFinalEvents` 删除 `credits` 形参，usage 不再输出 `kiro_credits`
+- `kiro/stream.go`：调用点同步
+- `kiro/convert_response.go`：非流式 usage 不再输出 `kiro_credits`
+- `server/api_contract_test.go`：用户 usage 契约删 `"kiro_credits": 0`（`require.JSONEq` 严格比对）
+- 新增 `kiro/credits_visibility_test.go`、`service/account_kiro_credits_billing_test.go`
+- 前端：`types/index.ts`（字段移到 `AdminUsageLog`）、`views/user/UsageView.vue`（CSV 去列）、`components/admin/usage/UsageTable.vue`（判据修正）、`Create/EditAccountModal.vue`（原生置灰 + 提交守卫）、`__tests__/EditAccountModal.kiro.spec.ts`（补 3 测试）
+
+**改动摘要**：
+- 原生直连（`kiro.Credentials.UsesNativeUpstream()`）一律按 token 计费，`credits_per_dollar` 仅对 legacy 代理账号生效。判据复用 kiro 包同一函数，与 `forwardKiro` 分派逻辑同源，避免漂移。
+- credits 三处泄漏收口：用户日志 DTO、流式 `message_delta.usage`、非流式 `usage`。**采集链路不受影响**——原生路径 credits 走 `StreamOutcome.Credits` / `NonStreamResult.Credits` 结构化字段，不依赖响应体文本，故直接删掉 `generateFinalEvents` 的 `credits` 形参而非保留后忽略。
+- 管理员 UI 判据修正：原 `billing_mode === 'credits' && kiro_credits > 0`，改 token 计费后 `billing_mode` 落为 `'token'`，管理员也会看不到 credits。现改为 `kiro_credits > 0` 即展示；新增 `isCreditsBilling()` 保留 credits 模式下「单价无意义故替换展示」语义，token 模式下单价与 credits 并列。
+- 前端原生模式禁用 Credits Per Dollar 输入框，提交时加 `!== 'native'` 守卫避免写入无效值。
+
+**与官方差异原因**：
+- 官方无 Kiro 平台与 credits 概念，全部为本地能力。
+
+**rebase 风险点**：
+- `IsCreditsBasedBilling()` 的 `!UsesNativeKiroUpstream()` 条件是本轮核心语义，**勿在冲突合并时退回只判 `GetCreditsPerDollar() > 0`**。
+- `service/account.go` 新增了 `internal/kiro` import（该包零内部依赖，无循环引用；depguard 无限制）。
+- `KiroCredits` 现在只在 `AdminUsageLog`；若 upstream 重构 DTO，勿把它挪回 `UsageLog`（会重新泄漏给用户）。
+- `kiro/sse.go` 的 `generateFinalEvents` 签名少一个参数，upstream 从不触及该包，冲突即误操作。
+- 语义护栏更新：**假缓存现在会影响原生直连账号的计费**（cache_read 走低单价），与此前「仅影响展示」的记录相反；legacy credits 账号仍仅影响展示。
+
+**验证结果**：
+- CI 首轮 golangci-lint 失败（errcheck：`strings.Builder.WriteString` 返回值未检查），修复后 4 job 全绿（test / golangci-lint / frontend / shell）。
+- Build + 部署成功，服务 active、`/health` 200。部署 commit：`09657523d`（rebase 后为 `93fc7a14f`）。
+- 生产实测（账号 4845，`cache_emulation_ratio=0.99`）：`billing_mode=token`、`cache_read_cost` 非零、credits 仍采集。212 请求实际 $19.81，无缓存模拟基线 $170.30（省 88.4%）；同批 credits 160.21 若按 `credits_per_dollar=50` 换算仅 $3.20，即**账单较旧口径涨约 6.2 倍**（口径变更的预期结果，非缺陷）。
+
+---
+
+### 2026-07-29：rebase 到 upstream v0.1.168（2730c1c43 → 5a6143097）
+**类型**：运维适配（upstream 跟进）
+
+**背景**：
+- upstream 新增 99 个提交（v0.1.165 → v0.1.168），含 passkey 认证（含账号密码二次确认）、model plaza（分组维度定价展示）、Kimi K3 支持、`UserRepository`/`APIKeyRepository` 列作用域化重构、OpenAI Live store 容错、Claude Sonnet 5 状态别名、prompt audit 解密失败恢复、msg_id 格式修正等。本地 189 个提交全部重放成功。
+
+**特殊情况：两边一度无共同祖先（本轮新增踩坑点）**：
+- `git merge-base upstream/main main` 返回空，`git rebase upstream/main` 会试图重放 5459 个提交。
+- 根因：两边根提交 tree 完全相同、作者/时间戳一致，**唯一差异是上游提交带 GPG 签名而本地历史无签名**——本 fork 的整条历史是上游的「无签名副本」，故每个 SHA 都不同。本地 tag `v0.1.164` / `v0.1.165` 指向无签名副本提交，`v0.1.166` / `v0.1.168` 是新 fetch 的上游签名提交，进一步印证。
+- 解法：不用裸 `git rebase upstream/main`，改用 **`git rebase --onto upstream/main <本地边界提交> main`**。边界提交用「本地历史中与上游目标 tag 同 message 的 VERSION sync 提交」定位，并以 `git rev-parse <local>^{tree} <upstream>^{tree}` 树哈希相同做交叉验证（本轮：本地 `5ef6091a7` ↔ 上游 `2730c1c43`，树均为 `15ae1aca7`）。
+- 副作用（正向）：rebase 后 main 基于上游签名历史，`merge-base` 恢复正常（现为 `5a6143097`），后续 rebase 可用常规流程。因历史改写，push 需 force。
+
+**冲突文件与合并策略**（3 个提交冲突，均为「两边都保留」型）：
+- `i18n/locales/{zh,en}/common.ts`：上游 `modelPlaza` 与本地 `availableModels` 菜单项并存。
+- `routes/user.go`：保留本地 `/models/available` 分组 + 上游 usage 限流注释（`panelRateLimiter.Heavy()`）。
+- `cmd/server/wire_gen.go`：`ProvideHandlers` 调用同时传 `passkeyHandler`、`modelPlazaHandler`（上游）与 `availableModelHandler`（本地）；按 `handler/wire.go` 已自动合并好的签名顺序排参（passkey 第 14、modelPlaza 第 18、availableModel 第 21）。
+- `service/setting_public.go`（3 处）：settings key 列表、`PublicSettings` 结构体字段、injection 映射——model plaza 三项与 `available_models_enabled` 并存；`ModelPlazaRuntime` 与 `AvailableModelsRuntime` 两个类型 + 两个 getter 并存（注意 fail-closed vs fail-open 语义不同，勿混）。
+- `handler/admin/setting_handler_audit.go` / `setting_handler_update.go`：审计 diff 项与 update 取值块两边都保留。
+- `frontend/utils/featureFlags.ts`：`modelPlaza`（opt-in）与 `availableModels`（opt-out）两个 flag 并存。
+- `frontend/views/admin/SettingsView.vue`（2 处）：表单默认值与提交 payload 两边都保留。
+- `service/gateway_forward_as_responses.go`：**最需小心的一处**。本地补丁把 buffered 分支重构成空流重试循环，上游给两个 handler 加了 `clientToolMapping` 形参。保留本地重试循环结构，并给 `handleResponsesStreamingResponse`(L173) 与 `handleResponsesBufferedStreamingResponse`(L211) **两处**调用补上新参数——自动合并曾把 streaming 分支那处的参数丢掉，需手动补回。
+
+**受保护补丁核对**（rebase 后逐项验证通过）：
+- `internal/kiro` 整包（41 文件）✅；`Forward` 的 `IsKiro()` 分发点（`gateway_forward.go:125`）✅；`kiroTokenProvider` 字段+构造 ✅；`PlatformKiro` 双锚点 ✅；L7b-2 四接缝（refresher 文件 / `ListKiroRefreshCandidates` / `ProvideKiroTokenRefresher`+ProviderSet / `provideCleanup` 形参+实参+Stop）✅；`SensitiveCredentialKeys` 的 `kiro_api_key`+`client_secret` ✅；web_search 过滤两处 ✅；模型映射条件四处 ✅；Kiro 401 冷却 ✅；credits 链路 + usage_logs 列序（58 列，`account_stats_cost, session_id, kiro_credits, created_at`）✅；假缓存 ratio 接线 ✅；L8 前端组件与两 Modal 接缝 ✅；本轮 token 计费改动（`UsesNativeKiroUpstream` / credits 仅管理员 / 响应体无 credits / 前端门控）✅；web2api 路由 ✅；OAuth legacy `detachUpstreamContext`（`openai_gateway_forward.go:790`，无条件 detach）✅。
+- 上游 `86fb4781f` 列作用域化重构只涉及 user/api-key 表，**不影响 usage_logs 的 kiro_credits 列**。
+
+**验证结果**：
+- 本机仅做源码级 rebase、冲突解决与只读核对，**未跑任何 build/test/vet**（遵循 rebase-playbook）。
+- 待 GitHub Actions 验证（CI / Build / Security Scan）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
