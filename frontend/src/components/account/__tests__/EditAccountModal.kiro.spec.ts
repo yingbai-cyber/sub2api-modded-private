@@ -188,5 +188,31 @@ describe('EditAccountModal Kiro native', () => {
     const payload = updateAccountMock.mock.calls[0]?.[1]
     expect(payload?.credentials?.kiro_api_key).toBe('ksk_rotated')
   })
+
+  // 原生直连按 token 计费，credits_per_dollar 不生效，故不应写入 extra
+  it('native 账号剥离 credits_per_dollar（按 token 计费）', async () => {
+    const wrapper = mountModal(buildKiroNativeApiKeyAccount())
+    await submit(wrapper)
+
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.extra).not.toHaveProperty('credits_per_dollar')
+  })
+
+  it('legacy 账号保留 credits_per_dollar（按 credits 换算计费）', async () => {
+    const wrapper = mountModal(buildKiroLegacyAccount())
+    await submit(wrapper)
+
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.extra?.credits_per_dollar).toBe(50)
+  })
+
+  it('native 模式下 Credits Per Dollar 输入框禁用', () => {
+    const wrapper = mountModal(buildKiroNativeApiKeyAccount())
+    const input = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('placeholder')?.includes('credits'))
+    expect(input, 'Credits Per Dollar 输入框应存在').toBeDefined()
+    expect(input?.attributes('disabled')).toBeDefined()
+  })
 })
 

@@ -19,7 +19,7 @@ func TestStreamOmitsCreditsFromClientPayload(t *testing.T) {
 	ctx := NewStreamContext("claude-sonnet-4.5", 1000, false, nil)
 	var wire strings.Builder
 	outcome, err := DriveStream(ctx, &raw, func(ev SseEvent) error {
-		wire.WriteString(ev.ToSSEString())
+		_, _ = wire.WriteString(ev.ToSSEString())
 		return nil
 	})
 	if err != nil {
