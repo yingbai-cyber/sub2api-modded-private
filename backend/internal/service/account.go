@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -1241,14 +1242,28 @@ func (a *Account) GetCreditsPerDollar() float64 {
 	return a.getExtraFloat64("credits_per_dollar")
 }
 
-// IsCreditsBasedBilling 检查是否使用 Kiro credits 计费
+// UsesNativeKiroUpstream 报告该 kiro 账号是否走原生 CodeWhisperer 直连路径。
+// 判据与 forwardKiro 的分派逻辑共用同一来源（kiro.Credentials.UsesNativeUpstream），
+// 避免两处判定漂移。
+func (a *Account) UsesNativeKiroUpstream() bool {
+	if !a.IsKiro() {
+		return false
+	}
+	return kiro.ParseCredentials(a.ID, a.Credentials, a.Extra).UsesNativeUpstream()
+}
+
+// IsCreditsBasedBilling 检查是否使用 Kiro credits 计费。
+// 原生直连账号一律按 token 计费：credits 仅作为管理员可见的消耗指标采集，
+// 不参与 USD 换算，因此 credits_per_dollar 对其无效。仅 legacy kiro-rs
+// 代理账号保留 credits 换算计费。
 func (a *Account) IsCreditsBasedBilling() bool {
-	return a.IsKiro() && a.GetCreditsPerDollar() > 0
+	return a.IsKiro() && a.GetCreditsPerDollar() > 0 && !a.UsesNativeKiroUpstream()
 }
 
 // GetKiroCacheEmulationRatio 获取 Kiro 模拟缓存比例（从 extra 字段，0~1）。
-// 0 表示关闭；越界值 clamp 到 [0,1]。仅影响下游可见 usage 的 token 拆分，
-// 不影响上游 credits 消耗与 credits 计费。
+// 0 表示关闭；越界值 clamp 到 [0,1]。始终影响下游可见 usage 的 token 拆分；
+// 对按 token 计费的原生直连账号，拆出的 cache_read 走更低单价，因此同时影响计费。
+// 对 legacy credits 换算计费的账号，token 费用被 credits 覆盖，故仅影响展示。
 func (a *Account) GetKiroCacheEmulationRatio() float64 {
 	r := a.getExtraFloat64("cache_emulation_ratio")
 	if r < 0 {

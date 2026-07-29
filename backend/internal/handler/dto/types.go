@@ -501,7 +501,6 @@ type UsageLog struct {
 	OutputCost                float64 `json:"output_cost"`
 	CacheCreationCost         float64 `json:"cache_creation_cost"`
 	CacheReadCost             float64 `json:"cache_read_cost"`
-	KiroCredits               float64 `json:"kiro_credits"`
 	TotalCost                 float64 `json:"total_cost"`
 	ActualCost                float64 `json:"actual_cost"`
 	RateMultiplier            float64 `json:"rate_multiplier"`
@@ -568,6 +567,10 @@ type AdminUsageLog struct {
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier"`
 	// AccountStatsCost 自定义定价规则计算的账号统计费用（nil 表示使用默认公式）
 	AccountStatsCost *float64 `json:"account_stats_cost,omitempty"`
+
+	// KiroCredits Kiro 上游 credits 消耗（仅管理员可见的成本指标）。
+	// 原生直连账号按 token 计费，此字段不参与用户计费，仅用于成本观测。
+	KiroCredits float64 `json:"kiro_credits"`
 
 	// IPAddress 用户请求 IP
 	IPAddress *string `json:"ip_address,omitempty"`

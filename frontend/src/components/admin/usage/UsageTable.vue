@@ -410,7 +410,7 @@
                 <span class="font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
               </div>
             </template>
-            <template v-else-if="hasKiroCredits(tooltipData)">
+            <template v-else-if="isCreditsBilling(tooltipData)">
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
                 <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
@@ -419,6 +419,14 @@
             <div v-else class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
               <span class="font-medium text-sky-300">${{ tooltipData?.total_cost?.toFixed(6) || '0.000000' }}</span>
+            </div>
+            <!-- token 计费的 Kiro 流量：单价与 credits 成本指标并列展示 -->
+            <div
+              v-if="hasKiroCredits(tooltipData) && !isCreditsBilling(tooltipData)"
+              class="flex items-center justify-between gap-4"
+            >
+              <span class="text-gray-400">{{ t('usage.kiroCredits') }}</span>
+              <span class="font-medium text-cyan-300">{{ formatKiroCredits(tooltipData?.kiro_credits) }}</span>
             </div>
             <div v-if="tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
@@ -517,8 +525,15 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
 }
 
 
+// credits 消耗对两种计费模式都要展示：原生直连账号按 token 计费但仍上报 credits，
+// 此时 credits 是纯成本指标；legacy 代理账号按 credits 换算计费。
 function hasKiroCredits(row: AdminUsageLog | null | undefined): boolean {
-  return row?.billing_mode === BILLING_MODE_CREDITS && (row.kiro_credits ?? 0) > 0
+  return (row?.kiro_credits ?? 0) > 0
+}
+
+// credits 换算计费模式：单价（total_cost）由 credits 推导而来，展示单价无意义。
+function isCreditsBilling(row: AdminUsageLog | null | undefined): boolean {
+  return row?.billing_mode === BILLING_MODE_CREDITS
 }
 
 function formatKiroCredits(credits: number | null | undefined): string {
