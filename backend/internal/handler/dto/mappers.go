@@ -657,7 +657,6 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		OutputCost:                l.OutputCost,
 		CacheCreationCost:         l.CacheCreationCost,
 		CacheReadCost:             l.CacheReadCost,
-		KiroCredits:               l.KiroCredits,
 		TotalCost:                 l.TotalCost,
 		ActualCost:                l.ActualCost,
 		RateMultiplier:            l.RateMultiplier,
@@ -720,6 +719,7 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 		BillingTier:           l.BillingTier,
 		AccountRateMultiplier: l.AccountRateMultiplier,
 		AccountStatsCost:      l.AccountStatsCost,
+		KiroCredits:           l.KiroCredits,
 		IPAddress:             l.IPAddress,
 		Account:               AccountSummaryFromService(l.Account),
 	}

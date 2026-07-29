@@ -237,9 +237,17 @@
             step="0.01"
             min="0"
             class="input"
+            :disabled="editKiroMode === 'native'"
+            :class="{ 'cursor-not-allowed opacity-50': editKiroMode === 'native' }"
             placeholder="1 USD = ? credits（如 50）"
           />
-          <p class="input-hint">1 USD 对应多少 Kiro credits，用于计费换算</p>
+          <p class="input-hint">
+            {{
+              editKiroMode === 'native'
+                ? '原生直连按 token 计费，此项不生效（credits 仅作管理员可见的成本指标采集）'
+                : '1 USD 对应多少 Kiro credits，用于计费换算'
+            }}
+          </p>
         </div>
 
         <!-- Cache Emulation Ratio (kiro only) -->
@@ -256,7 +264,9 @@
           />
           <p class="input-hint">
             Kiro 上游无缓存信息；开启后按比例将 input tokens 拆为
-            cache_read_input_tokens 展示给下游（仅影响 usage 展示，不影响上游 credits 消耗）
+            cache_read_input_tokens 展示给下游。<template v-if="editKiroMode === 'native'">原生直连按
+            token 计费，拆出的 cache_read 走更低单价，因此会降低计费金额。</template><template v-else>
+            此模式按 credits 换算计费，故仅影响 usage 展示。</template>
           </p>
         </div>
 
@@ -5113,7 +5123,8 @@ const handleSubmit = async () => {
     if (props.account.platform === 'anthropic' && props.account.type === 'kiro') {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
-      if (editKiroCreditsPerDollar.value > 0) {
+      // 原生直连按 token 计费，清除无效的 credits_per_dollar
+      if (editKiroMode.value !== 'native' && editKiroCreditsPerDollar.value > 0) {
         newExtra.credits_per_dollar = editKiroCreditsPerDollar.value
       } else {
         delete newExtra.credits_per_dollar

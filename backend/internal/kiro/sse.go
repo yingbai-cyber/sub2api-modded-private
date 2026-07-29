@@ -159,7 +159,11 @@ func (m *SseStateManager) handleContentBlockStop(index int) (SseEvent, bool) {
 
 // generateFinalEvents closes open blocks then emits message_delta + message_stop.
 // cacheReadTokens > 0 adds an emulated cache_read_input_tokens usage field.
-func (m *SseStateManager) generateFinalEvents(inputTokens, cacheReadTokens, outputTokens int, credits float64) []SseEvent {
+//
+// Kiro credits are deliberately NOT exposed in the client-visible usage payload:
+// they are an internal cost metric for admins only. The consumed amount still
+// reaches the billing layer via StreamContext.TotalCredits -> StreamOutcome.Credits.
+func (m *SseStateManager) generateFinalEvents(inputTokens, cacheReadTokens, outputTokens int) []SseEvent {
 	var events []SseEvent
 	for idx, b := range m.activeBlocks {
 		if b.started && !b.stopped {
@@ -174,7 +178,6 @@ func (m *SseStateManager) generateFinalEvents(inputTokens, cacheReadTokens, outp
 		usage := map[string]any{
 			"input_tokens":  inputTokens,
 			"output_tokens": outputTokens,
-			"kiro_credits":  credits,
 		}
 		if cacheReadTokens > 0 {
 			usage["cache_read_input_tokens"] = cacheReadTokens
