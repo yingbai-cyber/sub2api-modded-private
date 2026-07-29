@@ -1719,7 +1719,6 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
-  kiro_credits?: number
 
   created_at: string
 
@@ -1749,6 +1748,9 @@ export interface AdminUsageLog extends UsageLog {
   // 渠道 ID 和计费等级（仅管理员可见）
   channel_id?: number | null
   billing_tier?: string | null
+
+  // Kiro 上游 credits 消耗（仅管理员可见的成本指标，不参与用户计费）
+  kiro_credits?: number
 
   // 最小账号信息（仅管理员接口返回）
   account?: UsageLogAccountSummary

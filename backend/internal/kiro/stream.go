@@ -528,6 +528,6 @@ func (c *StreamContext) GenerateFinalEvents() []SseEvent {
 		finalInputTokens = c.ContextInputTokens
 	}
 	realInput, cacheRead := splitCacheTokens(finalInputTokens, c.CacheEmulationRatio)
-	events = append(events, c.State.generateFinalEvents(realInput, cacheRead, c.OutputTokens, c.TotalCredits)...)
+	events = append(events, c.State.generateFinalEvents(realInput, cacheRead, c.OutputTokens)...)
 	return events
 }
