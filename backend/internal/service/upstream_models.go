@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 )
 
 const upstreamModelsBodyLimit int64 = 8 << 20
@@ -81,8 +84,13 @@ func (s *AccountTestService) FetchUpstreamSupportedModels(ctx context.Context, a
 		return nil, newUpstreamModelSyncConfigError("Account is required", nil)
 	}
 
-	// Kiro accounts: return the static model list (no upstream /models endpoint).
+	// Kiro accounts: fetch the live model list from the upstream ListAvailableModels
+	// API (mirrors kiro-rs models_cache). Falls back to the static list if the
+	// upstream call is unavailable (e.g. legacy kiro-rs proxy accounts, or errors).
 	if account.IsKiro() {
+		if models, err := s.fetchKiroUpstreamModels(ctx, account); err == nil && len(models) > 0 {
+			return models, nil
+		}
 		return kiroSupportedModelIDs(), nil
 	}
 
@@ -450,6 +458,64 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 	models := make([]string, 0, len(modelsResp.Models))
 	for modelID := range modelsResp.Models {
 		models = append(models, strings.TrimSpace(modelID))
+	}
+	return dedupeAndSortModelIDs(models), nil
+}
+
+// fetchKiroUpstreamModels fetches the live model list from the Kiro upstream
+// ListAvailableModels API for native accounts. Legacy kiro-rs proxy accounts
+// (base_url + api_key) have no native token, so the caller falls back to the
+// static list.
+func (s *AccountTestService) fetchKiroUpstreamModels(ctx context.Context, account *Account) ([]string, error) {
+	if s.kiroTokenProvider == nil {
+		return nil, newUpstreamModelSyncConfigError("Kiro token provider is not configured", nil)
+	}
+
+	cred := kiro.ParseCredentials(account.ID, account.Credentials, account.Extra)
+	if !cred.UsesNativeUpstream() {
+		// Legacy kiro-rs proxy account: no native upstream to query.
+		return nil, newUpstreamModelSyncConfigError("Kiro account does not use native upstream", nil)
+	}
+
+	resolvedCred, token, err := s.kiroTokenProvider.Resolve(ctx, account)
+	if err != nil {
+		return nil, newUpstreamModelSyncUpstreamError("Failed to resolve Kiro token", err)
+	}
+
+	// Route through the account proxy to keep source IP consistent (fail closed).
+	var client *http.Client
+	if proxyURL := upstreamModelsProxyURL(account); proxyURL != "" {
+		client, err = httpclient.GetClient(httpclient.Options{
+			ProxyURL: proxyURL,
+			Timeout:  30 * time.Second,
+		})
+		if err != nil {
+			return nil, newUpstreamModelSyncConfigError("Failed to configure Kiro proxy client", err)
+		}
+	}
+
+	upstreamModels, err := kiro.ListAvailableModels(ctx, client, resolvedCred, token, kiro.DefaultConfig())
+	if err != nil {
+		return nil, newUpstreamModelSyncUpstreamError("Failed to fetch Kiro available models", err)
+	}
+	if len(upstreamModels) == 0 {
+		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
+	}
+
+	// Map raw upstream model IDs (e.g. claude-sonnet-4-5) to the gateway's
+	// canonical exposed IDs (e.g. claude-sonnet-4.5) so the whitelist matches
+	// what MapModel accepts on the request path.
+	models := make([]string, 0, len(upstreamModels))
+	for _, m := range upstreamModels {
+		id := strings.TrimSpace(m.ModelID)
+		if id == "" {
+			continue
+		}
+		if mapped, ok := kiro.MapModel(id); ok {
+			models = append(models, mapped)
+		} else {
+			models = append(models, id)
+		}
 	}
 	return dedupeAndSortModelIDs(models), nil
 }

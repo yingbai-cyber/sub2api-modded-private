@@ -1320,7 +1320,20 @@ export interface AccountUsageInfo {
   // 机器可读错误码：forbidden / unauthenticated / rate_limited / network_error
   error_code?: string
 
+  // Kiro 原生余量（getUsageLimits）
+  kiro_balance?: KiroBalanceInfo | null
+
   error?: string            // usage 获取失败时的错误信息
+}
+
+// Kiro 账号余量信息（后端 getUsageLimits 计算结果）
+export interface KiroBalanceInfo {
+  subscription_title: string
+  current_usage: number
+  usage_limit: number
+  remaining: number
+  usage_percentage: number
+  next_reset_at?: number
 }
 
 // OpenAI Codex usage snapshot (from response headers)
