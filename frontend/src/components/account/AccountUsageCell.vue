@@ -453,6 +453,58 @@
       </div>
     </template>
 
+    <!-- Kiro native accounts: upstream credits balance (getUsageLimits) -->
+    <template v-else-if="account.platform === 'anthropic' && account.type === 'kiro'">
+      <!-- Loading state -->
+      <div v-if="loading" class="space-y-1.5">
+        <div class="flex items-center gap-1">
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div v-else-if="error" class="text-xs text-red-500">
+        {{ error }}
+      </div>
+
+      <!-- Balance data -->
+      <div v-else-if="kiroBalance" class="space-y-1">
+        <!-- Subscription tier badge -->
+        <div v-if="kiroBalance.subscription_title" class="mb-0.5">
+          <span class="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+            {{ kiroBalance.subscription_title }}
+          </span>
+        </div>
+        <!-- Credits usage bar -->
+        <UsageProgressBar
+          v-if="kiroUsageBar"
+          label="credits"
+          :utilization="kiroUsageBar.utilization"
+          :resets-at="kiroUsageBar.resetsAt"
+          :show-now-when-idle="true"
+          color="indigo"
+        />
+        <!-- Remaining / limit text -->
+        <div class="text-[9px] text-gray-500 dark:text-gray-400">
+          {{ kiroRemainingLabel }}
+        </div>
+        <!-- Degraded error (partial response) -->
+        <div v-if="usageInfo?.error" class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]" :title="usageInfo.error">
+          {{ usageErrorLabel }}
+        </div>
+      </div>
+
+      <!-- Degraded: no balance but has error -->
+      <div v-else-if="usageInfo?.error" class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]" :title="usageInfo.error">
+        {{ usageErrorLabel }}
+      </div>
+
+      <!-- No data yet -->
+      <div v-else class="text-xs text-gray-400">-</div>
+    </template>
+
     <!-- Gemini platform: show quota + local usage window -->
     <template v-else-if="account.platform === 'gemini'">
       <!-- Auth Type + Tier Badge (first line) -->
@@ -731,12 +783,18 @@ const showUsageWindows = computed(() => {
   ) {
     return true
   }
+  // Kiro native accounts: fetch balance via upstream getUsageLimits.
+  if (props.account.platform === 'anthropic' && props.account.type === 'kiro') return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
 const shouldFetchUsage = computed(() => {
   if (props.account.platform === 'anthropic') {
-    return props.account.type === 'oauth' || props.account.type === 'setup-token'
+    return (
+      props.account.type === 'oauth' ||
+      props.account.type === 'setup-token' ||
+      props.account.type === 'kiro'
+    )
   }
   if (props.account.platform === 'gemini') {
     return true
@@ -1305,6 +1363,27 @@ const validationURL = computed(() => usageInfo.value?.validation_url || '')
 
 // 需要重新授权（401）
 const needsReauth = computed(() => !!usageInfo.value?.needs_reauth)
+
+// ===== Kiro 原生余量 =====
+const kiroBalance = computed(() => usageInfo.value?.kiro_balance ?? null)
+
+// Kiro 余量进度条：以已用百分比(0-100)驱动 UsageProgressBar
+const kiroUsageBar = computed(() => {
+  const bal = kiroBalance.value
+  if (!bal) return null
+  return {
+    utilization: Math.max(0, Math.min(100, bal.usage_percentage)),
+    resetsAt: bal.next_reset_at ? new Date(bal.next_reset_at * 1000).toISOString() : null
+  }
+})
+
+// Kiro 剩余额度文案（保留一位小数，避免长尾浮点）
+const kiroRemainingLabel = computed(() => {
+  const bal = kiroBalance.value
+  if (!bal) return ''
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+  return `${fmt(bal.remaining)} / ${fmt(bal.usage_limit)}`
+})
 
 // 降级错误标签（rate_limited / network_error）
 const usageErrorLabel = computed(() => {
