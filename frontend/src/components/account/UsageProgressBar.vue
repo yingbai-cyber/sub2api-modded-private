@@ -25,8 +25,44 @@
       </div>
     </div>
 
-    <!-- Progress bar row -->
-    <div class="flex items-center gap-1">
+    <!-- Wide variant: single-bar layout (e.g. Kiro credits). The bar stretches to
+         fill the cell and the secondary metadata moves to its own row, so nothing
+         competes for space on the bar line. -->
+    <template v-if="variant === 'wide'">
+      <div class="flex items-center gap-2">
+        <span
+          :class="['shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none', labelClass]"
+        >
+          {{ label }}
+        </span>
+
+        <div class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+          <div
+            :class="['h-full rounded-full transition-all duration-300', barClass]"
+            :style="{ width: barWidth }"
+          ></div>
+        </div>
+
+        <span :class="['shrink-0 text-right text-[10px] font-semibold tabular-nums', textClass]">
+          {{ displayPercent }}
+        </span>
+      </div>
+
+      <div
+        v-if="footnote || shouldShowResetTime"
+        class="mt-1 flex items-baseline justify-between gap-2 text-[10px] text-gray-500 dark:text-gray-400"
+      >
+        <span v-if="footnote" class="truncate tabular-nums" :title="footnote">{{ footnote }}</span>
+        <span v-else></span>
+        <span v-if="shouldShowResetTime" class="shrink-0 tabular-nums text-gray-400 dark:text-gray-500">
+          {{ formatResetTime }}
+        </span>
+      </div>
+    </template>
+
+    <!-- Default variant: compact fixed widths so stacked bars (5h / 7d / …) stay
+         vertically aligned across rows. -->
+    <div v-else class="flex items-center gap-1">
       <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
       <span :class="[labelSizeClass, labelClass]">
         {{ label }}
@@ -71,8 +107,17 @@ const props = withDefaults(
     remainingCapacity?: boolean
     /** fixed: 定宽居中徽章（账号页纵向对齐）；auto: 限宽截断左对齐（监控页组合标签） */
     labelWidth?: 'fixed' | 'auto'
+    // 'wide' 用于单条进度条场景（Kiro credits）：进度条撑满宽度，重置时间与
+    // footnote 下移到第二行。默认 'compact' 保持多条堆叠时的固定宽度对齐。
+    variant?: 'compact' | 'wide'
+    // 仅 wide 变体渲染：与重置时间同行的补充说明（如剩余额度 / 上限）。
+    footnote?: string | null
   }>(),
-  { labelWidth: 'fixed' }
+  {
+    labelWidth: 'fixed',
+    variant: 'compact',
+    footnote: null,
+  }
 )
 
 const { t } = useI18n()
