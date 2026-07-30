@@ -146,4 +146,67 @@ describe('UsageProgressBar', () => {
     expect(wrapper.get('.h-1\\.5 > div').attributes('style')).toContain('width: 100%')
     expect(wrapper.get('.h-1\\.5 > div').classes()).toContain('bg-red-500')
   })
+
+  describe('wide 变体（Kiro 单条 credits）', () => {
+    it('进度条撑满宽度而非固定 32px', () => {
+      const wrapper = mount(UsageProgressBar, {
+        props: {
+          label: 'credits',
+          utilization: 14,
+          variant: 'wide',
+          color: 'indigo'
+        }
+      })
+
+      const track = wrapper.get('.h-1\\.5')
+      expect(track.classes()).toContain('flex-1')
+      expect(track.classes()).not.toContain('w-8')
+    })
+
+    it('footnote 与重置时间同行渲染，不再各占一行', () => {
+      const wrapper = mount(UsageProgressBar, {
+        props: {
+          label: 'credits',
+          utilization: 14,
+          resetsAt: '2026-03-18T21:00:00Z',
+          footnote: '8602.9 / 10000',
+          variant: 'wide',
+          color: 'indigo'
+        }
+      })
+
+      const meta = wrapper.get('.justify-between')
+      expect(meta.text()).toContain('8602.9 / 10000')
+      expect(meta.text()).toContain('1d 21h')
+    })
+
+    it('未传 footnote 时仍渲染重置时间', () => {
+      const wrapper = mount(UsageProgressBar, {
+        props: {
+          label: 'credits',
+          utilization: 50,
+          resetsAt: '2026-03-17T02:30:00Z',
+          variant: 'wide',
+          color: 'indigo'
+        }
+      })
+
+      expect(wrapper.text()).toContain('2h 30m')
+      expect(wrapper.text()).toContain('50%')
+    })
+
+    it('默认变体保持固定宽度，不受 wide 改动影响', () => {
+      const wrapper = mount(UsageProgressBar, {
+        props: {
+          label: '5h',
+          utilization: 14,
+          color: 'indigo'
+        }
+      })
+
+      const track = wrapper.get('.h-1\\.5')
+      expect(track.classes()).toContain('w-8')
+      expect(track.classes()).not.toContain('flex-1')
+    })
+  })
 })
