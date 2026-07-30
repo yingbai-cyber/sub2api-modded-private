@@ -50,8 +50,6 @@ vi.mock('vue-i18n', async () => {
 import EditAccountModal from '../EditAccountModal.vue'
 import KiroNativeCredentials from '../KiroNativeCredentials.vue'
 
-const LONG_RT = 'r'.repeat(120)
-
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
   props: { show: { type: Boolean, default: false } },
