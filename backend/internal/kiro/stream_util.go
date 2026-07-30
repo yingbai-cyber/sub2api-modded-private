@@ -20,6 +20,12 @@ func computeCumulativeDelta(chunk, previous string) string {
 		return ""
 	}
 	overlap := longestSuffixPrefixOverlap(previous, chunk)
+	// overlap == len(chunk) means chunk is wholly contained in previous's suffix
+	// (e.g. previous="abcXYZ", chunk="XYZ"): there is no new text, and indexing
+	// chunk[overlap] would panic with index out of range.
+	if overlap >= len(chunk) {
+		return ""
+	}
 	if overlap > 0 && utf8.RuneStart(chunk[overlap]) {
 		return chunk[overlap:]
 	}
