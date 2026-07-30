@@ -278,4 +278,13 @@ jobs:
           {"commit":"${GITHUB_SHA}","sha256":"${sha256}","deployed_at":"${deployed_at}","health_code":"${code}","npm_health_code":"${npm_code}","backup":"${backup_path}"}
           EOF
           rm -f "$tmp_path"
+
+          # Prune old rollback backups. Each binary is ~110MB and this step never
+          # pruned before, so 45 of them had accumulated to 4.5G on a 43G disk.
+          # The in-run rollback above only ever uses this run's own backup; older
+          # ones are a manual escape hatch, so keeping the newest few is enough.
+          # Runs after the health gate so a failed deploy keeps every backup.
+          ls -1t /root/sub2api-modded/bin/sub2api.bak.* 2>/dev/null \
+            | tail -n +4 \
+            | xargs -r rm -f
           REMOTE
