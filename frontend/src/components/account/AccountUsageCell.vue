@@ -446,13 +446,15 @@
 
     <!-- Kiro native accounts: upstream credits balance (getUsageLimits) -->
     <template v-else-if="account.platform === 'anthropic' && account.type === 'kiro'">
-      <!-- Loading state -->
-      <div v-if="loading" class="space-y-1.5">
-        <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+      <!-- Loading state: mirrors the wide single-bar layout below -->
+      <div v-if="loading" class="min-w-[168px] space-y-1.5">
+        <div class="h-4 w-[72px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        <div class="flex items-center gap-2">
+          <div class="h-4 w-[46px] shrink-0 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 min-w-0 flex-1 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-3 w-[28px] shrink-0 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
         </div>
+        <div class="h-3 w-[96px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
       </div>
 
       <!-- Error state -->
@@ -461,24 +463,27 @@
       </div>
 
       <!-- Balance data -->
-      <div v-else-if="kiroBalance" class="space-y-1">
+      <div v-else-if="kiroBalance" class="min-w-[168px] space-y-1.5">
         <!-- Subscription tier badge -->
-        <div v-if="kiroBalance.subscription_title" class="mb-0.5">
-          <span class="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+        <div v-if="kiroBalance.subscription_title">
+          <span class="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
             {{ kiroBalance.subscription_title }}
           </span>
         </div>
-        <!-- Credits usage bar -->
+        <!-- Credits usage bar: single bar, so use the wide variant and let it own
+             the remaining/limit footnote instead of stacking a third row. -->
         <UsageProgressBar
           v-if="kiroUsageBar"
           label="credits"
+          variant="wide"
           :utilization="kiroUsageBar.utilization"
           :resets-at="kiroUsageBar.resetsAt"
+          :footnote="kiroRemainingLabel"
           :show-now-when-idle="true"
           color="indigo"
         />
-        <!-- Remaining / limit text -->
-        <div class="text-[9px] text-gray-500 dark:text-gray-400">
+        <!-- Remaining / limit text (no bar rendered: keep it standalone) -->
+        <div v-else class="text-[10px] text-gray-500 dark:text-gray-400">
           {{ kiroRemainingLabel }}
         </div>
         <!-- Degraded error (partial response) -->
