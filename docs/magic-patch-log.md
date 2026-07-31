@@ -1497,6 +1497,31 @@
 
 ---
 
+### 2026-07-31：rebase 到 upstream v0.1.169（5a6143097 → 7ceabb3fd）
+**类型**：运维适配（upstream 跟进）
+
+**背景**：
+- upstream 新增 37 个提交（v0.1.168 → v0.1.169）。本地 194 个提交全部重放，**零冲突**。
+- 上游内容：新增 `service/upstream_path_guard.go`（收紧上游 URL 路径片段校验，含 160 行测试）、glm-5.2 兜底定价（阻止 glm-5 子串误匹配）、GPT-5.6 Luna/Terra 费率更新、Anthropic count_tokens 剥离 max_tokens、passkey 部署说明、订阅到期文案与 `utils/subscriptionQuota.ts`、Qwen3Guard 辅助字段、SMTP 标准化、composite 按平台展示模型、deploy 侧 `no-new-privileges` 加固 + pricing fallback 资源打包。
+
+**零冲突原因（与前两轮对比）**：
+- 上游 72 个改动文件里，只有 1 个与本地补丁高危清单重叠：`repository/account_repo.go` 仅 +1 行。
+- 该行给**共享的** `ListOAuthRefreshCandidatePage` 加 `AND schedulable = TRUE`（上游 `ac90355a8` skip unschedulable token refresh candidates），与本地 `ListKiroRefreshCandidates` 是**两个独立函数**，故未冲突——这正是 L7b-2「不并入共享候选 SQL」薄接缝设计的收益体现。
+- `internal/kiro` 整包、两个 forward 文件、`gateway_usage_billing.go`、`account.go`、`ratelimit_service.go`、DTO、wire 均未被上游触及。
+
+**受保护补丁核对**（rebase 后逐项验证通过）：
+- `internal/kiro` 整包（42 文件）✅；`Forward` 的 `IsKiro()` 分发点（`gateway_forward.go:125`）✅；`kiroTokenProvider` 字段+构造 ✅；`PlatformKiro` 双锚点 ✅；L7b-2 四接缝 ✅；`SensitiveCredentialKeys` 的 kiro 键 ✅；web_search 过滤两处 ✅；模型映射条件四处 ✅；Kiro 401 冷却 ✅；credits 链路 + usage_logs 列序（`account_stats_cost, session_id, kiro_credits, created_at`）✅；web2api 路由 ✅；图片尺寸分级（`openai_images.go:578`）✅；OAuth legacy `detachUpstreamContext` ✅；Responses/CC 空流重试两处 ✅。
+- 近几轮新增改动同样存活：token 计费 `UsesNativeKiroUpstream` ✅；`computeCumulativeDelta` 越界修复 ✅；`UsageProgressBar` wide 变体 ✅；`build.yml` 备份 prune 逻辑 ✅。
+
+**遗留待议（非阻塞）**：
+- 上游给共享 OAuth 刷新候选加了 `schedulable = TRUE`，但本地 `ListKiroRefreshCandidates` 仍只过滤 `deleted_at / type='kiro' / status=active`，**不含 schedulable**。语义差异：被标记为不可调度的 kiro 账号仍会被后台刷新 token。是否对齐需产品决策（对齐可省无用刷新；不对齐可保证临时下线账号的凭证不过期）。
+
+**验证结果**：
+- 本机仅做源码级 rebase 与只读核对，**未跑任何 build/test/vet**（遵循 rebase-playbook）。
+- 待 GitHub Actions 验证（CI / Build / Security Scan）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
