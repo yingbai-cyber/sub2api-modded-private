@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/kiro"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/google/uuid"
 )
 
@@ -36,6 +37,14 @@ type kiroRefreshCandidateLister interface {
 	ListKiroRefreshCandidates(ctx context.Context) ([]Account, error)
 }
 
+// kiroAccountErrorMarker is the second narrow contract, kept separate from
+// kiroRefreshCandidateLister on purpose: a test stub that implements only the
+// lister keeps working and merely loses error marking, instead of failing the
+// combined assertion and rendering the whole refresher inert.
+type kiroAccountErrorMarker interface {
+	SetError(ctx context.Context, id int64, errorMsg string) error
+}
+
 // KiroTokenRefresher proactively refreshes native Kiro OAuth credentials
 // (social/idc/external_idp) before they expire. It is keyed on account
 // type='kiro' (via the repository query), independent of account.Platform, so it
@@ -50,6 +59,7 @@ type kiroRefreshCandidateLister interface {
 // invariant (all Kiro logic stays in kiro-owned files).
 type KiroTokenRefresher struct {
 	lister        kiroRefreshCandidateLister
+	errorMarker   kiroAccountErrorMarker
 	refreshWindow time.Duration
 	interval      time.Duration
 	enabled       bool
@@ -78,6 +88,9 @@ func NewKiroTokenRefresher(accountRepo AccountRepository, cfg *config.Config) *K
 	}
 	if lister, ok := accountRepo.(kiroRefreshCandidateLister); ok {
 		r.lister = lister
+	}
+	if marker, ok := accountRepo.(kiroAccountErrorMarker); ok {
+		r.errorMarker = marker
 	}
 	provider := NewKiroTokenProvider(accountRepo)
 	r.refreshFn = provider.refreshAndPersist
@@ -175,6 +188,13 @@ func (s *KiroTokenRefresher) runOnce() {
 	}
 
 	var refreshed, skipped, failed, invalid int
+	// attempted counts accounts that actually reached the refresh call this
+	// cycle; terminalIDs collects those whose refresh_token was rejected
+	// outright. Marking is deferred to after the loop so the containment check
+	// below can see the whole cycle before mutating any account state.
+	attempted := 0
+	terminalIDs := make([]int64, 0, len(accounts))
+	terminalMsgs := make(map[int64]string, len(accounts))
 	for i := range accounts {
 		if ctx.Err() != nil {
 			log.Printf("[KiroTokenRefresh] cycle stopped: %v", ctx.Err())
@@ -203,9 +223,12 @@ func (s *KiroTokenRefresher) runOnce() {
 			continue
 		}
 
+		attempted++
 		if _, err := s.refreshFn(ctx, account, cred); err != nil {
 			if errors.Is(err, kiro.ErrRefreshTokenInvalid) {
 				invalid++
+				terminalIDs = append(terminalIDs, account.ID)
+				terminalMsgs[account.ID] = logredact.RedactText(err.Error())
 				log.Printf("[KiroTokenRefresh] account=%d refresh token permanently invalid", account.ID)
 			} else {
 				failed++
@@ -216,8 +239,48 @@ func (s *KiroTokenRefresher) runOnce() {
 		refreshed++
 	}
 
+	s.markTerminalAccounts(terminalIDs, terminalMsgs, attempted)
+
 	if refreshed > 0 || failed > 0 || invalid > 0 {
 		log.Printf("[KiroTokenRefresh] cycle done: refreshed=%d skipped=%d failed=%d invalid=%d total=%d",
 			refreshed, skipped, failed, invalid, len(accounts))
+	}
+}
+
+// markTerminalAccounts sets status=error on accounts whose refresh_token was
+// rejected outright, so the candidate query (status=active) stops retrying them
+// every cycle and the admin UI surfaces that re-auth is required.
+//
+// Containment: when every account that attempted a refresh failed terminally
+// and more than one did, a provider-side auth outage is the likelier
+// explanation than all credentials dying at once, so nothing is marked and the
+// next cycle re-evaluates. A lone terminal failure is marked — with only one
+// candidate there is no shared signal to tell the two cases apart, and leaving
+// it unmarked is what caused the endless retry loop.
+// The cycle context is deliberately not taken: marking must survive a cycle
+// context that has already been cancelled or timed out.
+func (s *KiroTokenRefresher) markTerminalAccounts(ids []int64, msgs map[int64]string, attempted int) {
+	if len(ids) == 0 || s.errorMarker == nil {
+		return
+	}
+	if attempted > 1 && len(ids) == attempted {
+		log.Printf("[KiroTokenRefresh] all %d attempted refreshes failed terminally; suspecting upstream auth outage, not marking accounts", attempted)
+		return
+	}
+	for _, id := range ids {
+		msg := msgs[id]
+		if msg == "" {
+			msg = "Kiro refresh token permanently invalid"
+		}
+		// Detached context: the cycle context may already be cancelled/expired by
+		// the time marking runs, and the mark must still land.
+		markCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := s.errorMarker.SetError(markCtx, id, "Kiro token refresh failed (non-retryable): "+msg)
+		cancel()
+		if err != nil {
+			log.Printf("[KiroTokenRefresh] account=%d mark error failed: %v", id, err)
+			continue
+		}
+		log.Printf("[KiroTokenRefresh] account=%d marked error: re-auth required", id)
 	}
 }
