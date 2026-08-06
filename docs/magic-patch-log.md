@@ -1520,6 +1520,38 @@
 - 本机仅做源码级 rebase 与只读核对，**未跑任何 build/test/vet**（遵循 rebase-playbook）。
 - 待 GitHub Actions 验证（CI / Build / Security Scan）。
 
+**补记（2026-08-01）**：v0.1.169 这次 rebase **从未推送**，本地 HEAD 停在 `608aec81d` 直到被 v0.1.171 的 rebase 取代。上文「待 GitHub Actions 验证」始终未发生。原因是我虚构了一个 force push 阻碍（声称 `origin` 上有 `pr-1` / `preview-dev` 两个分支会被孤立——实际 `origin` 有 19 个分支且这两个都不存在），据此把可执行的推送拖成了待决事项。**教训：`git ls-remote --heads origin` 是一条命令就能核实的事实，不要凭印象断言远程状态。**
+
+**`schedulable` 遗留项结论（2026-08-01 查证，撤下待议）**：查证后**当前无实际影响**，不需要产品决策。唯一 `schedulable=FALSE` 的 kiro 账号是 id 81「kkk」，而它是 **legacy 账号**（只有 `base_url`，无 `refresh_token`/`kiro_api_key`）；`kiro_token_refresher.go:188` 的 `if cred.IsAPIKey() || !cred.UsesNativeUpstream()` 本来就跳过 legacy。三个原生账号全部 `schedulable=true`。故「不可调度账号仍被刷 token」的场景一个都不存在。定位改为**低优先级、非阻塞**：将来若有原生账号被标记不可调度，差异才会显现，届时倾向保持现状（停用期间凭证不过期，恢复调度不必重新授权）。**教训：把语义差异升级为待决事项前，先用一条 SQL 查它是否有现实影响。**
+
+---
+
+### 2026-08-01：rebase 到 upstream v0.1.171（7ceabb3fd → 00b859617）
+**类型**：运维适配（upstream 跟进）
+
+**背景**：
+- upstream 新增 113 个提交（v0.1.169 → v0.1.171，跨两个 tag）。本地 195 个提交全部重放。
+- 因 v0.1.169 那次 rebase 从未推送（见上条补记），本轮直接 rebase 到最新 tag，跳过中间态，避免多跑一次部署。
+- 上游主要内容：`PricingAt` 字段（固定 token 售价时刻，防跨时点定价漂移）、OpenAI 利润终检否决（`openAISlotAcquireProfitVetoed` + `recordOpenAIProfitVeto`，抢槽返回值从 bool 改为结果枚举）、Codex 版本同步服务（`OpenAICodexVersionSyncService`，出站身份版本号跟随官方发布）、`IsOpenAIResponsesFlattenNamespacesEnabled` 账号级开关。
+
+**冲突文件与合并策略**（3 个提交冲突，5 个文件，全为「两边都保留」型）：
+- `handler/openai_chat_completions.go` + `handler/openai_gateway_handler.go`：**本轮最需注意的一处**。上游把 `acquireResponsesAccountSlot` 返回值从 `acquired bool` 改成 `slotResult` 枚举（新增利润终检否决分支），而本地 TTFT 补丁要在该调用前后埋 `account_slot_ms` 计时。合并策略：采用上游新枚举逻辑，把本地计时适配到新签名（`accountSlotStart` 提到调用前、`SetOpenAITTFTTrace` 紧跟调用后、再进入枚举判断）。**不可简单择一侧**——取 HEAD 会丢 TTFT 埋点，取本地会丢利润终检。
+- `service/wire.go`：上游 `ProvideOpenAICodexVersionSyncService` 与本地 `ProvideKiroTokenRefresher` 并存（函数体 + `ProviderSet` 注册两处）。
+- `cmd/server/wire.go` + `wire_gen.go`：`provideCleanup` 形参、实参、cleanup Stop 注册共 6 处，均为 codexVersionSync（上游）与 kiroTokenRefresher（本地）并存。**顺序固定为 codexVersionSync 在前、kiroTokenRefresher 在后**，且 `wire.go` 声明与 `wire_gen.go` 调用必须一致（本机不跑 wire，手改）。
+- `cmd/server/wire_gen_test.go`：同上，测试里两个 svc 实例与 `provideCleanup` 实参并存。
+
+**受保护补丁核对**（rebase 后逐项验证通过）：
+- `internal/kiro` 整包（42 文件）✅；`Forward` 的 `IsKiro()` 分发点 ✅；`kiroTokenProvider` 字段+构造 ✅；`PlatformKiro` 双锚点 ✅；L7b-2 四接缝（refresher 文件 2 个 / `ListKiroRefreshCandidates` / `ProvideKiroTokenRefresher`+ProviderSet / `provideCleanup` 形参+实参+Stop）✅；`SensitiveCredentialKeys` 的 kiro 键 ✅；web_search 过滤两处 ✅；Kiro 401 冷却 ✅；credits 链路 + usage_logs 列序 ✅。
+- 近几轮改动同样存活：token 计费 `UsesNativeKiroUpstream` ✅；`computeCumulativeDelta` 越界修复 ✅；`UsageProgressBar` wide 变体 ✅；TTFT `account_slot_ms` 埋点两处 ✅（本轮冲突处，已适配上游新签名）。
+
+**rebase 风险点（新增，供下轮参考）**：
+- `acquireResponsesAccountSlot` 的返回值签名已被上游改过一次。本地 TTFT 埋点紧贴该调用，upstream 若再改抢槽逻辑仍会冲突。合并原则：**上游控制流 + 本地计时**，勿择一侧。
+- `provideCleanup` 的形参列表已成为多方共同扩展点（上游加服务、本地加 kiroTokenRefresher）。每次冲突需同步 `wire.go` / `wire_gen.go` / `wire_gen_test.go` 三处，顺序保持一致。
+
+**验证结果**：
+- 本机仅做源码级 rebase 与只读核对，**未跑任何 build/test/vet**（遵循 rebase-playbook）。
+- 待 GitHub Actions 验证（CI / Build / Security Scan）与部署。
+
 ---
 
 ## 后续记录模板
