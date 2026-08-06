@@ -25,6 +25,26 @@ func (f *fakeKiroLister) ListKiroRefreshCandidates(ctx context.Context) ([]Accou
 	return f.accounts, nil
 }
 
+// fakeKiroErrorMarker records SetError calls so tests can assert which accounts
+// were marked as needing re-auth.
+type fakeKiroErrorMarker struct {
+	marked []int64
+	msgs   map[int64]string
+	err    error
+}
+
+func (f *fakeKiroErrorMarker) SetError(ctx context.Context, id int64, errorMsg string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.marked = append(f.marked, id)
+	if f.msgs == nil {
+		f.msgs = make(map[int64]string)
+	}
+	f.msgs[id] = errorMsg
+	return nil
+}
+
 // fakeLeaderLock lets a test simulate the lock being held by a peer.
 type fakeLeaderLock struct {
 	acquired bool
@@ -131,6 +151,109 @@ func TestKiroTokenRefresher_InvalidTokenDoesNotAbortBatch(t *testing.T) {
 
 	if len(seen) != 2 {
 		t.Fatalf("expected both accounts attempted despite invalid token on #1, got %v", seen)
+	}
+}
+
+// TestKiroTokenRefresher_MarksTerminalAccount covers the fix for the endless
+// retry loop: a permanently-invalid credential must be marked error so the
+// candidate query (status=active) stops returning it every cycle.
+func TestKiroTokenRefresher_MarksTerminalAccount(t *testing.T) {
+	lister := &fakeKiroLister{accounts: []Account{
+		{ID: 1, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+		{ID: 2, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+	}}
+	marker := &fakeKiroErrorMarker{}
+	r := newTestRefresher(lister, func(ctx context.Context, account *Account, cred *kiro.Credentials) (string, error) {
+		if account.ID == 1 {
+			return "", kiro.ErrRefreshTokenInvalid
+		}
+		return "ok", nil
+	})
+	r.errorMarker = marker
+
+	r.runOnce()
+
+	if len(marker.marked) != 1 || marker.marked[0] != 1 {
+		t.Fatalf("expected only account 1 marked, got %v", marker.marked)
+	}
+	if msg := marker.msgs[1]; msg == "" {
+		t.Error("expected a non-empty error message explaining re-auth is required")
+	}
+}
+
+// TestKiroTokenRefresher_ContainsSuspectedOutage guards against mass-marking:
+// when every attempted refresh fails terminally, an upstream auth outage is
+// likelier than all credentials dying at once, so no account state is mutated.
+func TestKiroTokenRefresher_ContainsSuspectedOutage(t *testing.T) {
+	lister := &fakeKiroLister{accounts: []Account{
+		{ID: 1, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+		{ID: 2, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+	}}
+	marker := &fakeKiroErrorMarker{}
+	r := newTestRefresher(lister, func(ctx context.Context, account *Account, cred *kiro.Credentials) (string, error) {
+		return "", kiro.ErrRefreshTokenInvalid
+	})
+	r.errorMarker = marker
+
+	r.runOnce()
+
+	if len(marker.marked) != 0 {
+		t.Fatalf("expected no marking when all attempts fail terminally, got %v", marker.marked)
+	}
+}
+
+// TestKiroTokenRefresher_MarksLoneTerminalAccount pins the single-candidate case:
+// with only one account there is no shared signal to distinguish a dead
+// credential from an outage, and leaving it unmarked is what caused the loop.
+func TestKiroTokenRefresher_MarksLoneTerminalAccount(t *testing.T) {
+	lister := &fakeKiroLister{accounts: []Account{
+		{ID: 7, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+	}}
+	marker := &fakeKiroErrorMarker{}
+	r := newTestRefresher(lister, func(ctx context.Context, account *Account, cred *kiro.Credentials) (string, error) {
+		return "", kiro.ErrRefreshTokenInvalid
+	})
+	r.errorMarker = marker
+
+	r.runOnce()
+
+	if len(marker.marked) != 1 || marker.marked[0] != 7 {
+		t.Fatalf("expected lone terminal account marked, got %v", marker.marked)
+	}
+}
+
+// TestKiroTokenRefresher_SkippedAccountsAreNotMarked ensures api_key and legacy
+// credentials — which never attempt a refresh — can never be marked, and that
+// their presence does not affect the containment arithmetic.
+func TestKiroTokenRefresher_SkippedAccountsAreNotMarked(t *testing.T) {
+	lister := &fakeKiroLister{accounts: []Account{
+		{ID: 1, Credentials: map[string]any{"kiro_api_key": "ksk_x"}},
+		{ID: 2, Credentials: map[string]any{"base_url": "http://legacy"}},
+		{ID: 3, Credentials: map[string]any{
+			"auth_method": "social", "refresh_token": longRT, "expires_at": rfc3339In(5 * time.Minute),
+		}},
+	}}
+	marker := &fakeKiroErrorMarker{}
+	r := newTestRefresher(lister, func(ctx context.Context, account *Account, cred *kiro.Credentials) (string, error) {
+		return "", kiro.ErrRefreshTokenInvalid
+	})
+	r.errorMarker = marker
+
+	r.runOnce()
+
+	// Only account 3 attempted, so it is a lone terminal failure and gets marked.
+	if len(marker.marked) != 1 || marker.marked[0] != 3 {
+		t.Fatalf("expected only the native account marked, got %v", marker.marked)
 	}
 }
 

@@ -149,8 +149,8 @@ func refreshSocialToken(ctx context.Context, client *http.Client, c *Credentials
 // parseSocialRefreshResponse handles the social refresh HTTP outcome.
 func parseSocialRefreshResponse(status int, body []byte) (*RefreshResult, error) {
 	if status < 200 || status >= 300 {
-		if isInvalidGrant(status, string(body)) {
-			return nil, fmt.Errorf("%w: social: %s", ErrRefreshTokenInvalid, string(body))
+		if isInvalidGrant(status, string(body)) || isTerminalRefreshStatus(status) {
+			return nil, fmt.Errorf("%w: social: %d %s", ErrRefreshTokenInvalid, status, string(body))
 		}
 		return nil, fmt.Errorf("%s: %d %s", httpErrorMessage(status, "OAuth"), status, string(body))
 	}
@@ -213,8 +213,8 @@ func refreshIDCToken(ctx context.Context, client *http.Client, c *Credentials, c
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		if isInvalidGrant(status, string(body)) {
-			return nil, fmt.Errorf("%w: idc: %s", ErrRefreshTokenInvalid, string(body))
+		if isInvalidGrant(status, string(body)) || isTerminalRefreshStatus(status) {
+			return nil, fmt.Errorf("%w: idc: %d %s", ErrRefreshTokenInvalid, status, string(body))
 		}
 		return nil, fmt.Errorf("%s: %d %s", httpErrorMessage(status, "IdC"), status, string(body))
 	}
@@ -401,6 +401,21 @@ func isInvalidGrant(status int, body string) bool {
 	return status == http.StatusBadRequest &&
 		strings.Contains(body, `"invalid_grant"`) &&
 		strings.Contains(body, "Invalid refresh token provided")
+}
+
+// isTerminalRefreshStatus reports whether a non-2xx refresh status means the
+// refresh_token itself is rejected and will not recover without re-auth.
+//
+// 401 qualifies: the refresh endpoints authenticate the request *by* the
+// refresh_token, so "unauthorized" is a verdict on the credential, not on
+// request shape or transient capacity. httpErrorMessage already labels 401 as
+// "re-auth required"; treating it as retryable contradicted that and left dead
+// credentials looping on every cycle forever.
+//
+// Deliberately excluded: 403 (upstream permission/policy, can be restored
+// server-side without touching the credential), 429 and 5xx (transient).
+func isTerminalRefreshStatus(status int) bool {
+	return status == http.StatusUnauthorized
 }
 
 // httpErrorMessage maps a status code to a human message (mirrors kiro-rs).
