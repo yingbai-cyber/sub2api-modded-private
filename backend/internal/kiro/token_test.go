@@ -103,6 +103,77 @@ func TestRefreshInvalidGrantIsPermanent(t *testing.T) {
 	}
 }
 
+// TestIsTerminalRefreshStatus pins the shared predicate used by both the social
+// and IdC refresh paths, so one table covers both without needing a parse helper
+// per path.
+//
+// 401 is terminal because the refresh endpoints authenticate the request by the
+// refresh_token itself: "unauthorized" is a verdict on the credential, not on
+// request shape or capacity. 403 stays retryable (upstream policy can be
+// restored server-side without touching the credential), as do 429 and 5xx.
+func TestIsTerminalRefreshStatus(t *testing.T) {
+	terminal := []int{http.StatusUnauthorized}
+	retryable := []int{
+		http.StatusBadRequest,
+		http.StatusForbidden,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+	}
+	for _, status := range terminal {
+		if !isTerminalRefreshStatus(status) {
+			t.Errorf("status %d should be terminal", status)
+		}
+	}
+	for _, status := range retryable {
+		if isTerminalRefreshStatus(status) {
+			t.Errorf("status %d should stay retryable", status)
+		}
+	}
+}
+
+// TestRefreshUnauthorizedIsPermanent covers the social path wiring: a 401 must
+// surface as ErrRefreshTokenInvalid so the background refresher stops retrying
+// the credential every cycle and marks the account for re-auth instead.
+func TestRefreshUnauthorizedIsPermanent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"message":"Bad credentials"}`)
+	}))
+	defer srv.Close()
+
+	c := &Credentials{RefreshToken: longToken(), AuthMethod: AuthSocial}
+	_, err := refreshViaURL(t, srv.URL, c, parseSocialRefreshResponse)
+	if !errors.Is(err, ErrRefreshTokenInvalid) {
+		t.Errorf("401 must be terminal, got %v", err)
+	}
+}
+
+// TestRefreshRetryableStatusesStayRetryable guards the other half through the
+// real social path: capacity and policy failures must NOT be mistaken for a dead
+// credential, otherwise a transient upstream blip would mark accounts for
+// re-auth.
+func TestRefreshRetryableStatusesStayRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, `{"message":"transient"}`)
+		}))
+
+		c := &Credentials{RefreshToken: longToken(), AuthMethod: AuthSocial}
+		_, err := refreshViaURL(t, srv.URL, c, parseSocialRefreshResponse)
+		srv.Close()
+		if err == nil {
+			t.Errorf("status %d: expected an error", status)
+			continue
+		}
+		if errors.Is(err, ErrRefreshTokenInvalid) {
+			t.Errorf("status %d must stay retryable, got terminal: %v", status, err)
+		}
+	}
+}
+
 func TestRefreshExternalIDPForm(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "x-www-form-urlencoded") {
