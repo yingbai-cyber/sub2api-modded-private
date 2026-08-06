@@ -1522,7 +1522,24 @@
 
 **补记（2026-08-01）**：v0.1.169 这次 rebase **从未推送**，本地 HEAD 停在 `608aec81d` 直到被 v0.1.171 的 rebase 取代。上文「待 GitHub Actions 验证」始终未发生。原因是我虚构了一个 force push 阻碍（声称 `origin` 上有 `pr-1` / `preview-dev` 两个分支会被孤立——实际 `origin` 有 19 个分支且这两个都不存在），据此把可执行的推送拖成了待决事项。**教训：`git ls-remote --heads origin` 是一条命令就能核实的事实，不要凭印象断言远程状态。**
 
-**`schedulable` 遗留项结论（2026-08-01 查证，撤下待议）**：查证后**当前无实际影响**，不需要产品决策。唯一 `schedulable=FALSE` 的 kiro 账号是 id 81「kkk」，而它是 **legacy 账号**（只有 `base_url`，无 `refresh_token`/`kiro_api_key`）；`kiro_token_refresher.go:188` 的 `if cred.IsAPIKey() || !cred.UsesNativeUpstream()` 本来就跳过 legacy。三个原生账号全部 `schedulable=true`。故「不可调度账号仍被刷 token」的场景一个都不存在。定位改为**低优先级、非阻塞**：将来若有原生账号被标记不可调度，差异才会显现，届时倾向保持现状（停用期间凭证不过期，恢复调度不必重新授权）。**教训：把语义差异升级为待决事项前，先用一条 SQL 查它是否有现实影响。**
+**`schedulable` 遗留项结论（2026-08-01 撰写，已于 2026-08-05 证伪，勿引用）**：~~查证后当前无实际影响，不需要产品决策。唯一 `schedulable=FALSE` 的 kiro 账号是 id 81「kkk」…三个原生账号全部 `schedulable=true`。故「不可调度账号仍被刷 token」的场景一个都不存在。~~
+
+**订正（2026-08-05）**：上述结论**是错的**。当时那条 SQL 只按 `platform='anthropic'` 过滤，漏了按 `type='kiro'` 查，把 8 个原生账号误读成 3 个。真实候选集（`type=kiro AND status=active AND deleted_at IS NULL`，与 `ListKiroRefreshCandidates` 的 where 完全一致）为 4 个：
+
+| id | schedulable | 凭证形态 | 刷新器行为 |
+|----|----|----|----|
+| 81 | f | 仅 `base_url` | 跳过（legacy，原结论此项正确） |
+| 4730 | t | `kiro_api_key` | 跳过（静态 key） |
+| 4872 | t | `kiro_api_key` | 跳过（静态 key） |
+| **4848** | **f** | **`refresh_token`（social）** | **不跳过，每 5 分钟刷一次** |
+
+即「原生 OAuth + 不可调度 + 照刷」的账号确实存在（4848），且自 2026-08-01 凭证过期起持续 401，日志每 5 分钟一条 ERROR。**语义差异是正在发生的事实，不是「将来才会显现」。**
+
+**教训（两条，均为同一个根因）**：
+1. 上一条教训写的是「先用一条 SQL 查它是否有现实影响」——我照做了，但那条 SQL 本身写错了过滤条件。**「我查过了」不等于「我查对了」；核查刷新器行为时，SQL 的 where 必须逐字对齐 `ListKiroRefreshCandidates`，而不是凭 platform 猜。**
+2. 结论被写入文档并推送后，错误会被后续轮次当作既有事实引用。**推翻自己的旧结论时，保留原文并标注证伪，不要静默改写。**
+
+后续处理见下条「Kiro 刷新终态分类修复」。
 
 ---
 
@@ -1551,6 +1568,32 @@
 **验证结果**：
 - 本机仅做源码级 rebase 与只读核对，**未跑任何 build/test/vet**（遵循 rebase-playbook）。
 - 待 GitHub Actions 验证（CI / Build / Security Scan）与部署。
+
+---
+
+### 2026-08-05：Kiro 刷新终态分类修复 + 终态账号标记
+**类型**：本地补丁（bug 修复，L7b-2 刷新链路）
+
+**问题**：账号 4848（原生 social、`schedulable=false`）凭证于 2026-08-01 过期，此后后台刷新器每 5 分钟重试一次，每次得到 `401 {"message":"Bad credentials"}`，永不停止，日志持续刷 ERROR。
+
+**根因（两个独立缺陷）**：
+1. **终态误判为瞬时**。`kiro/token.go` 的 `isInvalidGrant` 只识别 `400 + "invalid_grant" + "Invalid refresh token provided"` 这一种签名。401 落到通用分支，被当作可重试错误。讽刺的是 `httpErrorMessage(401)` 返回的文案本就是 `"credential expired or invalid, re-auth required"`——代码知道这是终态，却没把它归类为终态。
+2. **终态从不落地**。即使归类为 `invalid`，`kiro_token_refresher.go` 也只打一行日志、不改账号状态。而候选查询条件是 `status=active`，账号永远留在候选集里。**注意这个缺陷对原有的 400 `invalid_grant` 路径同样成立**，只是此前没有账号命中过。
+
+**修复**：
+- `kiro/token.go`：新增 `isTerminalRefreshStatus(status)`，401 判为终态；social 与 IdC 两条路径的非 2xx 分支都接上，包进 `ErrRefreshTokenInvalid`。**刻意排除 403**（上游权限/策略，服务端可恢复，不需重新授权）**、429、5xx**（瞬时）。
+- `kiro_token_refresher.go`：新增窄接口 `kiroAccountErrorMarker`（只含 `SetError`），终态账号标记 `status=error`。`SetError` 是共享 `AccountRepository` 上的既有方法，会同时置 `schedulable=false`、写 `error_message`、入 scheduler outbox，因此账号退出候选集、管理界面直接显示需重新授权。
+
+**两个设计取舍**：
+- **接口拆两个而不是并到 `kiroRefreshCandidateLister`**：只实现 lister 的测试 stub 若遇到合并后的接口，类型断言会失败、整个 refresher 变惰性（`Start()` 直接 return），故障是静默的。拆开后 stub 最多丢失标记能力。
+- **误标抑制**：一个周期内所有尝试过刷新的账号**全部**终态失败且数量 >1 时，判定为上游认证故障、不标记任何账号，下周期重新评估。单个账号终态失败仍然标记——只有一个候选时没有横向信号可区分两种情况，而「不标记」正是死循环的成因。跳过的账号（api_key / legacy）不计入 `attempted`，不影响该判据。
+- 标记使用独立的 10s context：周期 context 此时可能已超时，标记必须落地。
+
+**验证结果**：
+- 本机**未跑 build/test/vet**。上一轮曾违反此约定在服务器跑构建，已纠正；本轮改动全部交 GitHub Actions 验证。
+- 新增测试：`isTerminalRefreshStatus` 判据表（401 终态 / 400·403·429·5xx 可重试）、social 路径 401 终态、social 路径可重试状态不误判、终态标记、误标抑制、单账号终态标记、跳过类账号不被标记。
+
+**待人工处理**：账号 4848 的 `refresh_token` 已实际失效，修复上线后它会被自动标记 `status=error`，需要重新授权才能恢复。这是凭证本身的问题，不是本次修复引入的。
 
 ---
 
