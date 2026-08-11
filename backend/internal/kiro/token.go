@@ -34,8 +34,9 @@ type RefreshResult struct {
 	ExpiresAt    string // RFC3339; empty => keep existing
 }
 
-// ErrRefreshTokenInvalid marks a permanently-invalid refresh token (HTTP 400 +
-// invalid_grant). Callers should disable the credential rather than retry.
+// ErrRefreshTokenInvalid marks a permanently-invalid refresh token: OAuth
+// invalid_grant or a refresh endpoint's HTTP 401 verdict. Callers should mark
+// the credential for re-auth rather than retry indefinitely.
 var ErrRefreshTokenInvalid = errors.New("kiro: refresh token permanently invalid (invalid_grant)")
 
 // IsTokenExpiringWithin reports whether the token expires within `minutes`.
@@ -293,6 +294,19 @@ func postExternalIDPTokenForm(ctx context.Context, client *http.Client, c *Crede
 	var data oauthTokenResponse
 	_ = json.Unmarshal(body, &data)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || data.AccessToken == "" {
+		// External IdPs commonly report a dead refresh token as either HTTP 401
+		// or OAuth invalid_grant (with provider-specific description text). Both
+		// require re-auth and must enter the same terminal SetError path as the
+		// social/IdC refreshers instead of being retried every cycle.
+		terminalInvalidGrant := resp.StatusCode == http.StatusBadRequest &&
+			strings.EqualFold(strings.TrimSpace(data.Error), "invalid_grant")
+		if isTerminalRefreshStatus(resp.StatusCode) || terminalInvalidGrant {
+			detail := strings.TrimSpace(strings.TrimSpace(data.Error) + " " + strings.TrimSpace(data.ErrorDescription))
+			if detail == "" {
+				detail = strings.TrimSpace(string(body))
+			}
+			return nil, fmt.Errorf("%w: external_idp: %d %s", ErrRefreshTokenInvalid, resp.StatusCode, detail)
+		}
 		if data.Error != "" {
 			return nil, fmt.Errorf("kiro: external IdP token exchange failed (%d): %s %s",
 				resp.StatusCode, data.Error, data.ErrorDescription)

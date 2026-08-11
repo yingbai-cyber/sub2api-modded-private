@@ -1149,7 +1149,7 @@
   1. `backend/internal/domain/constants.go:26` 新增 `PlatformKiro = "kiro"`。
   2. `backend/internal/service/domain_constants.go:46` 新增别名 `PlatformKiro = domain.PlatformKiro`。
   3. `backend/internal/service/gateway_forward.go:125-126` 在 `Forward` 分发点按 `account.IsKiro()` 调 `s.forwardKiro(...)`。
-  4. `backend/internal/service/gateway_service.go:699` 结构体加 `kiroTokenProvider *KiroTokenProvider` 字段；`:772` 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值（**不改 `NewGatewayService` 签名、不入 wire**）。
+  4. `backend/internal/service/gateway_service.go:699` 结构体加 `kiroTokenProvider *KiroTokenProvider` 字段；`:772` 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值（**不改 `NewGatewayService` 签名，该字段不经 Wire 注入**）。注意：后续 `NewKiroTokenProvider` 已注册进 `service.ProviderSet`，用于满足 `AccountUsageService` / `AccountTestService` 的独立依赖；这不改变 GatewayService 仍在构造器内自建 provider 的策略。
   5. 新增 `backend/internal/service/kiro_gateway.go`：`forwardKiro`(26 分发) / `forwardKiroNative`(43) / `streamKiroNative`(115) / `nonStreamKiroNative`(170) / `classifyKiroDisposition`(240) / `forwardKiroLegacy`(321)。
   6. 新增 `backend/internal/service/kiro_token_provider.go`：`NewKiroTokenProvider`(31) / `Resolve`(39 惰性刷新) / `ForceRefresh`(75) / `refreshAndPersist`(86)。
   7. 新增 `backend/internal/service/kiro_gateway_classify_test.go`（`classifyKiroDisposition` 纯函数表驱动测试）。
@@ -1171,7 +1171,7 @@
 **rebase 时必须检查/保留（受保护补丁）**：
 - `backend/internal/kiro/` 整包：upstream 从不触及，正常 rebase **不应产生冲突**；若出现冲突几乎必是误操作，应整体保留本地版。
 - `gateway_forward.go` 的 `Forward` 中 `if account != nil && account.IsKiro() { return s.forwardKiro(...) }` 分发点：upstream 若重构 `Forward`，务必补回此分发（历史教训：monolith 恢复曾丢失 Kiro 分发入口，靠 `unused` linter 才发现）。
-- `gateway_service.go` 的 `kiroTokenProvider` 字段(:699) + 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值(:772)：不得随 upstream 结构体/构造器演进而丢失；保持不改 `NewGatewayService` 签名、不入 wire 的薄接缝策略。
+- `gateway_service.go` 的 `kiroTokenProvider` 字段(:699) + 构造器体内 `NewKiroTokenProvider(accountRepo)` 赋值(:772)：不得随 upstream 结构体/构造器演进而丢失；保持不改 `NewGatewayService` 签名、该字段不经 Wire 注入的薄接缝策略。`service.ProviderSet` 中的 `NewKiroTokenProvider` 注册则必须保留，用于 `AccountUsageService` / `AccountTestService`，不要因旧文“GatewayService 不入 wire”而误删。
 - `domain/constants.go` 的 `PlatformKiro`、`service/domain_constants.go` 别名、`account.go` 的 `Account.IsKiro()` / `AccountTypeKiro`：作为身份键控锚点必须存在。
 - `internal/kiro` 新代码遵循仓库 `errcheck` 严格模式（`disable-default-exclusions:true`）：所有 `WriteString`/`Write`/`Close`/`io.WriteString`/`ParseForm` 返回值必须显式处理，类型断言用双值形式，避免 rebase 后 golangci-lint 回归。
 
@@ -1613,6 +1613,34 @@
 - pnpm overrides 同步收紧：`nanoid@<3.3.17 → >=3.3.17`、`postcss@<8.5.26 → >=8.5.26`，防后续传递依赖回退到漏洞版本。
 - lockfile 按 npm 官方元数据同步版本、依赖关系与 integrity；**服务器未执行 pnpm install / build / test**，由 GitHub Actions 的 frozen-lockfile、frontend、audit 和完整 CI 验证。
 - 本提交标题带 `[deploy]`，在所有 Actions 检查通过后由 workflow 受控部署 Kiro 修复与依赖修复。
+
+---
+
+### 2026-08-11：rebase 到 upstream v0.1.173 后主线（0f73203e3）
+**类型**：上游同步 rebase / 冲突语义审计 / 刷新终态补漏
+
+**背景**：
+- `upstream/main` 从旧基线 `00b859617`（v0.1.171）推进到 `0f73203e3`：共 207 个提交（160 个非 merge），包含 tag `v0.1.172`、`v0.1.173`，并在 v0.1.173 后继续前进 36 个提交；源码 `VERSION` 为 `0.1.173`。
+- 上游已包含 `nanoid 3.3.17` 等安全更新；本地此前的 PostCSS/nanoid 加固提交仍按原历史重放，最终锁文件继续交 Security Scan 验证，避免因传递依赖或 overrides 合并而回退。
+- `git fetch upstream --tags --prune` 因上游重打若干旧 tag、Git 拒绝覆盖本地同名 tag而返回非零，但最新 `upstream/main` 与新 tag 已成功获取；主线 rebase 不受影响。
+
+**改动摘要 / 冲突策略**：
+- 将 198 个本地提交全部源码级重放到 `upstream/main=0f73203e3` 之上；rebase 完成时 HEAD 为 `57cc0117a`，且 `upstream/main` 已是当前 `main` 的祖先。
+- 冲突统一采用“两边语义均保留”：`.gitignore` 同时保留 upstream `.vite/` 与本地 `.narrafork/`、`.worktrees/`、`bin/` 等；OpenAI chat-completions 同时保留本地 TTFT 首字节/首 chunk 埋点与 upstream Grok 搜索计数/observer；settings/wire 同时保留 Available Models、Channel Monitor V2 与 Kiro 服务。
+- `gateway_service.go` 坚持以 upstream 当前拆分架构为底，只迁移仍有效的 Available Models、`ClaudeUsage.KiroCredits`、`AccountTypeKiro` token 接缝；丢弃历史提交里已废弃的约 6700 行 monolith 中间态，避免回灌旧架构。Kiro OpenAI-format 兼容同时补齐 `gateway_service.go` 的 `AccountTypeKiro` 分支与 `gateway_upstream_request.go` 的 API Key/Kiro `base_url` 共用路径。
+- usage log 静态逐列核对：INSERT 60 个参数、最大占位符 `$60`；SELECT 61 列（含 `id`），`kiro_credits` 为第 60 列、`created_at` 为第 61 列。前端合并继续保留 `billing_mode`、`upstream_model_mismatch` 与 credits/image/video 展示接缝。
+- Wire 审计发现源码/生成物不一致：`wire_gen.go` 已构造 `NewKiroTokenProvider`，但 `service/wire.go` 的 `ProviderSet` 漏注册。已补回 provider，并整理 `cmd/server/wire.go` 中 Channel Monitor cleanup 的缩进；`KiroTokenRefresher` 与 upstream `ChannelMonitorV2Aggregator` 的实例化、cleanup 参数及 Stop 注册均保留。
+- Kiro 终态刷新审计发现 External IdP 路径遗漏：social/IdC 的 401 已进入 `ErrRefreshTokenInvalid`，但 `postExternalIDPTokenForm` 的 401 与 provider-specific `400 invalid_grant` 仍会落入可重试通用错误。已统一包裹为 `ErrRefreshTokenInvalid`，使后台 refresher 进入既有 `SetError` + `schedulable=false` 终态链；403、429、5xx 仍保持可重试。新增表驱动测试覆盖 401、400 invalid_grant、403 与 503。
+
+**生产迁移预检**：
+- 上游新增 migration 217–220。218/219/217 仅新增 nullable 定价列；220 会备份后清空非 Grok/非 composite 分组的视频价格。
+- 已对当前生产 PostgreSQL 做只读预检：现有 `groups` 表只有三个 legacy `video_price_*` 列，尚无 `video_model_prices`；所有非 Grok/非 composite 分组的三个视频价格列均为 NULL，查询命中 0 行。因此 migration 220 当前不会清空任何已配置价格；未执行任何数据库写入。
+- L9 `platform=kiro` 数据迁移仍是独立高风险生产操作，本轮不执行，继续等待显式授权。
+
+**验证结果 / 待办**：
+- 本机只运行了 gofmt、冲突标记/符号/列序等静态核对和生产数据库只读查询；**未运行 build/test/vet，也未安装依赖**。
+- rebase 重写了 198 个本地提交，`origin/main` 仍为旧历史；最终只能使用 `git push --force-with-lease origin main`，不得普通 push。
+- 待推送后由 GitHub Actions 完成 CI（shell/test/frontend/golangci-lint）、Security Scan、embed Linux binary 构建、受控部署与 host/npm health 验证；Actions 结果与部署 commit 待上线后补记。
 
 ---
 
