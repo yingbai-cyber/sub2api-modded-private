@@ -1597,6 +1597,25 @@
 
 ---
 
+### 2026-08-11：修复定时安全扫描新增的 nanoid 高危告警
+**类型**：依赖安全修复 + 部署触发
+
+**背景**：
+- Kiro 刷新终态修复提交 `234a437e6` 于 2026-08-06 通过 CI（shell / test / frontend / golangci-lint）、Build 和当次 Security Scan。
+- 该提交标题遗漏 `[deploy]`，因此 Build workflow 的部署 job 被跳过；旧二进制继续运行，账号 4848 尚未被新逻辑标记。
+- 2026-08-10 的定时 Security Scan 新增失败：`nanoid 3.3.16` 命中 `GHSA-2v37-7h3g-55p8`（high，`customAlphabet` / 自定义生成器在 size=0 时可能无限循环）。此告警由 2026-07-29 新发布、2026-08-07 更新的 advisory 触发，不是 Kiro 修复引入。
+
+**依赖路径**：`postcss 8.5.23 → nanoid 3.3.16`。业务源码没有直接 import `nanoid` / `customAlphabet` / `customRandom`，但已有官方补丁，不增加例外白名单。
+
+**修复**：
+- `postcss`：`8.5.23 → 8.5.26`（package spec 改为 `^8.5.26`）。
+- `nanoid`：`3.3.16 → 3.3.17`（该 advisory 的首个 3.x 修复版）。
+- pnpm overrides 同步收紧：`nanoid@<3.3.17 → >=3.3.17`、`postcss@<8.5.26 → >=8.5.26`，防后续传递依赖回退到漏洞版本。
+- lockfile 按 npm 官方元数据同步版本、依赖关系与 integrity；**服务器未执行 pnpm install / build / test**，由 GitHub Actions 的 frozen-lockfile、frontend、audit 和完整 CI 验证。
+- 本提交标题带 `[deploy]`，在所有 Actions 检查通过后由 workflow 受控部署 Kiro 修复与依赖修复。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
