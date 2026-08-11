@@ -210,6 +210,63 @@ func TestRefreshExternalIDPForm(t *testing.T) {
 	}
 }
 
+func TestRefreshExternalIDPTerminalFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		terminal bool
+	}{
+		{
+			name:     "unauthorized",
+			status:   http.StatusUnauthorized,
+			body:     `{"error":"invalid_token","error_description":"Bad credentials"}`,
+			terminal: true,
+		},
+		{
+			name:     "invalid grant with provider-specific description",
+			status:   http.StatusBadRequest,
+			body:     `{"error":"invalid_grant","error_description":"AADSTS700082: refresh token expired"}`,
+			terminal: true,
+		},
+		{
+			name:   "forbidden policy may recover server-side",
+			status: http.StatusForbidden,
+			body:   `{"error":"access_denied"}`,
+		},
+		{
+			name:   "server error is transient",
+			status: http.StatusServiceUnavailable,
+			body:   `{"error":"temporarily_unavailable"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			c := &Credentials{
+				RefreshToken:  longToken(),
+				AuthMethod:    AuthExternalIDP,
+				ClientID:      "client-1",
+				TokenEndpoint: srv.URL,
+			}
+			_, err := postExternalIDPTokenForm(context.Background(), srv.Client(), c)
+			if err == nil {
+				t.Fatalf("status %d: expected an error", tc.status)
+			}
+			if got := errors.Is(err, ErrRefreshTokenInvalid); got != tc.terminal {
+				t.Errorf("status %d terminal=%v, want %v: %v", tc.status, got, tc.terminal, err)
+			}
+		})
+	}
+}
+
 func TestValidateExternalIDPEndpoint(t *testing.T) {
 	ok := []string{
 		"https://login.microsoftonline.com/tenant/oauth2/v2.0/token",
