@@ -868,7 +868,16 @@ func TestGetAvailableModels_FiltersMixedAntigravityModelsByNativePlatform(t *tes
 
 	svc.InvalidateAvailableModelsCache(&groupID, PlatformGemini)
 	geminiModels := svc.GetAvailableModels(context.Background(), &groupID, PlatformGemini)
-	require.Equal(t, []string{"gemini-3-flash", "gemini-3.1-pro-high", "gemini-3.1-pro-low"}, geminiModels)
+	require.Equal(t, []string{
+		"gemini-3-flash",
+		"gemini-3.1-pro-high",
+		"gemini-3.1-pro-low",
+		"gemini-3.6-flash",
+		"gemini-3.6-flash-high",
+		"gemini-3.6-flash-low",
+		"gemini-3.6-flash-medium",
+		"gemini-3.6-flash-tiered",
+	}, geminiModels)
 }
 
 func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
