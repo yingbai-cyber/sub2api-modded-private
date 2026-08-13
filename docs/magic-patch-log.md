@@ -1704,6 +1704,57 @@
 
 ---
 
+### 2026-08-13：L9（`platform=kiro`）影响面盘点
+**类型**：受保护高风险操作评估 / 只读调查（无源码改动，未执行任何数据库写入）
+
+**背景**：
+- L9 是 Kiro 原生化 L1–L9 的最后一项，内容是一条 SQL：`UPDATE accounts SET platform='kiro' WHERE type='kiro' AND deleted_at IS NULL`。
+- 其原始动机（把 Kiro 并入按 `platform` 分组的共享 `TokenRefreshService`）在 L7b-2 已被否决——改为独立 `KiroTokenRefresher` 键控 `type='kiro'`。**L9 现存动机仅剩"让 platform 字段名副其实"**。
+- 本次按之前承诺做一次完整影响面盘点，为「做 / 不做」提供依据。
+
+**盘点方法**：
+- 后端 `account.Platform` 读点共 804 处（非测试）。按「比较对象」分类，只有与 `PlatformAnthropic` 比较的 32 处对 Kiro 账号当前为 true、迁移后会翻转；其余与其他平台常量比较的分支迁移前后均为 false，无变化。
+- 32 处中再按 `Type` 门控过滤：被 `Type == APIKey / OAuth / SetupToken / ServiceAccount / Bedrock` 排除的、以及作用于 **group** 而非 account 的，均不可达。
+- 另查 ent/SQL 层 platform 过滤、DTO 校验白名单、前端联合类型与下拉，以及生产库全部 19 张含 `platform` 列的表。
+
+**结论 1：真正会翻转且必须改代码的点（3 处）**
+1. `service/account_usage_service.go:400` —— `Platform == PlatformAnthropic && Type == AccountTypeKiro` 分派到 `getKiroUsage()`。迁移后**直接失配**，Kiro 原生余量/credits 查询失效。必须改判据为 `account.IsKiro()`。
+2. `service/gateway_scheduling.go:2574`（`isModelSupportedByAccount`）—— 当前 Kiro 命中 `Platform == PlatformAnthropic && Type != AccountTypeAPIKey`，请求模型先经 `claude.NormalizeModelID` 短 ID→长 ID 归一化再做 `IsModelSupported`。迁移后跳过归一化，短 ID 可能被判为不支持，账号被排除出候选。需为 Kiro 补等价归一化分支。
+3. `service/gateway_count_tokens.go:102`（`ForwardCountTokens`）—— 同一套 `claude.NormalizeModelID` 前缀映射，且该函数**没有** Kiro 早返回，Kiro 账号确实会走到。迁移后模型名不再归一化。影响面小于前两条但真实存在。
+
+**结论 2：看似危险但实际不可达（已逐一证伪）**
+- `gateway_forward.go:132 / :289`：同在 `Forward` 内，但 `:126` 的 `IsKiro() → forwardKiro` 早返回在其之前，Kiro 不可达。
+- `gateway_forward_as_responses.go:82` / `gateway_forward_as_chat_completions.go:78`：`Platform==Anthropic && Type!=Kiro`，迁移前因 `Type==Kiro` 为 false、迁移后因 `Platform!=Anthropic` 仍为 false，**净行为不变**（该 `Type != Kiro` 子句迁移后变成冗余）。
+- `gateway_service.go:1236`：位于 `case AccountTypeServiceAccount:` 内，Kiro 有独立 case。
+- `upstream_models.go:157` 的 `case account.IsAnthropic()`：调用链上游 `:90` 已有 `IsKiro()` 早返回并直接返回 `kiroSupportedModelIDs()`。
+- `ratelimit_service.go:298 / :330 / :1132` 三处 Anthropic 专属分支：Kiro **native** 路径用自有 `classifyKiroDisposition` 处置错误，`forwardKiroLegacy` 也不走共享上游响应处理，均不调用 `HandleUpstreamError`。Kiro 进入 `HandleUpstreamError` 的唯一入口是 `gateway_count_tokens.go:201/300`，命中面很窄。
+- `account.go` 的 `IsBedrock` / `IsAnthropicOAuth` / API Key 系判据：全部被 `Type` 门控排除。
+
+**结论 3：调度候选是最大风险，但当前处于休眠态**
+- `listSchedulableAccounts`（`gateway_scheduling.go:960`）与 `SchedulerSnapshotService.ListSchedulableAccounts`（`scheduler_snapshot_service.go:210`）走同一逻辑：`platforms := []string{请求platform, PlatformAntigravity}`，再交 `ListSchedulableByGroupIDAndPlatforms` 等按 platform 过滤。请求 platform 取自**分组的 platform**。
+- 生产实测：7 个存活 Kiro 账号分布在 3 个分组——`1 kiro逆向`、`15 kiro-kk`、`19 速刷`，**三者 platform 均为 `anthropic`**。账号一旦改成 `kiro`，就会从这些分组的候选集中整体消失。
+- **但当前休眠**：7 个账号（81、4848、4872–4876）的 `schedulable` 全部为 `f`，无 `temp_unschedulable_until`；最后一次真实调用是 2026-08-06/07（4848 停在 08-01，4876 从未调用过）。即已约一周无流量。因此现在执行迁移不会立刻打断线上请求，风险会在重新启用这些账号时才显现。
+
+**结论 4：校验层与前端会挡路**
+- `accounts.platform`：ent schema 为裸 `String`，账号 DTO 为 `binding:"required"` 无 `oneof` —— **DB 与 API 都接受 `kiro`，不挡**。
+- `handler/admin/group_handler.go:101 / :169`：分组 platform 校验 `oneof=anthropic openai gemini antigravity grok composite`，**不含 kiro**。若同步把分组迁到 `platform='kiro'`，管理端此后编辑该分组任何设置都会 400。
+- 前端 `types/index.ts:886 AccountPlatform` 与 `:529 GroupPlatform` 联合类型均不含 `'kiro'`；`AccountTableFilters.vue`、`OpsDashboardHeader.vue`、`AccountCleanupView.vue`、`SubscriptionsView.vue`、`ErrorPassthroughRulesModal.vue` 等 6 处平台下拉无 Kiro 选项（「全部平台」仍可见这些账号）。
+
+**结论 5：数据面**
+- 生产库 19 张表含 `platform` 列。当前取值分布：`accounts`（openai 4817 / grok 144 / anthropic 35 / antigravity 1）、`groups`（openai 14 / anthropic 4 / grok 1）、`user_platform_quotas`、`ops_*`、`channel_monitor_v2_*` 等，**均无 `kiro` 值**。
+- 迁移只写 `accounts` 一张表 7 行，但 `ops_metrics_*`、`ops_error_logs`、`channel_monitor_v2_*` 是按 platform 聚合的历史序列：迁移后同一批账号的历史数据留在 `anthropic` 桶、新数据进 `kiro` 桶，**运营报表会出现口径断层**。
+
+**最终结论：建议不做**
+- 收益：`PlatformKiro` 常量目前**没有任何生产逻辑使用**（`domain_constants.go:47` 注释已写明仅供 unsupported-platform 阈值测试与 legacy 保留），迁移纯属字段语义整洁，不解决任何实际问题。
+- 成本：3 个后端判据必改 + 分组策略二选一（给 mixed 列表加 kiro，或迁分组并放开 `group_handler` 的 oneof）+ 前端 2 个联合类型与 6 处下拉 + 一次生产 UPDATE + 报表口径断层。
+- 若将来因产品需求（Kiro 作为独立平台在前端分组/筛选/报表中露出）而必须做，迁移顺序应为：**先改代码并经 Actions 全绿 → 再迁分组 platform → 最后迁账号 platform**；回滚为反向 `UPDATE accounts SET platform='anthropic' WHERE type='kiro'`（单表 7 行，可逆）。
+- L9 任务本身继续保持 blocked，不因本次盘点而解除。
+
+**验证结果**：
+- 纯只读调查：全部为 grep / 源码阅读 / `SELECT` 查询，**未执行任何数据库写入，未运行 build/test/vet**。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
