@@ -1644,6 +1644,45 @@
 
 ---
 
+### 2026-08-13：rebase 到 upstream v0.1.176 后主线（fbfdcef81）
+**类型**：上游同步 rebase
+
+**背景**：
+- `upstream/main` 从上轮基线 `0f73203e3`（v0.1.173 后 36 提交）推进到 `fbfdcef81`：新增 76 个提交（48 个非 merge），159 文件 +6962/-467；新增 tag `v0.1.175`、`v0.1.176`（上游跳过了 `v0.1.174`），源码 `backend/cmd/server/VERSION` 由 `0.1.173` 升到 `0.1.176`。
+- 上游本轮主要范围：
+  - **Grok**：新增 `grok-4.6` 目录/官方定价/请求路径、从 JWT tier 识别订阅档位、分组逐模型定价与长上下文阶梯开关、SuperGrokPro 用 4.5 窗口区分 Heavy、未登记文本模型回退 `grok-4.5` 价卡、未知文本兜底排除 image/video/audio 媒体族、Realtime 仅在观察到音频后计费、独立 `/x_search` 与 Chat/Responses 往返保留 `x_search`。
+  - **OpenAI/Codex**：OAuth 设备指纹收敛（减少上游可见设备数/会话数）、usage 路径优先级与嵌套 data usage envelope 解析、Responses 可见输出 TTFT 修正、ws 无 delta 的 TTFT 回退与终止事件排除、空 `response.completed` 流改判 failover、API key passthrough 剥离非法 reasoning item ID、OAuth 图片流错误 failover、指数级容量退避保留、池认证失败先重试再 failover、探测未跑完不再标记「上游不支持 Responses」、HTML 403 不再按账号级错误处罚账号、调度阈值跳过陈旧/重置的 Codex 快照。
+  - **其他**：service-tier 定价计入账号成本、备份定时任务加 leader 锁、分组 platform 变更时失效渠道缓存、渠道定价冲突检测对齐缓存键、安全审计 websocket 日志恢复与 cyber policy 事件收敛、Gemini 工具 schema exclusive-minimum 归一化。
+
+**改动摘要 / 冲突策略**：
+- `git rebase upstream/main`：200 个本地提交**一次性零冲突**重放，HEAD = `0a7f83051`（`v0.1.176-205`），`upstream/main` 已是 `main` 的祖先，`upstream/main...HEAD = 0/200`。
+- rebase 前打回溯分支 `backup/pre-rebase-<UTC 时间戳>`（指向旧 `origin/main` = `fce11e86d`），不使用 `abort` / `reset --hard`。
+- 上游改动面（159 文件）与本地补丁面（201 文件）交集 28 个文件，全部由 3-way 自动合并完成，无人工改写：`openai_gateway_forward.go`、`openai_gateway_passthrough.go`、`openai_gateway_response_handling.go`、`openai_images_responses.go`、`ratelimit_service.go`、`billing_service.go`、`gateway_usage_billing.go`、`wire.go`/`wire_gen.go`、`handler/dto/{types,mappers}.go`、`server/routes/gateway.go` 及 7 个前端文件等。
+
+**本地补丁静态复核（逐项通过）**：
+- **Kiro 整包**：`backend/internal/kiro/` 42 文件完整（含 `cache_emulation.go` 及测试）。
+- **Kiro 主干接缝**：`gateway_forward.go:126` 的 `IsKiro() → forwardKiro` 分发点；`gateway_service.go:749/825` 的 `kiroTokenProvider` 字段与构造器体内 `NewKiroTokenProvider(accountRepo)`；`service/wire.go:813` 的 `NewKiroTokenProvider` 与 `:854` 的 `ProvideKiroTokenRefresher` 均在 `ProviderSet` 内；`repository/account_repo.go:1279` 的 `ListKiroRefreshCandidates`（键控 `type='kiro'`，未并入共享接口）；`cmd/server/wire.go` 与 `wire_gen.go` 的 `provideCleanup` 形参逐项比对 **44 == 44 且完全一致**，`KiroTokenRefresher` Stop 注册两侧都在。
+- **Kiro 逻辑接缝**：两个 forward 文件的 `IsKiro() && len(Tools) > 1 → filterOutWebSearchTools`（`gateway_forward_as_responses.go:63` / `gateway_forward_as_chat_completions.go:60`）；模型映射条件的 `AccountTypeKiro` 分支；`ratelimit_service.go:376` 的 Kiro 401 临时冷却（含 `Type != AccountTypeKiro` 的 refresh_token 缺失分支保护）。
+- **Kiro credits 链路**：`ClaudeUsage.KiroCredits` → `kiro_gateway.go` / `antigravity_gateway_upstream.go` 的 `kiro_credits` 解析 → `gateway_usage_billing.go:865` credits 覆盖 → `usage_service.go` / `usage_log.go` → SQL 列 → DTO → 前端 `UsageTable.vue`。
+- **usage log 列序静态核对**：INSERT 60 列、最大占位符 `$60`、含 `created_at` 收尾；SELECT 61 列，`Scan` 目标 61 个，`kiro_credits` 第 60、`created_at` 第 61，三者一致。
+- **OpenAI 补丁**：`openai_images_web2api.go` 存在，`openai_images_responses.go:1711` 的 `shouldUseOpenAIImagesWeb2API` 仍排在 Codex `/responses` 图片路径之前；`shouldFailoverOpenAIImagesOAuthResponse` 的 `tool choice / image_generation / not found / tools` 四段判定完整；`normalizeOpenAIImageSizeTier` / `resolveOpenAIResponsesImageBillingConfig*` 尺寸计费分级在位。
+- **OAuth detach + TTFT**：`openai_gateway_forward.go:824` 的 `detachUpstreamContext(ctx)` 与 `:835` 的 `build_upstream_ms` 埋点共存，且与 upstream 新增的 `openAIFirstOutputHeaderGuard` 正确嵌套；`http_upstream.go` 的 `withOpenAITTFTHTTPTrace` 两处调用保留。
+- **其余长期补丁**：`GetAvailableModelsForDiscovery` + 前端 `handleProbeModels`、`account_credentials_redact.go:19` 的 `kiro_api_key`/`client_secret`、前端 `KiroNativeCredentials.vue` 与三份 spec、两个 Modal 的 `kiroMode`/`editKiroMode`/`cache_emulation_ratio` 接缝、`config.go` 的 `BatchImageConfig` 全部在位。
+- **结构性检查**：全仓无冲突标记；`internal/service` 包跨文件顶层函数/方法**零重复**（无 monolith 回灌）。
+- **回归风险预排查**：上轮 CI 曾因本地测试未纳入上游新增默认模型而失败，本轮已确认上游 76 个提交**未触及** antigravity/gemini 模型目录与默认映射，`TestGetAvailableModels_FiltersMixedAntigravityModelsByNativePlatform` 的 gemini-3.6 期望不受 `grok-4.6` 新增影响。
+
+**rebase 风险点**：
+- 上游对 OpenAI failover / TTFT / usage 解析改动密集，与本地 TTFT trace 埋点、OAuth detach 同处 `openai_gateway_forward.go` / `openai_gateway_passthrough.go` / `openai_gateway_response_handling.go`；虽 3-way 干净，仍需 CI 交叉验证无语义/编译回归。
+- 上游 service-tier 定价计入账号成本改动 `billing_service.go` / `gateway_usage_billing.go`，与本地图片尺寸计费分级、Kiro credits 覆盖同文件，需 `go test ./...` 覆盖。
+- L9 `platform=kiro` 数据迁移仍是独立高风险生产操作，本轮不执行，继续等待显式授权。
+
+**验证结果 / 待办**：
+- 本机只运行了 git 操作与只读静态核对（列序、符号、接缝、重复函数、冲突标记）；**未运行 build / test / vet，也未安装任何依赖**。
+- rebase 重写了 200 个本地提交，`origin/main` 仍为旧历史，只能使用 `git push --force-with-lease origin main`。
+- 待推送后由 GitHub Actions 完成 CI（shell/test/frontend/golangci-lint）、Security Scan、embed Linux binary 构建、受控部署与 host/npm health 验证；Actions 结果与部署 commit 待上线后补记。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
