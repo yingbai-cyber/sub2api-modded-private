@@ -1678,8 +1678,29 @@
 
 **验证结果 / 待办**：
 - 本机只运行了 git 操作与只读静态核对（列序、符号、接缝、重复函数、冲突标记）；**未运行 build / test / vet，也未安装任何依赖**。
-- rebase 重写了 200 个本地提交，`origin/main` 仍为旧历史，只能使用 `git push --force-with-lease origin main`。
-- 待推送后由 GitHub Actions 完成 CI（shell/test/frontend/golangci-lint）、Security Scan、embed Linux binary 构建、受控部署与 host/npm health 验证；Actions 结果与部署 commit 待上线后补记。
+- rebase 重写了 200 个本地提交，`origin/main` 由 `fce11e86d` 经 `git push --force-with-lease=main:fce11e86d` 强制更新到 `cc50d9220`（显式 lease 目标，非裸 `--force`）。
+
+**首轮 Actions：nanoid advisory 范围被上调（本轮唯一红灯）**：
+- `cc50d9220` 的 Security Scan 失败于 `frontend-security → Check audit exceptions`：`nanoid (high) [GHSA-2v37-7h3g-55p8]` 缺少例外。
+- 根因不是本地合并回退：lockfile 里 nanoid 实为 `3.3.17`，而 GitHub 在 **2026-08-13T15:43Z** 重新划定了该 advisory 的影响范围——3.x 的首个修复版由 `3.3.17` 上调为 `3.3.18`（另一条为 `>=4.0.0,<5.1.6 → 5.1.6`）。同一时刻 **upstream 自己在 `674570ca1` 上的 Security Scan 也因此失败**，属上游同源问题。
+- 修复 `1dc8a465c`：`frontend/package.json` 的 pnpm override `nanoid@<3.3.17: >=3.3.17` → `nanoid@<3.3.18: >=3.3.18`；`pnpm-lock.yaml` 同步 overrides 行、包条目（version + 官方 `integrity`）、snapshot 键与 `postcss@8.5.26` 的依赖引用共 4 处。version/integrity 取自 npm registry 元数据，**服务器未执行 pnpm install**；Actions 的 `Install frontend dependencies`（frozen-lockfile）成功反证手改 lockfile 自洽。
+
+**最终 Actions（`main` @ `1dc8a465c`）全绿**：
+- **CI** run `31721033602`：`shell` / `frontend` / `golangci-lint` / `test` 均 success。
+- **Security Scan** run `31721033576`：`backend-security`（govulncheck）/ `frontend-security`（audit + exceptions gate）均 success。
+- **Build sub2api modded** run `31721033579`：`Detect changed areas` → `Build embedded Linux binary`（pnpm frozen-lockfile → 前端构建 → `Verify embedded frontend assets` → `go build -tags embed`）→ `Deploy built binary to server`（`Install, restart and verify`）全 success。
+
+**上线验收（2026-08-13T16:34:36Z）**：
+- 部署 marker：`commit=1dc8a465c14b5fa01ac4463145cd58064a9dba0c`、`sha256=69e30d150f0a…c68a27`、`health_code=200`、`npm_health_code=200`、备份 `bin/sub2api.bak.31721033579.1`。
+- `sub2api-modded.service` = `active (running)`，MainPID `3351872`，`ActiveEnterTimestamp = 2026-08-13 12:34:32 EDT`；运行进程 `/proc/<pid>/exe` 与磁盘二进制 sha256 与 marker **三方完全一致**。
+- 宿主机 `172.19.0.1:18081/health` = 200；`npm-app` 容器内回源 `/health` = 200。
+- 新进程日志 0 条 ERROR、0 条 panic/fatal。日志中的 `Proxy Authentication Required`（OpenAI/Grok token refresh）为**既有环境问题**：部署前 30 分钟窗口内已出现 129 次，与本轮 rebase 无关。
+- Kiro 账号状态未受影响：`type='kiro'` 共 18 个账号 platform 仍为 `anthropic`（L9 未执行），`4848` 仍为 `status=error / schedulable=false`，未出现重复刷新刷屏。
+
+**生产迁移**：
+- 本轮上游仅新增 `221_group_model_pricing.sql`，纯追加：`ADD COLUMN IF NOT EXISTS long_context_pricing_enabled BOOLEAN NOT NULL DEFAULT TRUE` + `model_pricing JSONB`，并把非 TRUE 的行回填为 TRUE（保持既有长上下文计费行为）。
+- 部署后只读核验：两列均已存在（`long_context_pricing_enabled` default `true`、`model_pricing` jsonb），`long_context_pricing_enabled IS DISTINCT FROM TRUE` 命中 **0 行**，无分组被改变计费行为。
+- L9 `platform=kiro` 数据迁移本轮仍未执行，继续等待显式授权。
 
 ---
 
