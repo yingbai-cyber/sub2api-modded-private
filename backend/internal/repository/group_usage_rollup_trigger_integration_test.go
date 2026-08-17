@@ -419,6 +419,7 @@ func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, 
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, setGroupUsageRollupTriggerSearchPath(ctx, tx, quotedSchema))
+	require.NoError(t, setGroupUsageRollupTriggerTimezone(ctx, tx))
 
 	usageLogsDDL := `
 		CREATE TABLE usage_logs (
@@ -470,12 +471,20 @@ func beginGroupUsageRollupTriggerTestTx(t *testing.T, ctx context.Context, schem
 	tx, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, setGroupUsageRollupTriggerSearchPath(ctx, tx, pq.QuoteIdentifier(schema)))
+	require.NoError(t, setGroupUsageRollupTriggerTimezone(ctx, tx))
 	return tx
 }
 
 func setGroupUsageRollupTriggerSearchPath(ctx context.Context, tx *sql.Tx, quotedSchema string) error {
 	_, err := tx.ExecContext(ctx, "SET LOCAL search_path TO "+quotedSchema)
 	return err
+}
+
+// 223 之后 trigger 使用 session TimeZone，而断言仍按 Asia/Shanghai 写死。
+// GitHub Actions 的 Postgres 默认 UTC；16:00–24:00 UTC 时上海已跨日，会把
+// AcrossMidnight / KeepsWatermark 判失败。需要显式钉死会话时区。
+func setGroupUsageRollupTriggerTimezone(ctx context.Context, tx *sql.Tx) error {
+	return setGroupUsageRollupTriggerTimeZone(ctx, tx, "Asia/Shanghai")
 }
 
 func setGroupUsageRollupTriggerTimeZone(ctx context.Context, tx *sql.Tx, name string) error {

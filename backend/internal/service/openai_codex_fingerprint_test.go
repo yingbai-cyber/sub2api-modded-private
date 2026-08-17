@@ -565,6 +565,8 @@ func rawVsMapClientMetadata(t *testing.T, body []byte, ids *codexFingerprintIDs)
 	var rawDecoded map[string]any
 	require.NoError(t, json.Unmarshal(rawBody, &rawDecoded))
 	rawCM, _ := rawDecoded["client_metadata"].(map[string]any)
+	stripCodexTurnStartedAt(t, mapCM)
+	stripCodexTurnStartedAt(t, rawCM)
 	return mapCM, rawCM
 }
 
@@ -742,6 +744,23 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			}
 		})
 	}
+}
+
+func stripCodexTurnStartedAt(t *testing.T, cm map[string]any) {
+	t.Helper()
+	if cm == nil {
+		return
+	}
+	raw, _ := cm["x-codex-turn-metadata"].(string)
+	if raw == "" {
+		return
+	}
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &meta))
+	delete(meta, "turn_started_at_unix_ms")
+	normalized, err := json.Marshal(meta)
+	require.NoError(t, err)
+	cm["x-codex-turn-metadata"] = string(normalized)
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) {
