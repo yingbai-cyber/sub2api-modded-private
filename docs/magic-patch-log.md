@@ -1755,6 +1755,46 @@
 
 ---
 
+### 2026-08-17：rebase 到 upstream v0.1.177（5253bb72b）
+**类型**：上游同步 rebase
+
+**背景**：
+- `upstream/main` 从上轮基线 `fbfdcef81`（v0.1.176）推进到 `5253bb72b`：新增 28 个提交，187 文件 +13516/-715；新 tag `v0.1.177`，源码 `backend/cmd/server/VERSION` 由 `0.1.176` 升到 `0.1.177`。
+- 上游本轮主要范围：
+  - **国产供应商一等支持**：Kimi / Zhipu / DeepSeek 多协议（chat_completions / anthropic / responses）、分组入口、余额/配额监控、调度闸门、计费与 403 修复。
+  - **渠道分时倍率定价**：`ChannelTimePricing` + `applyCostBreakdownMultiplier`，仅对渠道价源生效。
+  - **分组用量日汇总**：migration 222/223 + rollup 仓储/触发器。
+  - **OpenAI/Codex**：turn-state 透传、fingerprint 收敛改为 opt-in、remote compaction v2 路由分离、Fast/Flex 策略文案澄清。
+  - **Go 1.26.6**：`go.mod` 与三个 Dockerfile 构建镜像对齐（与本地刚完成的 `5e098c6b0` 同源）。
+- 本地 205 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260817T171519Z`（指向旧 `origin/main` = `5e098c6b0`）。
+
+**冲突文件与合并策略**（8 个提交冲突，全为「两边都保留」型）：
+- `billing_service_unified_test.go`：上游分时定价测试与本地 4K 尺寸计费测试并存。
+- `billing_service.go`：`calculateTokenCost` 采用本地 `computeTokenBreakdownForModel(input.Model, ...)`（GPT-5.5 fast 2.5x）**并且**接上上游 `applyCostBreakdownMultiplier(..., resolvedChannelTimeMultiplier(...))`。不可择一侧。
+- `frontend/src/types/index.ts`：`AccountPlatform` 收下上游 `kimi/zhipu/deepseek`；`AccountType` 保留本地 `'kiro'`。**不把 kiro 加进 AccountPlatform**（L9 仍未授权）。
+- `domain/constants.go`：上游 `PlatformKimi/Zhipu/Deepseek` + `AccountMode*` + `APIProtocol*` 与本地 `PlatformKiro` 并存。
+- `cmd/server/wire_gen.go`（L7b-2）：`provideCleanup` 实参顺序与 `wire.go` 对齐为 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`。
+- `EditAccountModal.vue`：Kiro native 提交分支保留；`account_mode` / `api_protocol` 只写进 legacy/apikey `else` 分支，不污染 native 凭证。
+- `cmd/server/wire_gen.go`（Kiro OAuth）：`ProvideAdminHandlers` 实参顺序与 `handler/wire.go` 对齐为 `...antigravityOAuth, kiroOAuth, grokOAuth, cnProvider...`。
+- `AccountUsageCell.vue`：CN provider 配额/余额单元格与 Kiro credits 余额 UI 做成两个独立 `v-else-if`；`showUsageWindows` 两边条件都保留。
+- `DEV_GUIDE.md`：两边都已是 1.26.6，采用上游更完整的 Dockerfile 同步说明。
+
+**本地补丁静态复核（逐项通过，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点；`kiroTokenProvider` 字段+构造；`PlatformKiro` 双锚点；L7b-2 四接缝（含 `CNProviderBalanceCheckService` 并存）；`SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；Kiro 401 冷却；credits 链路；usage log 列序（INSERT 60 / SELECT 61，`kiro_credits` 在 `created_at` 前）；web2api 路由与 failover；图片尺寸分级；OAuth `detachUpstreamContext` + `build_upstream_ms`；`UsesNativeKiroUpstream`；L8 前端组件与两 Modal 接缝；`AccountUsageCell` 同时有 CN 与 Kiro 分支。
+- `nanoid@<3.3.18: >=3.3.18` override 仍在 `frontend/package.json`。
+- 全仓无冲突标记。
+
+**生产迁移（本轮不在本机执行）**：
+- 上游新增 222–225：分组用量日汇总、rollup 时区、`user_platform_quotas` 加 CN 平台、渠道模型分时定价。部署时由 Actions 受控跑迁移。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果 / 待办**：
+- 本机只做源码级 rebase、冲突解决与只读静态核对；**未运行 build / test / vet，也未安装依赖**。
+- rebase 重写了 205 个本地提交，`origin/main` 仍为旧历史 `5e098c6b0`；推送必须使用 `git push --force-with-lease=main:5e098c6b0`。
+- 待推送后由 GitHub Actions 完成 CI、Security Scan、embed 构建与受控部署；结果待上线后补记。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
