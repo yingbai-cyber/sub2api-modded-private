@@ -1788,10 +1788,29 @@
 - 上游新增 222–225：分组用量日汇总、rollup 时区、`user_platform_quotas` 加 CN 平台、渠道模型分时定价。部署时由 Actions 受控跑迁移。
 - L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
-**验证结果 / 待办**：
-- 本机只做源码级 rebase、冲突解决与只读静态核对；**未运行 build / test / vet，也未安装依赖**。
-- rebase 重写了 205 个本地提交，`origin/main` 仍为旧历史 `5e098c6b0`；推送必须使用 `git push --force-with-lease=main:5e098c6b0`。
-- 待推送后由 GitHub Actions 完成 CI、Security Scan、embed 构建与受控部署；结果待上线后补记。
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对，以及两处上游测试隔离修补；**未运行 build / test / vet，也未安装依赖**。
+- rebase 重写了 205 个本地提交，以 `git push --force-with-lease=main:5e098c6b0` 更新 `origin/main`。
+
+**首轮 Actions（`be888ec49`，带 `[deploy]`）**：
+- **Security Scan** run `32049985703`：success。
+- **Build sub2api modded** run `32049985682`：构建 success，**Deploy 真实执行** success。服务 `active`，宿主机 `172.19.0.1:18081/health` = 200 `{"status":"ok"}`，`ActiveEnterTimestamp=2026-08-17 13:30:15 EDT`。
+- **CI** run `32049985656`：`shell` / `frontend` / `golangci-lint` success，**`test` failure**。失败测试与 upstream 源码 0 diff，属上游测试在 UTC runner 上的窗口问题：
+  1. `TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight` / `TestGroupUsageRollupTriggerKeepsWatermarkForTodayInsert`：223 后 trigger 用 session `TimeZone`，断言仍写死 `Asia/Shanghai`；17:29 UTC 时上海已是次日。
+  2. `TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant/session/object_with_extras`：map/raw 两路各调一次 `time.Now()`，`turn_started_at_unix_ms` 差 1ms。
+
+**测试隔离修补（`8d917a92a`，无 `[deploy]`，不二次部署）**：
+- rollup 集成测试事务钉死 `SET LOCAL TIME ZONE 'Asia/Shanghai'`。
+- fingerprint 比较前剥离 `turn_started_at_unix_ms`。
+
+**复验 Actions（`8d917a92a`）全绿**：
+- **CI** run `32050944397`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `32050944343`：success。
+- **Build** run `32050944375`：构建 success，**Deploy skipped**（提交标题无 `[deploy]`，沿用 `be888ec49` 已上线二进制）。
+
+**生产迁移 / L9**：
+- 上游新增 222–225 已随 `be888ec49` 部署由 Actions 受控执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
 ---
 
