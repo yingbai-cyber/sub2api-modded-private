@@ -1853,9 +1853,17 @@
 - **Build sub2api modded** run `32202326220`：构建 success，**Deploy 真实执行** success。产物 `sub2api-linux-amd64-239bcdaf6...`，`systemctl restart sub2api-modded.service`，宿主机与 NPM `/health` 均为 200。服务 `active`，`ActiveEnterTimestamp=2026-08-18 20:51:57 EDT`。
 - **CI** run `32202326211`：`shell` / `test` / `frontend` success，**`golangci-lint` failure**（仅 `setting_public.go:640` gofmt：冲突合并后 `PublicSettingsInjectionPayload` 字段列未对齐）。
 
-**gofmt 对齐修补（无 `[deploy]`，不二次部署）**：
+**gofmt 对齐修补（`32b7358bc`，无 `[deploy]`，不二次部署）**：
 - 手改 `ChannelMonitorShowQuota` 一组 `bool` 字段对齐；生产继续沿用 `239bcdaf6` 已上线二进制。
-- 复验 Actions 结果待该修补提交推送后补记。
+
+**复验 Actions（`32b7358bc`）全绿**：
+- **CI** run `32202951328`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `32202951297`：success。
+- **Build** run `32202951303`：构建 success，**Deploy skipped**（提交标题无 `[deploy]`）。
+
+**生产迁移 / L9**：
+- 上游新增 226 已随 `239bcdaf6` 部署由 Actions 受控执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
 ---
 
