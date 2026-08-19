@@ -1814,6 +1814,43 @@
 
 ---
 
+### 2026-08-19：rebase 到 upstream v0.1.178（49504adc9）
+**类型**：上游同步 rebase
+
+**背景**：
+- `upstream/main` 从上轮基线 `5253bb72b`（v0.1.177）推进到 `49504adc9`：新增 92 个提交，190 文件 +10800/-612；tag `v0.1.178` 落在 `e0c48a19e`，其后还有 `chore: sync VERSION to 0.1.178 [skip ci]`。源码 `backend/cmd/server/VERSION` 由 `0.1.177` 升到 `0.1.178`。
+- 上游本轮主要范围：
+  - **渠道监控配额模式**：migration 226 + `ChannelMonitorQuotaFetcher`，监控可展示账号额度/余额快照；公开设置 `channel_monitor_show_quota`（默认关）。
+  - **国产供应商渠道定价**：channel pricing 支持 kimi / zhipu / deepseek。
+  - **OpenAI/Codex**：fingerprint 身份对齐真实客户端、`prompt_cache_key` map/raw 等价、WS HTTP bridge 恢复 client tools、Team 联动熔断、bulk account settings。
+  - **Gemini / Antigravity**：`includeServerSideToolInvocations`、SSE `overloaded_error` 语义 529、混合 tool config。
+  - **其它**：邀请码领取原子化、Grok 用量条、Ops 错误详情自定义时间、passthrough 模型发现。
+- 本地 208 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260819T003900Z`（指向旧 `origin/main` = `3e6841b93`）。
+
+**冲突文件与合并策略**（4 个提交冲突，全为「两边都保留」型）：
+- `setting_public.go`：上游 `ChannelMonitorShowQuota` 与本地 `AvailableModelsEnabled` 同写进 `PublicSettingsInjectionPayload`。
+- `gateway_service.go`：上游 OpenAI passthrough「有透传账号则不让陈旧 mapping 定义白名单」短路，适配本地 `availableModelsQueryResult` 返回类型（不能再 `return nil`）；循环用本地 `for i := range accounts` + `availableModelMatchesDiscoveryPlatform`。
+- `gateway_hotpath_optimization_test.go`：上游 passthrough 默认回退测试与本地 discovery / mixed Antigravity 测试并存为独立用例。
+- `openai_codex_fingerprint_test.go`：上游 `cloneCodexFingerprintIDsForTest` / `prompt_cache_key` 等价与负例测试保留；本地 `stripCodexTurnStartedAt` 继续在 `rawVsMapClientMetadata` 比较前剥离 `turn_started_at_unix_ms`。rollup 时区隔离（`SET LOCAL TIME ZONE 'Asia/Shanghai'`）无冲突自动跟上。
+
+**本地补丁静态复核（逐项通过，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点（约 127–128 行）；`kiroTokenProvider` 字段+构造；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序仍为 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`，与 `wire.go` 一致）；上游新增的 `ChannelMonitorQuotaFetcher` 已进 `ProvideChannelMonitorRunner` / `wire_gen.go`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；Kiro 401 冷却；credits 链路；web2api 路由与 failover；图片尺寸分级；OAuth `detachUpstreamContext`；L8 前端组件与两 Modal 接缝（spec 在 `__tests__/`）；`AccountUsageCell` 同时有 CN 与 Kiro 分支。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `nanoid@<3.3.18: >=3.3.18` override 仍在 `frontend/package.json`。
+- Go 仍为 1.26.6；全仓无冲突标记。
+
+**生产迁移（本轮不在本机执行）**：
+- 上游新增 226：渠道监控配额模式。部署时由 Actions 受控跑迁移。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果 / 待办**：
+- 本机只做源码级 rebase、冲突解决与只读静态核对；**未运行 build / test / vet，也未安装依赖**。
+- rebase 重写了 208 个本地提交，`origin/main` 仍为旧历史 `3e6841b93`；推送必须使用 `git push --force-with-lease=main:3e6841b93`。
+- 待推送后由 GitHub Actions 完成 CI、Security Scan、embed 构建与受控部署；结果待上线后补记。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
