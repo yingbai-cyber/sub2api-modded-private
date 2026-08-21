@@ -1902,9 +1902,26 @@
 - L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
 **验证结果**：
-- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt，也未安装依赖**。
-- rebase 重写了 211 个本地提交，待以 `git push --force-with-lease=main:4913d9315` 更新 `origin/main`。
-- **待 GitHub Actions 验证** CI / Security Scan / Build；本提交标题含 `[deploy]`，预期 Build workflow 会真实部署。
+- 本机只做源码级 rebase、冲突解决、只读静态核对，以及 `grokImagineGCD` 的 int64 适配手改；**未运行 build / test / vet / gofmt，也未安装依赖**。
+- rebase 重写了 211 个本地提交，以 `git push --force-with-lease=main:4913d9315` 更新 `origin/main`。
+
+**首轮 Actions（`f02593d5e`，带 `[deploy]`）**：
+- **CI** run `32506120083`、**Security Scan** run `32506120234`、**Build** run `32506120231` 均 failure。
+- 唯一编译错误：本地 `parseImageBillingDimensions` 返回 `int64`，上游 `grokImagineGCD` 仍是 `int`（`grok_media_image_geometry.go:115-116`）。未部署，生产仍停留在 `239bcdaf6`。
+
+**GCD int64 适配（`e827dea43`，带 `[deploy]`）**：
+- 将 `grokImagineGCD` 改为 `int64`，比值用 `strconv.FormatInt`；保留本地大尺寸计费解析。
+
+**复验 Actions（`e827dea43`）全绿并部署**：
+- **CI** run `32506452397`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `32506452399`：success。
+- **Build** run `32506452417`：构建 success，**Deploy 真实执行** success。产物 `sub2api-linux-amd64-e827dea43b0d7cc92063367cf64f4c794eac1a22`，`systemctl restart sub2api-modded.service`，宿主机与 NPM `/health` 均为 200。服务 `active`，`ActiveEnterTimestamp=Fri 2026-08-21 13:15:10 EDT`，MainPID=`2189566`。
+- 部署 marker：`commit=e827dea43…`，`sha256=a7963faf3a6c5c8d2a81c4cb0c7ec4c5f94aac937bd775222eb0fd2e0cbbaa80`，`deployed_at=2026-08-21T17:15:14Z`，备份 `bin/sub2api.bak.32506452417.1`。
+- 本机只读：`172.19.0.1:18081/health` **200** `{"status":"ok"}`。
+
+**生产迁移 / L9**：
+- 上游新增 226（effective_model 索引，与已有 channel_monitor 226 同号）、227、228 已随 `e827dea43` 部署由 Actions 受控执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
 ---
 
