@@ -1867,6 +1867,47 @@
 
 ---
 
+### 2026-08-21：rebase 到 upstream v0.1.179（67380eafd）
+**类型**：上游同步 rebase
+
+**背景**：
+- `upstream/main` 从上轮基线 `49504adc9`（VERSION sync `0.1.178`）推进到 `67380eafd`：新增 **164** 个提交，402 文件 +28392/-3259。tag `v0.1.179` 落在 `75f88be5f`（PR #5876），其后还有 `2bc139ab5 chore: sync VERSION to 0.1.179 [skip ci]`，再往后 main 仍超前 tag **87** 个提交。源码 `backend/cmd/server/VERSION` 由 `0.1.178` 升到 `0.1.179`。
+- 上游本轮主要范围：
+  - **Grok 4.6**：默认模型迁移、Realtime / 容量冷却 / compaction / 429 同号重试、tool-search、内联图片。
+  - **OpenAI**：空 `openai_capabilities` 不再排除 OAuth 文本调度、sticky prefix、Responses 兼容、Chat 非流式缓冲 failover、WS 后续 turn 429、client tools 跨桥接保留。
+  - **国产供应商**：CN Anthropic 协议账号测试、额度刷新入口、header overrides、DeepSeek responses/relay、Composite 纳入 CN / Codex。
+  - **计费 / 渠道**：渠道服务层级与区间倍率（migration 228）、usage_log effective_model 索引（migration 226，与上轮 `226_channel_monitor_quota_mode.sql` **同号并存**）、Composite CN 路由（migration 227）。
+  - **其它**：adaptive API protocol、可配置 proxy probe、model plaza 公开发现、Antigravity 官方 daily endpoint、monitor UI 配额语义。
+- 本地 **211** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260821T164303Z`（指向旧 `origin/main` = `4913d9315`）。
+
+**冲突文件与合并策略**（10 个提交冲突，全为「两边都保留」型）：
+- `.gitignore`：保留上游 `.codegraph/` 与本地 `bin/` / `.narrafork/` 等忽略项。
+- `account.go` `SupportsOpenAIImageCapability`：本地 Basic/Native 拆分 + free/web2api Native 判定，同时把上游 `AccountTypeSetupToken` 加进 Basic 与 Native 资格。
+- `billing_service.go`：同时保留上游 `configuredServiceTierMultiplier` / `pricingWithPriorityMultiplier` / 官方 gpt-5.5 fallback 价，以及本地 `serviceTierCostMultiplierForModel` / `computeTokenBreakdownForModel`；else 分支先 configured，若仍是通用默认再走 model-specific。
+- `openai_gateway_{chat_completions,forward,passthrough}.go`：上游网关控制流 + 本地 TTFT 埋点；passthrough 保留函数级 `detachUpstreamContext` 与 `requestedModel`。
+- `gateway_forward_as_{chat_completions,responses}.go`：上游 `extractCCReasoningEffort` 新签名 / empty-stream 重试 + 本地 `AccountTypeKiro` 映射与 pool-mode 同号重试。
+- `CreateAccountModal.vue` / `EditAccountModal.vue`：Kiro native 录入/提交与 CN adaptive `account_mode`/`api_protocol` 并存。
+- `.github/audit-exceptions.yml`：上游 nanoid 例外与本地 form-data 例外都留。
+- `group_usage_rollup_trigger_integration_test.go`：参数化 `TimeZone` helper + 无参 Asia/Shanghai wrapper；fingerprint `stripCodexTurnStartedAt` 自动合入。
+
+**本地补丁静态复核（逐项通过，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点（约 137–138 行）；`kiroTokenProvider` 字段+构造；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序仍为 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`，与 `wire.go` 一致）；`ChannelMonitorQuotaFetcher` 仍在 `ProvideChannelMonitorRunner` / `wire_gen.go`。
+- `getAvailableModels` OpenAI passthrough 短路返回 `availableModelsQueryResult{}`，不是裸 `return nil`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；Kiro 401 冷却；credits 链路；web2api 路由与 failover；图片尺寸分级；OAuth `detachUpstreamContext`；L8 前端组件与两 Modal 接缝（spec 在 `__tests__/`）；`AccountUsageCell` 同时有 CN 与 Kiro 分支。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- Go 仍为 1.26.6；全仓无冲突标记。
+
+**生产迁移（本轮不在本机执行）**：
+- 上游新增：`226_add_usage_log_effective_model_indexes_notx.sql`（与已有 `226_channel_monitor_quota_mode.sql` 同号）、`227_composite_routes_add_cn_providers.sql`、`228_channel_pricing_multipliers.sql`。部署时由 Actions 受控跑迁移。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt，也未安装依赖**。
+- rebase 重写了 211 个本地提交，待以 `git push --force-with-lease=main:4913d9315` 更新 `origin/main`。
+- **待 GitHub Actions 验证** CI / Security Scan / Build；本提交标题含 `[deploy]`，预期 Build workflow 会真实部署。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
