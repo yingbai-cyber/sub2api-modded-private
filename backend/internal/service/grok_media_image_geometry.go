@@ -113,7 +113,7 @@ func grokImagineAspectRatioFromSize(size string) string {
 		return ""
 	}
 	div := grokImagineGCD(width, height)
-	exact := strconv.Itoa(width/div) + ":" + strconv.Itoa(height/div)
+	exact := strconv.FormatInt(width/div, 10) + ":" + strconv.FormatInt(height/div, 10)
 	for _, candidate := range grokImagineAspectRatioValues {
 		if candidate.label == exact {
 			return exact
@@ -132,7 +132,7 @@ func grokImagineAspectRatioFromSize(size string) string {
 	return bestLabel
 }
 
-func grokImagineGCD(a, b int) int {
+func grokImagineGCD(a, b int64) int64 {
 	if a < 0 {
 		a = -a
 	}
