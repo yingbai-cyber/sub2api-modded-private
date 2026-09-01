@@ -1967,7 +1967,29 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
-- 待推送后由 GitHub Actions 验证 CI / Security Scan / Build；本提交标题带 `[deploy]`，预期真实部署（Go 1.27 与插件/计费行为变化）。
+- rebase 重写了 213 个本地提交，以 `git push --force-with-lease=main:0d4f36ad2` 更新 `origin/main`。
+
+**首轮 Actions（`b3eaae70c`，带 `[deploy]`）**：
+- **CI** run `33461579446`、**Security Scan** run `33461579490`、**Build** run `33461579440` 均 failure。
+- 编译：`fetchUpstreamModelList` 已改为 `([]string, []byte, error)`，Kiro 分支仍 `return models, nil`。
+- 前端：`PaymentView` 充值预览测试期望 `{currency, usd}`，本地文案仍是 `1 RMB = {u} U`。未部署。
+
+**跟进修复（均带 `[deploy]`，未在本机跑测试）**：
+- `2a97e2d10`：Kiro 三返回值 + 预览同时传 `u` / `currency` / `usd`。
+- `4ac19e200`：去掉测试文件里重复的 `computeTokenBreakdown`；native_compaction_v2 断言改到倒数第 3 槽（`kiro_credits` 在倒数第 2）。
+- `f04e13a6f` / `eabaaf4a3`：usage_log 冲突残留 gofmt；曾误把 GPT-5.4/5.5 长上下文默认 272000 填回 fallback（与目录「显式 0 关闭阶梯」冲突，已撤回填值）。
+- `2e7317338`：长上下文仍走目录；本地 `usesOpenAILegacyLongContextPricing` 只参与策略分支，不再回填阈值。
+
+**复验 Actions（`2e7317338`）全绿并部署**：
+- **CI** run `33463515357`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `33463515349`：success。
+- **Build** run `33463515339`：构建 success，**Deploy 真实执行** success。产物 `sub2api-linux-amd64-2e73173388bf71bbc66fc1dea6fab58e618d63a8`，`systemctl restart sub2api-modded.service`，宿主机与 NPM `/health` 均为 200。服务 `active`，`ActiveEnterTimestamp=Mon 2026-08-31 22:49:38 EDT`，MainPID=`1701370`。
+- 部署 marker：`commit=2e7317338…`，`sha256=81ece3acd37050d9673451d750a7862334e0df9e2b1863ebc25df9721300be9d`，`deployed_at=2026-09-01T02:49:42Z`，备份 `bin/sub2api.bak.33463515339.1`。
+- 本机只读：`172.19.0.1:18081/health` **200** `{"status":"ok"}`；`docker exec npm-app curl` 亦为 200。
+
+**生产迁移 / L9**：
+- 上游新增 229–230 与三份 `231_*.sql` 已随 `2e7317338` 部署由 Actions 受控执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
 ---
 
