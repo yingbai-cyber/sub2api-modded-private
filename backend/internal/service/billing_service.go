@@ -2193,11 +2193,13 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	normalized := normalizeKnownOpenAICodexModel(model)
 	usesCacheWritePremium := isOpenAIGPT56Model(normalized) || isOpenAIGPT6AstraModel(normalized) || (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized) || openai.GPT62ModelID(normalized) != "")
 	needsMaxReasoningEffortMultiplier := isClaudeFable51Model(model) && pricing.MaxReasoningEffortMultiplier == nil
+	usesLegacyLongContextPricing := usesOpenAILegacyLongContextPricing(normalized)
 	needsCacheCreationPolicy := usesCacheWritePremium && !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
 	fastRatio := openAIModelFastPricingRatio(normalized)
 	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil
-	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier && !needsMaxReasoningEffortMultiplier {
+	// v0.1.184 起长上下文阶梯由价格目录驱动；显式 0 表示关闭，禁止再填 272000 默认值。
+	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier && !needsMaxReasoningEffortMultiplier && !usesLegacyLongContextPricing {
 		return pricing
 	}
 	cloned := *pricing
