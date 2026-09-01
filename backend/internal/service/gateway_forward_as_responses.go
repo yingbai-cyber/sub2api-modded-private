@@ -154,7 +154,6 @@ func (s *GatewayService) ForwardAsResponses(
 			return nil, fmt.Errorf("build upstream request: %w", err)
 		}
 
-
 		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 		if err != nil {
 			if resp != nil && resp.Body != nil {
