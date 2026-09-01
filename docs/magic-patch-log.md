@@ -1925,6 +1925,52 @@
 
 ---
 
+### 2026-09-01：rebase 到 upstream v0.1.184（2ac784c51）
+**类型**：上游同步 rebase
+
+**背景**：
+- `upstream/main` 从上轮基线 `67380eafd`（VERSION `0.1.179`）推进到 `2ac784c51`（`Merge pull request #6353`）：新增 **334** 个提交，595 文件 +45522/-3119。新 tag `v0.1.180` … `v0.1.184`；`v0.1.184` 落在 `e98ef32eb`，其后 main 仍继续前进。源码 `backend/cmd/server/VERSION` 由 `0.1.179` 升到 **`0.1.184`**。
+- 上游本轮主要范围：
+  - **Go 1.27.0**：`backend/go.mod` `go 1.26.6 → 1.27.0`；CI / Security Scan / Release 用 `go-version-file` 并 `grep go1.27.0`。
+  - **插件系统**：migration `229_plugins.sql` / `230_plugin_artifacts.sql`，`PluginManager` 进 `provideCleanup` 与 `ProvideAccountTestService`，公开开关 `PluginManagementEnabled`，`.gitignore` 增加 `/plugins/`。
+  - **usage_log / 分组**：`native_compaction_v2`、`requested_reasoning_effort`、用户限制公开分组；三个同号 `231_*.sql`（按 filename 主键都会执行）。
+  - **计费 / Codex**：长上下文阶梯改为价格目录数据驱动、`override_file` 价格覆盖、Codex priority service tier、WS 容量/回收、Anthropic Responses 流生命周期。
+  - **其它**：Grok Imagine 几何（上轮已本地适配 int64）、渠道/账号统计、delegation bootstrap、DB 启动瞬时重试。
+- 本地 **213** 个提交全部重放到 `upstream/main` 之上（replay 过程中空的 README Go 1.26.6 提交被跳过，故相对 rebase 前 214 少 1）。rebase 前打回溯分支 `backup/pre-rebase-20260901T014908Z`（指向旧 `origin/main` = `0d4f36ad2`）。
+
+**冲突文件与合并策略**（约 24 个提交冲突，全为「两边都保留」型）：
+- `.gitignore`：上游 `/plugins/` + `.codegraph/` + `.vite/`；本地 `.narrafork/` / `.worktrees/` / `bin/` / `backend/.tmp_admin_hash.go`。
+- `billing_service.go`：上游价格目录 / `applyCostBreakdownMultiplier` / `configuredServiceTierMultiplier` 与本地 GPT-5.5 fast 2.5x（`serviceTierCostMultiplierForModel` / `computeTokenBreakdownForModel`）并存。
+- TTFT：`config.go` 的 `Plugins` + `OpenAITTFTTrace`；网关发送保留上游 `doOpenAIUpstream` 插件传输与本地 `http_do_ms` / `upstream_headers_ms`。
+- 公开设置 / 前端：`PluginManagementEnabled` 与 `AvailableModelsEnabled` 并存；`CreateAccountModal` 的上游 `ModelWhitelistSelector` + 本地 `handleProbeModels`；EasyPay 文案保留 `1 RMB = {u} U`。
+- usage_log / credits：INSERT 列为 `session_id, native_compaction_v2, kiro_credits, created_at`，占位符 `$1–$62`；`RequestedReasoningEffort` 与 `KiroCredits` 两边字段都留。
+- 网关：empty-stream 重试走上游 `handleUpstreamTransportError`，同时保留 Kiro web_search 过滤、`AccountTypeKiro` 映射、pool-mode `RetryableOnSameAccount`。
+- wire：`provideCleanup` 在 `openAICodexVersionSync` 后插入 `kiroTokenRefresher`，末参保留 `openAIQuotaAutoReset` + `pluginManager`；`ProvideAccountTestService` 同时收 `kiroTokenProvider` + `pluginManager`；`ProvideAdminHandlers` 顺序 `antigravityOAuth, kiroOAuth, grokOAuth, cnProvider` 并保留 `pluginHandler`。
+- L8：`EditAccountModal` 的 Zhipu 团队版 / CN 凭据只写 legacy/apikey `else`；Kiro native 分支不污染。
+- `UsageProgressBar.vue`：上游 `labelWidth` + 本地 `variant`/`footnote`；compact 用 `labelSizeClass`，wide 保留 Kiro 单条撑满；测试两边都留。
+- `frontend/package.json` / lock：`nanoid@<3.3.18: >=3.3.18` + `postcss@<8.5.26` + 上游 `dompurify@<3.4.14`。
+- README 三语：本地「升到 1.26.6」已过时，取上游 **Go 1.27.0**。
+- `setting_public.go`：保留 `PluginManagementEnabled` 并对齐 bool 字段。
+
+**本地补丁静态复核（逐项通过，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点（约 137–138 行）；`kiroTokenProvider` 字段+构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`，与 `wire.go`/`wire_gen.go` 形参一致）。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；credits 链路；web2api 路由与 failover；图片尺寸分级；OAuth `detachUpstreamContext`；L8 前端组件与两 Modal 接缝；`AccountUsageCell` 同时有 CN 与 Kiro 分支。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 已是 `int64` + `strconv.FormatInt`（上轮 `912bae06e` 随 rebase 重放，本轮无需再改）。
+- `stripCodexTurnStartedAt` 仍在 fingerprint 测试中。
+- Go **1.27.0**；`nanoid@<3.3.18` override 仍在；全仓无冲突标记。
+
+**生产迁移（本轮不在本机执行）**：
+- 上游新增：`229_plugins.sql`、`230_plugin_artifacts.sql`、三份 `231_*.sql`（native_compaction_v2 / requested_reasoning_effort / restrict_public_groups）。部署时由 Actions 受控跑迁移；本仓库迁移 runner 以 **filename** 为主键，同号文件都会执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
+- 待推送后由 GitHub Actions 验证 CI / Security Scan / Build；本提交标题带 `[deploy]`，预期真实部署（Go 1.27 与插件/计费行为变化）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
