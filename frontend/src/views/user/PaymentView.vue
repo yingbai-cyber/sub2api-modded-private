@@ -73,7 +73,7 @@
                   <span class="text-lg font-bold text-emerald-700 dark:text-emerald-300">{{ creditedAmount.toFixed(2) }} U</span>
                 </div>
                 <p class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2) }) }}
+                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2), currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
               <p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
@@ -115,7 +115,7 @@
                   <span :class="bonusQuote.percent > 0 ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-900 dark:text-white'">{{ creditedAmount.toFixed(2) }} U</span>
                 </div>
                 <p class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2) }) }}
+                  {{ t('payment.rechargeRatePreview', { u: balanceRechargeMultiplier.toFixed(2), currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
             </div>
