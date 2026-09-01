@@ -1993,6 +1993,34 @@
 
 ---
 
+### 2026-09-01：rebase 到 upstream v0.1.185（a2fb09260）
+**类型**：上游同步 rebase（VERSION 对齐）
+
+**背景**：
+- 上一轮已把 `main` rebase 到 `2ac784c51`。该提交随后被官方打上 tag **`v0.1.185`**；当时源码 `VERSION` 仍为 `0.1.184`。
+- `upstream/main` 再前进 1 个提交：`a2fb09260 chore: sync VERSION to 0.1.185 [skip ci]`，仅改 `backend/cmd/server/VERSION`（`0.1.184` → `0.1.185`），0 个业务文件。
+- tag `v0.1.184` 实际落在更早的 `e98ef32eb`；上一轮按 VERSION 文件把 `2ac784c51` 记成 v0.1.184，代码内容与现 tag `v0.1.185` 相同。
+
+**改动摘要 / 冲突策略**：
+- rebase 前打回溯分支 `backup/pre-rebase-20260901T034722Z`（指向旧 `origin/main` = `17de9285b`）。
+- `git rebase upstream/main`：220 个本地提交**一次性零冲突**重放；`upstream/main` 已是 `main` 祖先；`HEAD...upstream/main` 仅 VERSION 这一行在 rebase 前不同。
+- 无源码冲突，无需择侧。本地补丁面相对上一轮部署提交无业务 diff。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro() → forwardKiro`；`ProvideKiroTokenRefresher` 在 `wire.go` / `wire_gen.go`；`grokImagineGCD` 仍为 `int64`。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- 全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 本轮上游无新 migration。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果 / 待办**：
+- 本机只做 fetch、rebase 与只读静态核对；**未运行 build / test / vet / gofmt / pnpm**。
+- 本提交标题带 `[deploy]`，待推送后由 GitHub Actions 完成 CI / Security Scan / Build 并部署，使生产二进制 VERSION 从 `0.1.184` 升到 `0.1.185`。Actions 结果待上线后补记。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
