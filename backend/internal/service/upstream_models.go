@@ -809,9 +809,9 @@ func (s *AccountTestService) fetchUpstreamModelListRequest(ctx context.Context, 
 	// upstream call is unavailable (e.g. legacy kiro-rs proxy accounts, or errors).
 	if account.IsKiro() {
 		if models, err := s.fetchKiroUpstreamModels(ctx, account); err == nil && len(models) > 0 {
-			return models, nil
+			return models, nil, nil
 		}
-		return kiroSupportedModelIDs(), nil
+		return kiroSupportedModelIDs(), nil, nil
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
