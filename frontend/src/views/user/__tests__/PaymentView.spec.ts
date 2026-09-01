@@ -325,11 +325,12 @@ describe('PaymentView recharge rate preview', () => {
     await flushPromises()
 
     expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
+      u: '0.50',
       currency: 'USD',
       usd: '0.50',
     })
-    expect(en.payment.rechargeRatePreview).toBe('Current rate: 1 {currency} = {usd} USD')
-    expect(zh.payment.rechargeRatePreview).toBe('当前倍率：1 {currency} = {usd} USD')
+    expect(en.payment.rechargeRatePreview).toBe('Credit rule: 1 RMB = {u} U')
+    expect(zh.payment.rechargeRatePreview).toBe('到账规则：1 RMB = {u} U')
   })
 })
 
