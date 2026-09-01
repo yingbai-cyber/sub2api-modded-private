@@ -2015,9 +2015,17 @@
 - 本轮上游无新 migration。
 - L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
 
-**验证结果 / 待办**：
+**验证结果**：
 - 本机只做 fetch、rebase 与只读静态核对；**未运行 build / test / vet / gofmt / pnpm**。
-- 本提交标题带 `[deploy]`，待推送后由 GitHub Actions 完成 CI / Security Scan / Build 并部署，使生产二进制 VERSION 从 `0.1.184` 升到 `0.1.185`。Actions 结果待上线后补记。
+- rebase 重写了 220 个本地提交，以 `git push --force-with-lease=main:17de9285b` 更新 `origin/main`。
+
+**Actions（`f05054902`，带 `[deploy]`）全绿并部署**：
+- **CI** run `33467559315`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `33467559325`：`backend-security` / `frontend-security` 均 success。
+- **Build** run `33467559347`：构建 success，**Deploy 真实执行** success。产物 `sub2api-linux-amd64-f050549027c74144164277cc65cfa22462e65391`，`systemctl restart sub2api-modded.service`，宿主机与 NPM `/health` 均为 200。服务 `active`，`ActiveEnterTimestamp=Mon 2026-08-31 23:56:17 EDT`，MainPID=`1731197`。
+- 部署 marker：`commit=f05054902…`，`sha256=9bb087a8e1118d16d99fe02c0c9af1db413d6df1b404de2dea79f9aa564eac25`，`deployed_at=2026-09-01T03:56:21Z`，备份 `bin/sub2api.bak.33467559347.1`。
+- 本机只读：`172.19.0.1:18081/health` **200** `{"status":"ok"}`。
+- 生产 VERSION 随该二进制升到 **0.1.185**。
 
 ---
 
