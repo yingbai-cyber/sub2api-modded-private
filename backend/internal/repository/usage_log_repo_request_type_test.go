@@ -961,8 +961,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
-			false, // native_compaction_v2
-			0.0,   // kiro_credits
+			false,             // native_compaction_v2
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1042,8 +1042,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
-			false, // native_compaction_v2
-			0.0,   // kiro_credits
+			false,             // native_compaction_v2
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1106,8 +1106,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
-			true, // native_compaction_v2
-			0.0,  // kiro_credits
+			true,              // native_compaction_v2
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
@@ -1171,8 +1171,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
-			false, // native_compaction_v2
-			0.0,   // kiro_credits
+			false,             // native_compaction_v2
+			0.0,               // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
