@@ -958,8 +958,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullFloat64{},
 			sql.NullString{},
-			false,             // native_compaction_v2
-			0.0,               // kiro_credits
+			false, // native_compaction_v2
+			0.0,   // kiro_credits
 			now,
 		}})
 		require.NoError(t, err)
