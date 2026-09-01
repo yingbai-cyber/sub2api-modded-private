@@ -38,10 +38,6 @@ func newTestBillingServiceWithOpenAILadderCatalog(t *testing.T) *BillingService 
 	return NewBillingService(&config.Config{}, newStubPricingServiceFromJSON(t, openAILadderCatalogJSON))
 }
 
-func (s *BillingService) computeTokenBreakdown(pricing *ModelPricing, tokens UsageTokens, rateMultiplier float64, serviceTier string, applyLongCtx bool) *CostBreakdown {
-	return s.computeTokenBreakdownForModel("", pricing, tokens, rateMultiplier, serviceTier, applyLongCtx)
-}
-
 func TestCalculateCost_BasicComputation(t *testing.T) {
 	svc := newTestBillingService()
 
