@@ -2067,7 +2067,23 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
-- rebase 重写了 222 个本地提交；`upstream/main` 已是 `main` 祖先。待带 `[deploy]` 的文档提交推送后由 GitHub Actions 验证并部署。
+- rebase 重写了 222 个本地提交，以 `git push --force-with-lease=main:938638b43` 更新 `origin/main`。
+
+**首轮 Actions（`fc0acb7ff`，带 `[deploy]`）**：
+- **Security Scan** run `34043844625`：success。
+- **CI** run `34043844627`：`shell` / `frontend` / `golangci-lint` success；**test failure**（`TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring` 仍按 `$62` 尾下标 -4 找 `upstream_request_id`，加入 `kiro_credits` 后该槽是 `session_id`）。
+- **Build** run `34043844638`：二进制已编出，Deploy 因后续 push 被 cancelled。未部署。
+
+**跟进修复（`2a86ff4ab`，带 `[deploy]`）**：
+- `usage_log_repo_insert_shape_unit_test.go`：`upstream_request_id` 改为倒数第 5 槽（尾序 `created_at, kiro_credits, native_compaction_v2, session_id, upstream_request_id`）。未在本机跑测试。
+
+**复验 Actions（`2a86ff4ab`）全绿并部署**：
+- **CI** run `34044301654`：`shell` / `test` / `frontend` / `golangci-lint` 均 success。
+- **Security Scan** run `34044301665`：success。
+- **Build** run `34044301685`：构建 success，**Deploy 真实执行** success。产物 `sub2api-linux-amd64-2a86ff4ab7deb60f9c4acd9cfb47dfa34551d25e`，`systemctl restart sub2api-modded.service`，宿主机与 NPM `/health` 均为 200。服务 `active`，`ActiveEnterTimestamp=Sun 2026-09-06 12:11:46 EDT`，MainPID=`4066917`。
+- 部署 marker：`commit=2a86ff4ab…`，`sha256=cd4f328da43fbdbc9c3de33a1f82de8f06c260b95e11363718b35f5d7b983fd3`，`deployed_at=2026-09-06T16:11:46Z`，备份 `bin/sub2api.bak.34044301685.1`。
+- 本机只读：`172.19.0.1:18081/health` **200** `{"status":"ok"}`；`docker exec npm-app curl` 亦为 200。
+- 生产 VERSION 随该二进制升到 **0.2.1**。
 
 ---
 
