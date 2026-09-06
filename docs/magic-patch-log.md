@@ -2029,6 +2029,48 @@
 
 ---
 
+### 2026-09-06：rebase 到 upstream v0.2.1（ab99d56e9）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `a2fb09260`（VERSION `0.1.185`）。本轮 `upstream/main` 推进到 `ab99d56e9 chore: sync VERSION to 0.2.1 [skip ci]`：新增 **142** 个提交（92 个非 merge），353 文件 +17374/-1402。新 tag **`v0.2.0`**（`aa2364883`）与 **`v0.2.1`**（`578785ee7`，VERSION 文件随后在 `ab99d56e9` 对齐）。源码 `backend/cmd/server/VERSION` 由 `0.1.185` 升到 **`0.2.1`**。Go 仍为 **1.27.0**。
+- 上游本轮主要范围：
+  - **GPT-6 Astra / Codex**：Astra 能力同步与 continuation、messages prompt cache、ultrafast service tier、pinned-accounts Codex model manifest、search capability。
+  - **分组 / 计费**：group Fast 与 free Fast、reasoning effort 上限（deny-or-downgrade）、Anthropic reasoning effort 定价、Fable 5.1 `MaxReasoningEffortMultiplier`、自定义定价文件按内容哈希热重载。
+  - **Kimi native OpenAI Responses**、GLM-5.3 thinking effort 归一、Gemini 自定义 native 模型列表。
+  - **usage_log**：`upstream_request_id` 落库（migration `232_add_usage_log_upstream_request_id.sql` + `233_*_index_notx.sql`）。
+  - **网关 / OpenAI**：转发失败立即释放会话槽、mapped-model 调度、passthrough reasoning、heartbeat/delegation bootstrap、生图 url→b64_json 回填（拒绝私网）、WS cyber / 空闲回收相关修。
+  - **其它**：精简 admin 账号列表 DTO、Alipay 对账、Claude CLI version 覆盖与 billing fingerprint、sidebar 折叠。
+- 本地 **222** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260906T154703Z`（指向旧 `origin/main` = `938638b43`）。
+
+**冲突文件与合并策略**（8 个提交冲突，全为「两边都保留」型）：
+- `http_upstream.go`：上游 `s.httpClientForUpstreamRequest` 方法化 + 本地 `withOpenAITTFTHTTPTrace`；Do / DoWithTLS 都先挂 TTFT httptrace 再走方法。
+- `AppSidebar.spec.ts`：上游 collapsible groups 与本地 available channels/models 目录条目测试并存。
+- `CreateAccountModal.vue`：上游 `withUpstreamRequestIdHeader(extra)` + 本地 `type === 'kiro'` 配额注入。
+- `usage_log_repo_insert.go` / `usage_log_repo_query.go` / `UsageView.vue`：`upstream_request_id` 与 `kiro_credits` 并存；INSERT 占位符 `$1–$63`；导出表同时带 kiro credits 与上游 request id。
+- `gateway_forward_as_{chat_completions,responses}.go`：取本地 empty-stream 重试循环；400 走已含 pool-mode `RetryableOnSameAccount` 的 helper。
+- `billing_service.go`：上游 Fable 5.1 `needsMaxReasoningEffortMultiplier` 与本地 GPT-5.5 fast 2.5x / `usesOpenAILegacyLongContextPricing` 并存；**不**在 threshold==0 时回填 272000。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点（约 137–138 行）；`kiroTokenProvider` 字段+构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`，末参 `pluginManager`）。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`；`ProvideAccountTestService` 同时收 `kiroTokenProvider` + `pluginManager`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；web2api 路由与 failover；OAuth `detachUpstreamContext`；L8 两 Modal 的 native 接缝；`AccountUsageCell` / `UsageProgressBar` 的 Kiro wide 变体。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 仍为 `int64` + `strconv.FormatInt`。
+- `stripCodexTurnStartedAt` 仍在 fingerprint 测试中。
+- `fetchUpstreamModelList` 仍为 `([]string, []byte, error)`，Kiro 分支三返回值。
+- Go **1.27.0**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 上游新增同号 migration：四份 `232_*.sql`（usage_log upstream_request_id / channel cache 1h / group force openai fast / group reasoning effort over limit）、两份 `233_*.sql`、两份 `234_*.sql`。部署时由 Actions 受控跑迁移；本仓库迁移 runner 以 **filename** 为主键，同号文件都会执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
+- rebase 重写了 222 个本地提交；`upstream/main` 已是 `main` 祖先。待带 `[deploy]` 的文档提交推送后由 GitHub Actions 验证并部署。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
