@@ -2087,6 +2087,55 @@
 
 ---
 
+### 2026-09-18：rebase 到 upstream v0.2.5（efe9aab1e）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `ab99d56e9`（VERSION `0.2.1`）。本轮 `upstream/main` 推进到 `efe9aab1e Merge pull request #7246 ...`：新增 **430** 个提交，803 文件 +45954/-4308。新 tag **`v0.2.2`**（`5485f368b`）、**`v0.2.3`**（`8fa67d477`）、**`v0.2.4`**（`5de5e2bed`）、**`v0.2.5`**（`86f93c28e`）；VERSION 文件随后在 `881f32026` 对齐到 **0.2.5**，head 再超前 tag 53 个提交。Go 仍为 **1.27.0**。
+- 上游本轮主要范围：
+  - **新平台**：MiniMax（migration `237_*`）、OpenCode Go（`238_opencode_go_platform.sql`，账号模式 Zen/GO）。
+  - **分组模型白名单**：`235_group_model_allowlist.sql` + `236_*_repair.sql`。
+  - **配额**：`238_purge_unlimited_user_platform_quotas.sql`；站点计费模式 recharge/subscription。
+  - **OpenAI / Codex**：GPT-6 Astra pro mode、gpt-image-2.5 OAuth、WS pool / 绑定 context、privacy CF challenge、plan-type 标签。
+  - **Antigravity / Gemini**：Gemini 3.8 Flash、SSE 分隔、attribution 429、token cache 隔离、mixed model listing。
+  - **DeepSeek / Grok**：官方模型名校验、native Responses 工具输出媒体、Grok media 槽位与 eligibility。
+  - **其它**：grpc 1.83.2、兑换分页、OAuth 暂停账号继续刷新、大量前端可访问性/支付/分页修。
+- 本地 **225** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260918T005604Z`（指向旧 `origin/main` = `d98a76709`）。
+
+**冲突文件与合并策略**（9 个提交冲突，全为「两边都保留」型）：
+- `openai_images_responses.go` / `openai_images_web2api.go`：本地 `shouldFailoverOpenAIImagesOAuthResponse` 与上游 `shouldFailoverOpenAIUpstreamResponse(account, ...)` 新签名并存。
+- `frontend/package.json`：上游 `check:i18n` 进 `build`，本地保留 `build:fast` / `build:check`。
+- `scheduler_cache.go`：`openai_images_transport` 与上游 `account_scheduling_threshold` 都留在 credentials 过滤键。
+- `routes/gateway.go`：`GET /images/capability` 改用上游 `rootRoute` helper，不回退旧 `r.GET` 中间件链。
+- `openai_gateway_chat_completions.go`：TTFT `SetOpenAITTFTTraceUpstreamStatus` + 上游 `cancelUpstream()` defer。
+- `setting_handler.go` / `setting_public.go` / `AppSidebar.vue`：本地 `AvailableModelsEnabled` 与上游 `SubscriptionEnabled` / `ChannelMonitorHideUserRanking` 并存。
+- `frontend/src/types/index.ts`：`AccountPlatform` 收 `minimax`/`opencode_go`；`AccountType` 仍含 `'kiro'`，**不含** kiro 平台。
+- `domain/constants.go`：`PlatformMiniMax` / `PlatformOpenCodeGo` 与 `PlatformKiro` 并存。
+- `EditAccountModal.vue`：Kiro native 提交分支 + OpenCode Zen vs GO 块放进 kiro legacy `<template>` 内，CN `account_mode` 用 `currentOpenCodeOrCNMode()`。
+- `wire_gen.go`：`ProvideAdminHandlers` 插入 `kiroOAuthHandler`；不重复声明已前移的 `ollamaCloudUsageService`。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点（约 137 行）；`kiroTokenProvider` 字段+构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → kiroTokenRefresher`，末参 `pluginManager`）。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`；`ProvideAccountTestService` 同时收 `kiroTokenProvider` + `pluginManager`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；web2api 路由与 failover（新 `account` 首参）；OAuth `detachUpstreamContext`；L8 两 Modal 的 native 接缝；`AccountUsageCell` / `UsageProgressBar` 的 Kiro wide 变体 + 上游 `labelWidth`。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek/minimax/opencode_go`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 仍为 `int64` + `strconv.FormatInt`。
+- `stripCodexTurnStartedAt` 仍在 fingerprint 测试中。
+- `getAvailableModels` 仍返回 `availableModelsQueryResult`，无 `return nil`。
+- usage_log INSERT 仍 `$1–$63`，尾序 `upstream_request_id, session_id, native_compaction_v2, kiro_credits, created_at`。
+- Go **1.27.0**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 上游新增同号 migration：`235_*` / `236_*`（分组模型白名单）、`237_*`（MiniMax）、两份 `238_*.sql`（OpenCode Go 平台 + 清洗 unlimited 配额）。部署时由 Actions 受控跑迁移；本仓库迁移 runner 以 **filename** 为主键，同号文件都会执行。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
+- rebase 重写了 225 个本地提交，待以 `git push --force-with-lease=main:d98a76709` 更新 `origin/main`。
+- **待 GitHub Actions 验证**（CI / Security Scan / Build+Deploy）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
