@@ -2,6 +2,11 @@ export default {
   nav: {
     accountCleanup: 'Account Cleanup'
   },
+  availableModels: {
+    stats: {
+      groups: 'Accessible Groups'
+    }
+  },
   admin: {
     accountCleanup: {
       title: 'Account Cleanup',
@@ -61,6 +66,25 @@ export default {
         groups: 'Current Groups',
         reason: 'Reason',
         lastUsed: 'Last Used'
+      }
+    },
+    accounts: {
+      whitelist: 'Whitelist',
+      probeModels: 'Probe models',
+      probeModelsHint: 'Fetch the model list from the upstream and fill the whitelist',
+      probeModelsLoading: 'Probing...',
+      probeModelsSuccess: 'Loaded {count} model(s)',
+      probeModelsEmpty: 'Upstream returned no models',
+      probeModelsFailed: 'Failed to probe models'
+    },
+    settings: {
+      features: {
+        availableModels: {
+          title: 'Available Models',
+          description: 'Show logged-in users the models, channels, groups, and pricing they can access. Disabled by default.',
+          enabled: 'Enable Available Models',
+          enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.'
+        }
       }
     }
   }

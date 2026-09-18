@@ -2,8 +2,28 @@ import { describe, expect, it } from 'vitest'
 
 import en from '../locales/en'
 import zh from '../locales/zh'
+import enModded from '../locales/modded/en'
+import zhModded from '../locales/modded/zh'
 
 type LocaleValue = Record<string, unknown>
+type LocaleMessages = Record<string, unknown>
+
+function isPlainObject(value: unknown): value is LocaleMessages {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function mergeLocaleMessages(base: LocaleMessages, overlay: LocaleMessages): LocaleMessages {
+  const merged: LocaleMessages = { ...base }
+  for (const [key, value] of Object.entries(overlay)) {
+    const existing = merged[key]
+    if (isPlainObject(value) && isPlainObject(existing)) {
+      merged[key] = mergeLocaleMessages(existing, value)
+    } else {
+      merged[key] = value
+    }
+  }
+  return merged
+}
 
 function flattenLeafKeys(value: unknown, prefix = ''): string[] {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -61,8 +81,10 @@ function missingKeys(usedKeys: string[], availableKeys: Set<string>): string[] {
 }
 
 describe('locale key completeness', () => {
-  const enKeys = new Set(flattenLeafKeys(en))
-  const zhKeys = new Set(flattenLeafKeys(zh))
+  const enMerged = mergeLocaleMessages(en as LocaleMessages, enModded as LocaleMessages)
+  const zhMerged = mergeLocaleMessages(zh as LocaleMessages, zhModded as LocaleMessages)
+  const enKeys = new Set(flattenLeafKeys(enMerged))
+  const zhKeys = new Set(flattenLeafKeys(zhMerged))
   const usedKeys = [...new Set(sourceKeys())].sort()
 
   it('keeps English and Chinese locale schemas identical', () => {
@@ -71,7 +93,7 @@ describe('locale key completeness', () => {
   })
 
   it('contains a non-empty message for every locale leaf', () => {
-    for (const [locale, messages] of Object.entries({ en, zh })) {
+    for (const [locale, messages] of Object.entries({ en: enMerged, zh: zhMerged })) {
       const emptyKeys = flattenLeafKeys(messages).filter((key) => {
         let current: unknown = messages
         for (const segment of key.split('.')) {
