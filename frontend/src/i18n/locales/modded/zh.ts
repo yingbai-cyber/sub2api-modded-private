@@ -2,6 +2,11 @@ export default {
   nav: {
     accountCleanup: '账号清理'
   },
+  availableModels: {
+    stats: {
+      groups: '可访问分组'
+    }
+  },
   admin: {
     accountCleanup: {
       title: '账号清理',
@@ -61,6 +66,25 @@ export default {
         groups: '当前分组',
         reason: '匹配原因',
         lastUsed: '最近使用'
+      }
+    },
+    accounts: {
+      whitelist: '白名单',
+      probeModels: '探测模型',
+      probeModelsHint: '从上游拉取模型列表并填入白名单',
+      probeModelsLoading: '探测中...',
+      probeModelsSuccess: '已加载 {count} 个模型',
+      probeModelsEmpty: '上游未返回模型',
+      probeModelsFailed: '探测模型失败'
+    },
+    settings: {
+      features: {
+        availableModels: {
+          title: '可用模型',
+          description: '向已登录用户展示他们能访问的模型、渠道、分组和定价。默认关闭。',
+          enabled: '启用可用模型',
+          enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。'
+        }
       }
     }
   }
