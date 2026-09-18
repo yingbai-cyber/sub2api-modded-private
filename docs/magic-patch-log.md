@@ -2131,8 +2131,24 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
-- rebase 重写了 225 个本地提交，待以 `git push --force-with-lease=main:d98a76709` 更新 `origin/main`。
-- **待 GitHub Actions 验证**（CI / Security Scan / Build+Deploy）。
+- rebase 重写了 225 个本地提交，以 `git push --force-with-lease=main:d98a76709` 更新 `origin/main`。
+
+**首轮 Actions（`250ead1c3`，带 `[deploy]`）**：
+- **Security Scan** run `35293882639`：success。
+- **CI** run `35293882602`：`shell` / `golangci-lint` success；**frontend failure**（`localeKeyCompleteness` 英文缺 69 个本地 overlay key）；**test failure**（`TestGetAvailableModels_FiltersMixedAntigravityModelsByNativePlatform` 仍按 3.6 列表断言）。
+- **Build** run `35293882614`：frontend `check:i18n` 同样失败，Deploy skipped。
+
+**跟进修复**：
+- `1d890eca4`：i18n completeness 测试合并 `locales/modded` overlay，并补 probe-models / available-models 文案。
+- `1298cc5a5`：discovery 测试期望补上 Gemini 3.7/3.8 Flash passthrough。
+
+**复验 Actions（`1298cc5a5`）全绿并部署**：
+- **CI** run `35294825861`：`shell` / `frontend` / `golangci-lint` / `test`（unit + integration）均 success。
+- **Security Scan** run `35294825849`：success。
+- **Build** run `35294825788`：构建 success，**Deploy 真实执行** success。产物备份 `bin/sub2api.bak.35294825788.1`，服务 `active`，`ActiveEnterTimestamp=Thu 2026-09-17 21:26:48 EDT`，MainPID=`4170938`。
+- 二进制 sha256=`1f61717caa0c4c33628c5780b211a4444d3293197f7b9158f7c44974439c3855`。
+- 本机只读：`172.19.0.1:18081/health` **200** `{"status":"ok"}`；`docker exec npm-app curl` 亦为 200。
+- 生产 VERSION 随该二进制升到 **0.2.5**。
 
 ---
 
