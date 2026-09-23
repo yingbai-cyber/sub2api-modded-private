@@ -144,7 +144,8 @@ func TestGroupReasoningPricingRoundTripAndBilling(t *testing.T) {
 		Name: t.Name(), Platform: service.PlatformAnthropic, RateMultiplier: 0.8,
 		Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard,
 		ModelPricing: []service.ChannelModelPricing{{
-			Platform: service.PlatformAnthropic, Models: []string{"claude-fable-5-1"}, BillingMode: service.BillingModeToken,
+			// 不要用 claude-fable-5-1：本地仍保留 max 隐式 3x，未配置 max 时会把本测试的 1x 断言打穿。
+			Platform: service.PlatformAnthropic, Models: []string{"claude-sonnet-4"}, BillingMode: service.BillingModeToken,
 			InputPrice: &inputPrice, OutputPrice: &outputPrice, ReasoningEffortMultipliers: allLevels,
 		}},
 	}
@@ -155,14 +156,14 @@ func TestGroupReasoningPricingRoundTripAndBilling(t *testing.T) {
 		t.Helper()
 		loaded, err := repo.GetByID(ctx, group.ID)
 		require.NoError(t, err)
-		requireReasoningPricingIntegrationMaps(t, loaded.ModelPricing, map[string]map[string]float64{"claude-fable-5-1": expected})
+		requireReasoningPricingIntegrationMaps(t, loaded.ModelPricing, map[string]map[string]float64{"claude-sonnet-4": expected})
 		for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", ""} {
 			multiplier := 1.0
 			if configured, ok := expected[effort]; ok {
 				multiplier = configured
 			}
 			cost, err := billing.CalculateTokenCostForRequest(service.TokenCostRequest{
-				Ctx: ctx, Model: "claude-fable-5-1", Group: loaded, Resolver: resolver,
+				Ctx: ctx, Model: "claude-sonnet-4", Group: loaded, Resolver: resolver,
 				Tokens:         service.UsageTokens{InputTokens: 1000, OutputTokens: 200},
 				RateMultiplier: loaded.RateMultiplier, ReasoningEffort: effort,
 			})
