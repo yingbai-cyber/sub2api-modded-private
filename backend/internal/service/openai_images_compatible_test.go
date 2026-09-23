@@ -19,6 +19,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// PNG magic so local isOpenAIImageUploadContentType accepts the multipart fixture.
+var compatibleImagesTestPNG = []byte("\x89PNG\r\n\x1a\nfake-png-payload")
+
 func TestCompatibleImagesGeminiModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, model := range []string{"gemini-2.5-flash-image", "gemini-2.5-flash-image-preview", "gemini-3-pro-image", "gemini-3.1-flash-image"} {
@@ -80,7 +83,7 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 				require.NoError(t, writer.WriteField("custom_field", "preserved"))
 				part, err := writer.CreateFormFile("image", "input.png")
 				require.NoError(t, err)
-				_, err = part.Write([]byte("original-image-bytes"))
+				_, err = part.Write(compatibleImagesTestPNG)
 				require.NoError(t, err)
 				require.NoError(t, writer.Close())
 				body, contentType = buf.Bytes(), writer.FormDataContentType()
@@ -119,7 +122,7 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 				defer file.Close()
 				data, err := io.ReadAll(file)
 				require.NoError(t, err)
-				require.Equal(t, "original-image-bytes", string(data))
+				require.Equal(t, compatibleImagesTestPNG, data)
 			} else {
 				require.Equal(t, model, gjson.GetBytes(upstream.lastBody, "model").String())
 				require.Equal(t, "preserved", gjson.GetBytes(upstream.lastBody, "custom_field").String())

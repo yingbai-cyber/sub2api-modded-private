@@ -21,6 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// PNG magic so local isOpenAIImageUploadContentType accepts the multipart fixture.
+var compatibleImagesTestPNG = []byte("\x89PNG\r\n\x1a\nfake-png-payload")
+
 type compatibleImagesAccounts struct {
 	service.AccountRepository
 	accounts []service.Account
@@ -133,7 +136,7 @@ func TestCompositeCompatibleImagesEndToEnd(t *testing.T) {
 				require.NoError(t, writer.WriteField("prompt", "draw"))
 				part, err := writer.CreateFormFile("image", "input.png")
 				require.NoError(t, err)
-				_, err = part.Write([]byte("fixture-image"))
+				_, err = part.Write(compatibleImagesTestPNG)
 				require.NoError(t, err)
 				require.NoError(t, writer.Close())
 				body, contentType = buf.Bytes(), writer.FormDataContentType()
