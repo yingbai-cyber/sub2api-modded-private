@@ -2196,8 +2196,18 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
-- rebase 重写了 229 个本地提交，待以 `git push --force-with-lease=main:d9cd1a014` 更新 `origin/main`。
-- **待 GitHub Actions 验证**（CI / Security Scan / Build+Deploy）。
+- rebase 重写了 229 个本地提交，以 `git push --force-with-lease=main:d9cd1a014` 更新 `origin/main`（`3ff265cbc`）。该文档提交误带 `[deploy]`，已触发 Build+Deploy。
+- **首轮 Actions（`3ff265cbc`）**：
+  - **Security Scan** run `35837498441`：success。
+  - **Build+Deploy** run `35837498480`：因误带 `[deploy]` 已执行；助手判定成功，sha256 / `/health` 未单独复核。
+  - **CI** run `35837498426`：**失败**（Unit tests）。与 rebase 冲突无关，是上游测试语义盖过本地补丁：
+    1. Fable 5.1：上游 `*HasNoImplicitReasoningMultiplier` 断言 xhigh==max（1x），本地仍保留 `MaxReasoningEffortMultiplier=3`，实际 0.30 vs 期望 0.10。
+    2. multipart 生图：本地 `isOpenAIImageUploadContentType` 拒绝无 PNG magic 的 `"original-image-bytes"` / `"fixture-image"`，返回 400 `multipart file image must be an image`。
+- **跟进修复**（本提交，**不带** `[deploy]`）：
+  - 计费测试改回本地 3x 断言（`Fable51MaxEffortUsesTripleQuota` / `Fable51MaxEffortUsesDefaultMultiplier`）。
+  - compatible / composite images 测试 fixture 换成带 PNG 签名的字节。
+  - 实现层未改：Fable 3x 与图片校验都保留。
+- **待 GitHub Actions 复验 CI**；CI 通过前不把本轮 rebase 标完成。
 
 ---
 
