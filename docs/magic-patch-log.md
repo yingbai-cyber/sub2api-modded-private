@@ -2211,8 +2211,17 @@
   - **Security Scan** run `35839406408`：success。
   - **Build** run `35839406432`：success（文档/测试提交，无 `[deploy]`，未再部署）。
   - **CI** run `35839406501`：Unit tests / frontend / golangci-lint 已过；**Integration tests 失败** `TestGroupReasoningPricingRoundTripAndBilling`：未配置 max 时本地 Fable 隐式 3x 得到 0.0042，上游断言 0.0014。
-- **再修**（本提交，**不带** `[deploy]`）：该集成测试改用 `claude-sonnet-4`，避免和 Fable 隐式 3x 叠乘；实现仍保留 3x。
-- **待 GitHub Actions 再复验 CI**；CI 通过前不把本轮 rebase 标完成。
+- **再修**（`26dbf45e0`，**不带** `[deploy]`）：该集成测试改用 `claude-sonnet-4`，避免和 Fable 隐式 3x 叠乘；实现仍保留 3x。
+- **复验 Actions（`26dbf45e0`）全绿**（未再部署；生产二进制仍是误带 `[deploy]` 的 `3ff265cbc`）：
+  - **CI** run `35840550917`：`shell` / `frontend` / `golangci-lint` / `test`（Unit tests + Integration tests）均 success。
+  - **Security Scan** run `35840550872`：success。
+  - **Build** run `35840550890`：构建 success，**Deploy skipped**（提交无 `[deploy]`）。
+- **生产只读复核（`3ff265cbc` 那次误部署，run `35837498480`）**：
+  - 备份 `bin/sub2api.bak.35837498480.1`；服务 `active`，`ActiveEnterTimestamp=Wed 2026-09-23 04:40:21 EDT`，MainPID=`34990`。
+  - 二进制 sha256=`4351ddb1816c240ed923cdfd5590d2397e3e67eaa639924544f1a5f980d55653`。
+  - `172.19.0.1:18081/health` **200** `{"status":"ok"}`；`docker exec npm-app curl` 亦为 200。
+  - 测试修复未改产品代码，无需为 `602e916b9` / `26dbf45e0` 再部署。
+- 本轮 rebase 到 upstream v0.2.7 **完成**（CI 复验通过；L9 仍未做）。
 
 ---
 
