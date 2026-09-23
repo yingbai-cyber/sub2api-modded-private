@@ -2152,6 +2152,55 @@
 
 ---
 
+### 2026-09-23：rebase 到 upstream v0.2.7（fd80b08c9）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `efe9aab1e`（VERSION `0.2.5`）。本轮 `upstream/main` 推进到 `fd80b08c9 Merge pull request #5616 ...`：新增 **255** 个提交，508 文件 +33297/-2176。新 tag **`v0.2.7`**（`aea725f2e`）；VERSION 文件对齐到 **0.2.7**，head 再超前 tag 237 个提交。Go 仍为 **1.27.0**。
+- 上游本轮主要范围：
+  - **OpenCode Go 用量窗口**：官方周/月配额查询、同 Key 组共享、自动刷新、列表 DTO。
+  - **Claude Code CLI 版本同步**：出站身份版本跟随官方发布。
+  - **新模型**：GPT-6 Sol / Luna、Claude Opus 5.5、Seedance native API（v0.2.7）。
+  - **计费 / 调度**：渠道 reasoning effort 倍率（migration `239_*`）、simple-mode key spending window、scheduling rate fallback。
+  - **运营**：线下提现登记、备份月度归档、日志保留、兑换/风控/支付前端修。
+  - **网关**：Antigravity Gemini 裸模型 thinking 变体、SSE 注释心跳、HTTP/2 keepalive、Responses stream error schema。
+  - **其它**：plugin host services status bridge、content moderation engine meta（`238b_*`）、affiliate ledger operation id（`240_*`）。
+- 本地 **229** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260923T075937Z`（指向旧 `origin/main` = `d9cd1a014`）。
+
+**冲突文件与合并策略**（全为「两边都保留」型）：
+- `.gitignore`：上游 `issues/` 与本地 `bin/` / `.narrafork/` / `.tmp_admin_hash.go` 并存。
+- `account.go`：上游独立 `OpenAIImagesCapabilityAPIKey` + 本地 Basic/Native 拆分；Basic/Native 资格含 `SetupToken`。
+- `config.go` / `http_upstream.go`：本地 `OpenAITTFTTrace` 与上游 `SimpleModeKeyRateLimitEnabled` 并存；解压留在 `doUpstreamRequest`，Do/DoWithTLS 只记 TTFT 状态。
+- `domain_constants.go`：上游 `SettingKeyOpenCodeGoUsageSettings` 与本地 `SettingKeyAvailableModelsEnabled` 并存。
+- `gateway_service.go`：上游 `mixedListing*` helper 与本地 `availableModelsQueryResult` / `availableModelMatchesDiscoveryPlatform` 并存；passthrough 短路禁止 `return nil`。
+- `frontend/src/api/admin/accounts.ts`：OpenCode Go usage API 与本地 `probeModels` 一并导出。
+- `gateway_forward_as_{chat_completions,responses}.go`：上游「先映射再转换」+ Opus 5.5 校验保留；转换后补回 Kiro `web_search` 过滤；empty-stream 重试从 `forwardedBody` 取 effort；failover 事件补 `ProxyID`/`ProxyName`。
+- `UsageView.vue`：上游 CSV `-` 转义与本地 Kiro Credits 导出列并存。
+- `wire.go` / `wire_gen.go` / `service/wire.go` / `wire_gen_test.go`：`ClaudeCodeVersionSyncService` 与 `KiroTokenRefresher` 并存；`ProvideAdminHandlers` 同时传 `kiroOAuthHandler` 与 `openCodeGoUsageService`；`ProvideAccountTestService` 同时收 `kiroTokenProvider`、上游 `ProvidePluginManager` + `pluginKVStore`。
+- `billing_service.go`：上游 Opus 5.5 Fast 2x、GPT-6 Sol/Luna cache-write premium 与本地 Fable 5.1 `MaxReasoningEffortMultiplier` 并存；**不**在 threshold==0 时回填 272000。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包 42 文件；`Forward` 的 `IsKiro()` 分发点；`kiroTokenProvider` 字段+构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → claudeCodeVersionSync → kiroTokenRefresher`，末参 `pluginManager`）。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`；`ProvideAccountTestService` 同时收 `kiroTokenProvider` + `pluginManager`。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；web2api 路由与 failover（`account` 首参）；OAuth `detachUpstreamContext`；L8 两 Modal 的 native 接缝；`createAccountAndFinish` 先 `withUpstreamRequestIdHeader` 再对 `apikey|bedrock|kiro` 注入配额；`AccountUsageCell` 的 CN / OpenCode / Kiro 独立 `v-else-if`；`UsageProgressBar` 的 Kiro wide 变体 + 上游 `labelWidth`。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek/minimax/opencode_go`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 仍为 `int64` + `strconv.FormatInt`。
+- `stripCodexTurnStartedAt` 仍在 fingerprint 测试中。
+- `getAvailableModels` 仍返回 `availableModelsQueryResult`，无 `return nil`。
+- usage_log INSERT 仍 `$1–$63`，尾序 `upstream_request_id, session_id, native_compaction_v2, kiro_credits, created_at`。
+- Go **1.27.0**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 上游新增 migration：`238b_content_moderation_engine_meta.sql`、`239_channel_reasoning_effort_multipliers.sql`、`240_affiliate_ledger_operation_id.sql`。部署时由 Actions 受控跑迁移；本仓库迁移 runner 以 **filename** 为主键。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
+- rebase 重写了 229 个本地提交，待以 `git push --force-with-lease=main:d9cd1a014` 更新 `origin/main`。
+- **待 GitHub Actions 验证**（CI / Security Scan / Build+Deploy）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
