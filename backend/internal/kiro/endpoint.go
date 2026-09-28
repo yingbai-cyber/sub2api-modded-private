@@ -117,9 +117,8 @@ func (e *ideEndpoint) DecorateAPI(h http.Header, ctx *RequestContext) {
 	h.Set("amz-sdk-invocation-id", newInvocationID())
 	h.Set("amz-sdk-request", "attempt=1; max=3")
 	h.Set("Authorization", "Bearer "+ctx.Token)
-	if arn := ctx.Credentials.EffectiveProfileArn(); arn != "" {
-		h.Set("x-amzn-kiro-profile-arn", arn)
-	}
+	// Zyphr IdeEndpoint::decorate_api does not send x-amzn-kiro-profile-arn;
+	// the ARN belongs in the JSON body via TransformAPIBody.
 	if tt := ctx.Credentials.TokenTypeHeader(); tt != "" {
 		h.Set("TokenType", tt)
 	}

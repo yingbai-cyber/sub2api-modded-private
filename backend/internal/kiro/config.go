@@ -11,7 +11,7 @@ import "strings"
 const (
 	defaultRegion        = "us-east-1"
 	defaultKiroVersion   = "0.12.333"
-	defaultSystemVersion = "darwin#24.6.0"
+	defaultSystemVersion = "macos"
 	defaultNodeVersion   = "22.22.0"
 
 	// usageAPIKiroVersion is the Q REST / ListAvailableProfiles User-Agent

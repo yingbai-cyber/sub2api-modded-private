@@ -36,8 +36,8 @@ func TestIdeEndpointURLAndHeaders(t *testing.T) {
 	if !strings.Contains(h.Get("user-agent"), "KiroIDE-") {
 		t.Errorf("user-agent = %q; want KiroIDE marker", h.Get("user-agent"))
 	}
-	if h.Get("x-amzn-kiro-profile-arn") != c.ProfileArn {
-		t.Errorf("profile-arn header = %q", h.Get("x-amzn-kiro-profile-arn"))
+	if h.Get("x-amzn-kiro-profile-arn") != "" {
+		t.Errorf("generate API must not send profile-arn header; got %q", h.Get("x-amzn-kiro-profile-arn"))
 	}
 	// social credential => no TokenType header.
 	if h.Get("TokenType") != "" {
