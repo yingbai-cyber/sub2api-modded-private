@@ -2225,6 +2225,31 @@
 
 ---
 
+### 2026-09-28：Kiro IdC Profile 发现与用量/模型 REST 兼容
+**类型**：反代适配 / 故障修复
+
+**背景**：
+- 新建 Kiro 账号 #5003（`type=kiro`、`platform=anthropic`）连接测试收到上游 HTTP 400，提示流式请求必须携带 `profileArn`；本地虽有 `ListAvailableProfiles`，此前没有接入调用路径。
+- 参考 ZyphrZero/kiro.rs v0.9.0 的 Profile 发现和用量接口修复；该仓库是协议参考，**不是**本机停用的旧 Rust 服务来源。官方 sub2api 不提供此 Kiro 原生链路。
+
+**改动摘要**（`ab990991d`）：
+- `internal/kiro`：IdC/Social 缺 ARN 时跨地区扫描真实 Profile；完整空扫描后才允许流式 Builder ID / Social 兼容 ARN，REST 只带真实 ARN；推理区域按真实 ARN 选择，显式区域冲突时报错，不在部分扫描或身份不明时随意绑定。
+- `service/kiro_token_provider.go` + `repository/account_repo.go`：同账号、同代理解析有效 token 后发现 Profile；按 `type='kiro'`（**不是** `platform='kiro'`）以 JSONB CAS 增量持久化 ARN / 刷新 token，并在同一 SQL 中写 scheduler outbox；只在 Profile-only 并发变化时复用或重试，失败不使用未落库的新 token。
+- `internal/kiro/upstream_api.go`：用量 GET 增 `isEmailRequired=true`，模型与用量 GET URL 编码真实 `profileArn`；按 SSO 区域 US/EU 有限候选回退，只对 403 或带 ARN 时特定 400 继续，429/其他错误直接返回。Builder 占位 ARN 不进 REST。
+- 账号连接测试复用原生 Provider 与账号代理；上游事件错误、解码失败、空内容不再假报成功。原生模型同步失败不再静态伪装为实时权限；用量结果含 Error 不再清除账号错误。保留 legacy `base_url + api_key` 透传行为。
+
+**rebase 风险点**：
+- Kiro 仍以 `type=kiro`、`platform=anthropic` 存储；若将来迁移 L9，须同步审查用量分派、调度组平台与账号类型判据。不得把 CAS 改回旧 credentials 整体覆盖，也不得把 REST 的 400 重试搬到推理 POST。
+- `internal/kiro/` 是本地独立包；`service/kiro_token_provider.go`、账号测试/用量分派、模型同步与 `repository/account_repo.go` 的窄 CAS 接缝均需在上游 rebase 后保留。
+
+**验证结果**：
+- 本机仅做 gofmt、`git diff --check` 静态核验；**未在生产服务器运行构建或测试，未手动重启**。
+- 首轮 `ab990991d`：Security Scan success；CI / Build 的 repository 单元测试因新增 sqlmock 用例未声明连接关闭期望而失败，Deploy skipped。`30c8ca8e9` 补上 `ExpectClose`，只改测试代码。
+- `30c8ca8e9`：CI `36372975540` 的 lint / frontend / unit+integration / shell / release-helpers 全绿；Security Scan `36372975569` success；Build `36372975527` success，Deploy skipped（该提交不带 `[deploy]`）。
+- 生产部署须由带 `[deploy]` 的 Actions 工作流受控执行，并核对新二进制、服务状态、宿主机与 NPM 回源健康；#5003 的真实连通仍待上线后验证。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
