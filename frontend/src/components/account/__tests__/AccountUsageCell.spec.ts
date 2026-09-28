@@ -1741,4 +1741,75 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).not.toContain('7d S')
     expect(wrapper.text()).not.toContain('7d F')
   })
+
+  const kiroBalance = {
+    subscription_title: 'KIRO POWER',
+    current_usage: 84.42,
+    usage_limit: 10000,
+    remaining: 9915.58,
+    usage_percentage: 0.8442,
+    next_reset_at: 1790812800
+  }
+
+  const kiroStubs = {
+    UsageProgressBar: {
+      props: ['label', 'utilization', 'footnote'],
+      template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ footnote }}</div>'
+    },
+    AccountQuotaInfo: true
+  }
+
+  it('Kiro 账号在未托管批量时会自行拉取 getUsageLimits 余量', async () => {
+    getUsage.mockResolvedValue({
+      source: 'active',
+      kiro_balance: kiroBalance
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 5004, platform: 'anthropic', type: 'kiro' })
+      },
+      global: { stubs: kiroStubs }
+    })
+
+    await flushPromises()
+    expect(getUsage).toHaveBeenCalledWith(5004)
+    expect(wrapper.text()).toContain('KIRO POWER')
+    expect(wrapper.text()).toContain('credits|0.8442|9915.6 / 10000')
+  })
+
+  it('Kiro 账号在桌面批量托管但父级未入队时不会自行拉取，只显示占位短横', async () => {
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 5004, platform: 'anthropic', type: 'kiro' }),
+        requestBatchedUsage
+      },
+      global: { stubs: kiroStubs }
+    })
+
+    await flushPromises()
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(requestBatchedUsage).toHaveBeenCalled()
+    expect(wrapper.text().trim()).toBe('-')
+  })
+
+  it('Kiro 账号使用批量 usage 中的 kiro_balance 渲染进度条', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 5004, platform: 'anthropic', type: 'kiro' }),
+        requestBatchedUsage: vi.fn(),
+        batchedUsage: {
+          source: 'active',
+          kiro_balance: kiroBalance
+        }
+      },
+      global: { stubs: kiroStubs }
+    })
+
+    await flushPromises()
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('KIRO POWER')
+    expect(wrapper.text()).toContain('credits|0.8442|9915.6 / 10000')
+  })
 })
