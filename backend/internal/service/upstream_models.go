@@ -734,14 +734,14 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 		return nil, nil, newUpstreamModelSyncConfigError("Account is required", nil)
 	}
 
-	// Kiro accounts: fetch the live model list from the upstream ListAvailableModels
-	// API (mirrors kiro-rs models_cache). Falls back to the static list if the
-	// upstream call is unavailable (e.g. legacy kiro-rs proxy accounts, or errors).
+	// Only legacy kiro-rs proxy accounts use the static list. Native accounts
+	// must report live upstream failures rather than claim a successful sync.
 	if account.IsKiro() {
-		if models, err := s.fetchKiroUpstreamModels(ctx, account); err == nil && len(models) > 0 {
-			return models, nil, nil
+		if !kiro.ParseCredentials(account.ID, account.Credentials, account.Extra).UsesNativeUpstream() {
+			return kiroSupportedModelIDs(), nil, nil
 		}
-		return kiroSupportedModelIDs(), nil, nil
+		models, err := s.fetchKiroUpstreamModels(ctx, account)
+		return models, nil, err
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
@@ -1257,7 +1257,11 @@ func (s *AccountTestService) fetchKiroUpstreamModels(ctx context.Context, accoun
 			models = append(models, id)
 		}
 	}
-	return dedupeAndSortModelIDs(models), nil
+	models = dedupeAndSortModelIDs(models)
+	if len(models) == 0 {
+		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
+	}
+	return models, nil
 }
 
 func (s *AccountTestService) doUpstreamModelsRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {

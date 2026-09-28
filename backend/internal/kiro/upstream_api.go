@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,41 +35,12 @@ type ListModelsResponse struct {
 	Models []UpstreamModelInfo `json:"models"`
 }
 
-// ListAvailableModels calls the Kiro upstream ListAvailableModels API.
-// URL: GET https://q.{region}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&maxResults=50
-// client may be nil (a default 30s client is used); pass a proxied client to
-// preserve IP consistency with the account's streaming requests.
+// ListAvailableModels queries the Kiro REST API with the account's SSO region
+// ordering. Pass a proxied client to preserve IP consistency with streaming.
 func ListAvailableModels(ctx context.Context, client *http.Client, cred *Credentials, token string, cfg *Config) ([]UpstreamModelInfo, error) {
-	region := cred.EffectiveAPIRegion(cfg)
-	host := "q." + region + ".amazonaws.com"
-	url := "https://" + host + "/ListAvailableModels?origin=AI_EDITOR&maxResults=50"
-
-	machineID := GenerateMachineID(cred, "")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("kiro ListAvailableModels: build request: %w", err)
-	}
-
-	setListModelsHeaders(req.Header, host, machineID, cfg, cred, token)
-
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("kiro ListAvailableModels: request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("kiro ListAvailableModels: HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result ListModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("kiro ListAvailableModels: decode: %w", err)
+	if err := getREST(ctx, client, cred, token, cfg, "ListAvailableModels", "origin=AI_EDITOR", &result); err != nil {
+		return nil, err
 	}
 	return result.Models, nil
 }
@@ -182,101 +155,96 @@ func (r *UsageLimitsResponse) ComputeBalance() BalanceResult {
 	}
 }
 
-// GetUsageLimits calls the Kiro upstream getUsageLimits API.
-// URL: GET https://q.{region}.amazonaws.com/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST
-// client may be nil (a default 60s client is used); pass a proxied client to
-// preserve IP consistency with the account's streaming requests.
+// GetUsageLimits queries the Kiro REST API, requesting email-related usage too.
+// Pass a proxied client to preserve IP consistency with streaming.
 func GetUsageLimits(ctx context.Context, client *http.Client, cred *Credentials, token string, cfg *Config) (*UsageLimitsResponse, error) {
-	region := cred.EffectiveAPIRegion(cfg)
-	host := "q." + region + ".amazonaws.com"
-	url := "https://" + host + "/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST"
-
-	machineID := GenerateMachineID(cred, "")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("kiro getUsageLimits: build request: %w", err)
-	}
-
-	setUsageLimitsHeaders(req.Header, host, machineID, cfg, cred, token)
-
-	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("kiro getUsageLimits: request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("kiro getUsageLimits: HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result UsageLimitsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("kiro getUsageLimits: decode: %w", err)
+	if err := getREST(ctx, client, cred, token, cfg, "getUsageLimits", "origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true", &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Header helpers
-// ──────────────────────────────────────────────────────────────────────────────
-//
-// The two upstream GET endpoints use *different* SDK version strings and header
-// sets. These are transcribed verbatim from kiro-rs to preserve the IDE request
-// fingerprint (matters for upstream anti-abuse):
-//   - ListAvailableModels: models_cache.rs fetch_models_from_api
-//   - getUsageLimits:      token_manager.rs get_usage_limits
-
-// setListModelsHeaders mirrors kiro-rs models_cache.rs.
-// UA: codewhispererstreaming#1.0.34; includes Accept + optout; no amz-sdk-* / Connection.
-func setListModelsHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
-	kiroVer := cfg.kiroVersion()
-	userAgent := "aws-sdk-js/1.0.34 ua/2.1 os/" + cfg.systemVersion() +
-		" lang/js md/nodejs#" + cfg.nodeVersion() +
-		" api/codewhispererstreaming#1.0.34 m/E KiroIDE-" +
-		kiroVer + "-" + machineID
-	amzUserAgent := "aws-sdk-js/1.0.34 KiroIDE-" + kiroVer + "-" + machineID
-
-	h.Set("Accept", "application/json")
-	h.Set("user-agent", userAgent)
-	h.Set("x-amz-user-agent", amzUserAgent)
-	h.Set("x-amzn-codewhisperer-optout", "true")
-	h.Set("host", host)
-	h.Set("Authorization", "Bearer "+token)
-
-	if cred.ProfileArn != "" {
-		h.Set("x-amzn-kiro-profile-arn", cred.ProfileArn)
+// getREST follows the kiro.rs v0.9.0 REST attempt order: real ARN, then no ARN,
+// for each of the two supported regions. Only permission/ARN compatibility
+// failures advance to the next candidate; transport and other HTTP errors do not.
+func getREST(ctx context.Context, client *http.Client, cred *Credentials, token string, cfg *Config, endpoint, query string, result any) error {
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
 	}
-	if tt := cred.TokenTypeHeader(); tt != "" {
-		h.Set("TokenType", tt)
+	regions := [2]string{"us-east-1", "eu-central-1"}
+	if strings.HasPrefix(cred.EffectiveAuthRegion(cfg), "eu-") {
+		regions[0], regions[1] = regions[1], regions[0]
 	}
+	profileArn := cred.EffectiveProfileArn()
+	machineID := GenerateMachineID(cred, "")
+
+	var lastErr error
+	arns := []string{""}
+	if profileArn != "" {
+		arns = []string{profileArn, ""}
+	}
+	for _, region := range regions {
+		host := "q." + region + ".amazonaws.com"
+		for _, arn := range arns {
+			requestURL := "https://" + host + "/" + endpoint + "?" + query
+			if arn != "" {
+				requestURL += "&profileArn=" + url.QueryEscape(arn)
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+			if err != nil {
+				return fmt.Errorf("kiro %s: build request: %w", endpoint, err)
+			}
+			setRESTHeaders(req.Header, host, machineID, cfg, cred, token)
+			req.Host = host
+			req.Close = true
+
+			resp, err := client.Do(req)
+			if err != nil {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				return fmt.Errorf("kiro %s: request failed: %w", endpoint, err)
+			}
+			if resp.StatusCode == http.StatusOK {
+				err = json.NewDecoder(resp.Body).Decode(result)
+				_ = resp.Body.Close()
+				if err != nil {
+					return fmt.Errorf("kiro %s: decode: %w", endpoint, err)
+				}
+				return nil
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				return fmt.Errorf("kiro %s: read HTTP %d: %w", endpoint, resp.StatusCode, readErr)
+			}
+			if resp.StatusCode == http.StatusForbidden ||
+				(resp.StatusCode == http.StatusBadRequest && arn != "" &&
+					(strings.Contains(string(body), "Improperly formed request") || strings.Contains(string(body), "Invalid profileArn"))) {
+				// The next candidate uses no ARN in the same region, then the other region.
+				lastErr = fmt.Errorf("kiro %s: HTTP %d: %s", endpoint, resp.StatusCode, string(body))
+				continue
+			}
+			return fmt.Errorf("kiro %s: HTTP %d: %s", endpoint, resp.StatusCode, string(body))
+		}
+	}
+	return lastErr
 }
 
-// setUsageLimitsHeaders mirrors kiro-rs token_manager.rs get_usage_limits.
-// UA: codewhispererruntime#1.0.0 (m/N,E); includes amz-sdk-* + Connection; no Accept/optout.
-func setUsageLimitsHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
-	kiroVer := cfg.kiroVersion()
-	userAgent := "aws-sdk-js/1.0.0 ua/2.1 os/" + cfg.systemVersion() +
-		" lang/js md/nodejs#" + cfg.nodeVersion() +
-		" api/codewhispererruntime#1.0.0 m/N,E KiroIDE-" +
-		kiroVer + "-" + machineID
-	amzUserAgent := "aws-sdk-js/1.0.0 KiroIDE-" + kiroVer + "-" + machineID
-
-	h.Set("user-agent", userAgent)
-	h.Set("x-amz-user-agent", amzUserAgent)
-	h.Set("host", host)
+// setRESTHeaders matches kiro.rs v0.9.0 token_manager.rs for both REST GETs.
+// The 0.9.2 usage fingerprint is intentionally independent of the IDE version.
+func setRESTHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
+	const kiroVersion = "0.9.2"
+	h.Set("User-Agent", "aws-sdk-js/1.0.0 ua/2.1 os/"+cfg.systemVersion()+
+		" lang/js md/nodejs#"+cfg.nodeVersion()+
+		" api/codewhispererruntime#1.0.0 m/N,E KiroIDE-"+kiroVersion+"-"+machineID)
+	h.Set("x-amz-user-agent", "aws-sdk-js/1.0.0 KiroIDE-"+kiroVersion+"-"+machineID)
+	h.Set("Host", host)
 	h.Set("amz-sdk-invocation-id", uuid.NewString())
 	h.Set("amz-sdk-request", "attempt=1; max=1")
 	h.Set("Authorization", "Bearer "+token)
 	h.Set("Connection", "close")
-
-	if cred.ProfileArn != "" {
-		h.Set("x-amzn-kiro-profile-arn", cred.ProfileArn)
-	}
 	if tt := cred.TokenTypeHeader(); tt != "" {
 		h.Set("TokenType", tt)
 	}

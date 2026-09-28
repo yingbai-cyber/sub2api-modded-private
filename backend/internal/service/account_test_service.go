@@ -547,31 +547,17 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		cred := kiro.ParseCredentials(account.ID, account.Credentials, account.Extra)
 		if cred.UsesNativeUpstream() {
 			// Native kiro: resolve token (lazy refresh if expired).
-			_, token, err := s.kiroTokenProvider.Resolve(ctx, account)
+			if s.kiroTokenProvider == nil || s.httpUpstream == nil {
+				return s.sendErrorAndEnd(c, "Kiro token provider or upstream HTTP client is not configured")
+			}
+			resolvedCred, token, err := s.kiroTokenProvider.Resolve(ctx, account)
 			if err != nil {
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro token resolve failed: %s", err.Error()))
 			}
 
-			// Build upstream URL via kiro endpoint registry.
-			reqCtx := &kiro.RequestContext{
-				Credentials: cred,
-				Token:       token,
-				MachineID:   kiro.GenerateMachineID(cred, ""),
-				Config:      kiro.DefaultConfig(),
-			}
-			eps := kiro.NewEndpointRegistry()
-			epName := kiro.EndpointIDE
-			if cred.Endpoint != "" {
-				epName = cred.Endpoint
-			}
-			ep, ok := eps[epName]
-			if !ok {
-				ep = eps[kiro.EndpointIDE]
-			}
-			apiURL = ep.APIURL(reqCtx)
+			// Use the same native request preparation and provider as the gateway.
+			// Resolve may refresh credentials (including endpoint/profile fields).
 
-			// Kiro native requires a different request format; use kiro.PrepareRequest
-			// to build the body, then send directly.
 			testPayload, err := createTestPayload(testModelID)
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create test payload")
@@ -594,48 +580,57 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 			s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
-			// Build HTTP request with endpoint decoration (inject profileArn etc).
-			transformedBody := ep.TransformAPIBody(pr.RequestBody, reqCtx)
-			reqBody := []byte(transformedBody)
-			req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(reqBody))
+			// The HTTPUpstream adapter preserves the account's proxy and connection
+			// isolation, while Provider honors an explicit endpoint or tries IDE→CLI.
+			client := &http.Client{Transport: &kiroUpstreamRoundTripper{
+				upstream:    s.httpUpstream,
+				proxyURL:    resolveAccountProxyURL(account),
+				accountID:   account.ID,
+				concurrency: account.Concurrency,
+			}}
+			provider := kiro.NewProvider(client, kiro.NewEndpointRegistry(), nil)
+			resp, err := provider.Forward(ctx, &kiro.ForwardInput{
+				Credentials: resolvedCred,
+				Token:       token,
+				MachineID:   kiro.GenerateMachineID(resolvedCred, ""),
+				Config:      kiro.DefaultConfig(),
+				RequestBody: pr.RequestBody,
+				Model:       pr.UpstreamModel,
+				ForceRefresh: func(ctx context.Context) (string, error) {
+					return s.kiroTokenProvider.ForceRefresh(ctx, account, resolvedCred)
+				},
+			})
 			if err != nil {
-				return s.sendErrorAndEnd(c, "Failed to create kiro request")
-			}
-			req.Header.Set("Content-Type", "application/json")
-			ep.DecorateAPI(req.Header, reqCtx)
-			req.Header.Set("Authorization", "Bearer "+token)
-
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream request failed: %s", err.Error()))
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream request failed: %s", err))
 			}
 			defer func() { _ = resp.Body.Close() }()
 
-			if resp.StatusCode >= 400 {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-				return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream returned %d: %s", resp.StatusCode, string(body)))
-			}
-
 			// Decode kiro EventStream response and extract assistant text.
-			s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("endpoint: %s", epName)})
+			s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("endpoint: %s", resp.Endpoint)})
 			decoder := kiro.NewEventDecoder(resp.Body)
 			var gotContent bool
 			for {
 				ev, err := decoder.Next()
-				if err != nil {
-					break // io.EOF or decode error
+				if errors.Is(err, io.EOF) {
+					break
 				}
-				if ev.Kind == kiro.EventAssistantResponse && ev.Assistant != nil && ev.Assistant.Content != "" {
+				if err != nil {
+					return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro event stream decode failed: %s", err))
+				}
+				if ev.Kind == kiro.EventAssistantResponse && ev.Assistant != nil && strings.TrimSpace(ev.Assistant.Content) != "" {
 					gotContent = true
 					s.sendEvent(c, TestEvent{Type: "content", Text: ev.Assistant.Content})
 				}
-				if ev.Kind == kiro.EventError {
-					s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("[error] %s", ev.ErrorMessage)})
-					break
+				if ev.Kind == kiro.EventError || ev.Kind == kiro.EventException {
+					code := ev.ErrorCode
+					if ev.Kind == kiro.EventException {
+						code = ev.ExceptionType
+					}
+					return s.sendErrorAndEnd(c, fmt.Sprintf("Kiro upstream stream error (%s): %s", code, ev.ErrorMessage))
 				}
 			}
 			if !gotContent {
-				s.sendEvent(c, TestEvent{Type: "content", Text: "(no text content received)"})
+				return s.sendErrorAndEnd(c, "Kiro upstream returned no assistant text content")
 			}
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil

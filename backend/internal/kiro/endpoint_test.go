@@ -19,7 +19,7 @@ func newCtx(c *Credentials) *RequestContext {
 func TestIdeEndpointURLAndHeaders(t *testing.T) {
 	reg := NewEndpointRegistry()
 	ep := reg[EndpointIDE]
-	c := &Credentials{ProfileArn: "arn:aws:codewhisperer:eu-central-1:1:profile/X", AuthMethod: AuthSocial}
+	c := &Credentials{ProfileArn: "arn:aws:codewhisperer:eu-central-1:123456789012:profile/X", AuthMethod: AuthSocial}
 	ctx := newCtx(c)
 
 	url := ep.APIURL(ctx)
@@ -67,13 +67,13 @@ func TestIdeEndpointExternalIDPTokenType(t *testing.T) {
 
 func TestIdeEndpointInjectsProfileArn(t *testing.T) {
 	ep := NewEndpointRegistry()[EndpointIDE]
-	c := &Credentials{ProfileArn: "arn:test:profile"}
+	c := &Credentials{ProfileArn: "arn:aws:codewhisperer:us-east-1:123456789012:profile/REAL"}
 	body := ep.TransformAPIBody(`{"conversationState":{"conversationId":"c1"}}`, newCtx(c))
 	var v map[string]any
 	if err := json.Unmarshal([]byte(body), &v); err != nil {
 		t.Fatalf("body not json: %v", err)
 	}
-	if v["profileArn"] != "arn:test:profile" {
+	if v["profileArn"] != c.ProfileArn {
 		t.Errorf("profileArn = %v", v["profileArn"])
 	}
 }
@@ -130,7 +130,7 @@ func TestBearerTokenInvalidDetection(t *testing.T) {
 }
 
 func TestRegionFromProfileArn(t *testing.T) {
-	arn := "arn:aws:codewhisperer:ap-southeast-1:123456789:profile/ABCDEF"
+	arn := "arn:aws:codewhisperer:ap-southeast-1:123456789012:profile/ABCDEF"
 	if got := regionFromProfileArn(arn); got != "ap-southeast-1" {
 		t.Errorf("region = %q; want ap-southeast-1", got)
 	}
@@ -139,10 +139,51 @@ func TestRegionFromProfileArn(t *testing.T) {
 	}
 }
 
+func TestProfileARNRegionRejectsMalformedValues(t *testing.T) {
+	for _, value := range []string{
+		"arn:aws:codewhisperer:bad.domain:123456789012:profile/X",
+		"arn:aws:codewhisperer:us-east-1:1:profile/X",
+		"arn:aws:s3:us-east-1:123456789012:profile/X",
+		"arn:aws:codewhisperer:us-east-1:123456789012:not-a-profile/X",
+		"arn:aws:codewhisperer:us-east-1:123456789012:profile/X:extra",
+		"arn:aws:codewhisperer:us-east-1:123456789012:profile/bad.name",
+	} {
+		if regionFromProfileArn(value) != "" {
+			t.Errorf("malformed ARN supplied a region: %q", value)
+		}
+		if got := (&Credentials{ProfileArn: value}).EffectiveAPIRegion(DefaultConfig()); got != defaultRegion {
+			t.Errorf("unsafe region for malformed ARN: %q", got)
+		}
+	}
+}
+
+func TestIDEProfileInjectionRequiresConfirmedScan(t *testing.T) {
+	ep := NewEndpointRegistry()[EndpointIDE]
+	c := &Credentials{AuthMethod: AuthIDC, ProfileArn: BuilderIDProfileArn}
+	h := make(http.Header)
+	ep.DecorateAPI(h, newCtx(c))
+	if h.Get("x-amzn-kiro-profile-arn") != "" || strings.Contains(ep.TransformAPIBody(`{"x":1}`, newCtx(c)), "profileArn") {
+		t.Fatal("unconfirmed placeholder must not be sent")
+	}
+	c.ProfileScanConfirmed = true
+	if body := ep.TransformAPIBody(`{"x":1}`, newCtx(c)); !strings.Contains(body, BuilderIDProfileArn) {
+		t.Errorf("confirmed IdC no-profile missing streaming placeholder: %s", body)
+	}
+	c.AuthMethod = AuthSocial
+	c.ProfileArn = ""
+	if body := ep.TransformAPIBody(`{"x":1}`, newCtx(c)); !strings.Contains(body, SocialProfileArn) {
+		t.Errorf("confirmed social fallback missing: %s", body)
+	}
+	c.KiroAPIKey = "ksk_example"
+	if body := ep.TransformAPIBody(`{"x":1}`, newCtx(c)); strings.Contains(body, "profileArn") {
+		t.Errorf("API key must not carry profile: %s", body)
+	}
+}
+
 func TestEffectiveRegions(t *testing.T) {
 	cfg := DefaultConfig()
 	// api region falls back to profile arn region.
-	c := &Credentials{ProfileArn: "arn:aws:codewhisperer:eu-west-1:1:profile/X"}
+	c := &Credentials{ProfileArn: "arn:aws:codewhisperer:eu-west-1:123456789012:profile/X"}
 	if got := c.EffectiveAPIRegion(cfg); got != "eu-west-1" {
 		t.Errorf("api region = %q; want eu-west-1", got)
 	}
