@@ -2322,6 +2322,45 @@
 
 ---
 
+### 2026-09-28：rebase 到 upstream v0.2.9（9a62841fd）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `fd80b08c9`（当时 VERSION `0.2.7`；官方随后把该提交标成 **`v0.2.8`**）。本轮 `upstream/main` 推进到 `9a62841fd chore: sync VERSION to 0.2.9 [skip ci]`：新增 **71** 个提交（38 个非 merge），117 文件 +3133/-378。新 tag **`v0.2.8`**（`fd80b08c9`）与 **`v0.2.9`**（`4c00df2e0`）；VERSION 文件在 `9a62841fd` 对齐到 **0.2.9**。Go 仍为 **1.27.0**。
+- 上游本轮主要范围：
+  - **网关 / 协议**：Anthropic structured outputs beta 保留；OpenAI 桥接尊重 thinking disabled；Responses beta / message type / multi-agent beta；客户端断开统一标 499。
+  - **透传模型发现**：OpenAI passthrough 账号不再用自身陈旧 mapping 整表收窄白名单，改为 skip mapping 后由 `supplementUnmappedOpenAIModels` 补默认集（PR #7526）。
+  - **Antigravity**：MALFORMED_FUNCTION_CALL 空流重试、PDF inlineData、string const 约束、Signature-only 事件不算有效数据。
+  - **计费 / 调度**：account stats 长上下文计费门槛、channel 图片价未设时继承目录价、Free Fast 缺价零成本仍写 usage log、OpenRouter Opus 5.5 别名、将来配额 reset 不误恢复。
+  - **APICompat**：GPT-6 起视为 reasoning、空 final text 恢复、tool 参数在 content_block_start 带出、OpenCode Zen DeepSeek reasoning 占位。
+  - **运营 / UI**：模型白名单 glob 通配、plaza 视频独立计费倍率、usage bar 空闲窗口倒计时、组弹窗清理、CCSwitch usage/Codex 路径、Windows Codex catalog `~/`、删掉废弃 rate-limit 默认。
+- 本地 **239** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20260928T151002Z`（指向旧 `origin/main` = `cc87a5add`）。
+
+**冲突文件与合并策略**：
+- `backend/internal/service/gateway_service.go`（重放 `a9cdeafee` 时，34/239）：上游 PR #7526 的 passthrough `continue` + `supplementUnmappedOpenAIModels` 与本地 `for i := range accounts` / `availableModelsQueryResult` / `availableModelMatchesDiscoveryPlatform` 并存。**不**把本地旧的「任一透传账号就整表 `return` 空结果」短路合回来。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包 44 文件；`Forward` 的 `IsKiro()` 分发点；`kiroTokenProvider` 字段+构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点；L7b-2 四接缝（`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → claudeCodeVersionSync → kiroTokenRefresher`，末参 `pluginManager`）。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`；`ProvideAdminHandlers` 同时传 `kiroOAuthHandler`、`cnProviderHandler`、`openCodeGoUsageService`（`ollamaCloudUsageService` 未在 handlers 前重复声明）。
+- `SensitiveCredentialKeys` 的 kiro 键；web_search 过滤两处；web2api 路由与 failover（`account` 首参）；OAuth `detachUpstreamContext`；L8 两 Modal 的 native 接缝；`createAccountAndFinish` 先 `withUpstreamRequestIdHeader` 再对 `apikey|bedrock|kiro` 注入配额；`AccountUsageCell` 的 CN / OpenCode / Kiro 独立 `v-else-if`；`UsageProgressBar` 的 Kiro wide 变体 + 上游 `labelWidth`。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek/minimax/opencode_go`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 仍为 `int64`；`stripCodexTurnStartedAt` 仍在 fingerprint 测试中；Fable 5.1 隐式 3x 与 PNG fixture、`TestGroupReasoningPricingRoundTripAndBilling` 用 `claude-sonnet-4` 都还在。
+- `getAvailableModels` 仍返回 `availableModelsQueryResult`，passthrough 走 skip-continue，无 `return nil`。
+- usage_log INSERT 仍 `$1–$63`，尾序 `upstream_request_id, session_id, native_compaction_v2, kiro_credits, created_at`。
+- 计费：`needsOpus55FastMultiplier` + `needsMaxReasoningEffortMultiplier` + `usesOpenAILegacyLongContextPricing` 与 GPT-6 cache-write premium 并存；**不**在 threshold==0 时回填 272000。
+- Go **1.27.0**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 上游本轮**无新增 SQL migration**（最新仍是 `238b_*` / `239_*` / `240_*`）。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
+- rebase 重写了 239 个本地提交；本文档提交**不带** `[deploy]`，待 GitHub Actions 跑 CI/构建后再决定是否部署。
+- 本轮 rebase 到 upstream v0.2.9 **源码层完成**；**待 GitHub Actions 验证**（L9 仍未做）。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
