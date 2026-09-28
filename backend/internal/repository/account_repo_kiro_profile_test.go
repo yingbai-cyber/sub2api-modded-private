@@ -50,8 +50,9 @@ func TestKiroCredentialCASGuardsTypeAndEmitsOutbox(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.Equal(t, affected == 1, written)
-				require.NoError(t, mock.ExpectationsWereMet())
+				mock.ExpectClose()
 				require.NoError(t, db.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
 			}
 		})
 	}
@@ -72,7 +73,8 @@ func TestKiroCredentialCASOutboxFailureAbortsWrite(t *testing.T) {
 		}
 		require.Error(t, err)
 		require.False(t, written)
-		require.NoError(t, mock.ExpectationsWereMet())
+		mock.ExpectClose()
 		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
 	}
 }
