@@ -117,8 +117,8 @@ func (e *ideEndpoint) DecorateAPI(h http.Header, ctx *RequestContext) {
 	h.Set("amz-sdk-invocation-id", newInvocationID())
 	h.Set("amz-sdk-request", "attempt=1; max=3")
 	h.Set("Authorization", "Bearer "+ctx.Token)
-	if ctx.Credentials.ProfileArn != "" {
-		h.Set("x-amzn-kiro-profile-arn", ctx.Credentials.ProfileArn)
+	if arn := ctx.Credentials.EffectiveProfileArn(); arn != "" {
+		h.Set("x-amzn-kiro-profile-arn", arn)
 	}
 	if tt := ctx.Credentials.TokenTypeHeader(); tt != "" {
 		h.Set("TokenType", tt)
@@ -126,7 +126,7 @@ func (e *ideEndpoint) DecorateAPI(h http.Header, ctx *RequestContext) {
 }
 
 func (e *ideEndpoint) TransformAPIBody(body string, ctx *RequestContext) string {
-	return injectProfileArn(body, ctx.Credentials.ProfileArn)
+	return injectProfileArn(body, ctx.Credentials.StreamingProfileArn())
 }
 
 func (e *ideEndpoint) IsMonthlyRequestLimit(body string) bool {

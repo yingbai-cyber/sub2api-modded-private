@@ -840,6 +840,80 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 	return value, true, nil
 }
 
+// UpdateKiroProfileArnIfUnchanged writes only profile_arn, preserving a concurrent
+// token rotation or account edit. Outbox invalidation shares the atomic statement.
+func (r *accountRepository) UpdateKiroProfileArnIfUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, profileArn string) (bool, error) {
+	if r == nil || r.sql == nil {
+		return false, errors.New("account repository SQL executor is not configured")
+	}
+	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		WITH updated AS (
+			UPDATE accounts AS a
+			SET credentials = COALESCE(a.credentials, '{}'::jsonb) || jsonb_build_object('profile_arn', $1::text),
+				updated_at = NOW()
+			WHERE a.id = $2 AND a.deleted_at IS NULL AND a.type = $3
+				AND a.parent_account_id IS NULL
+				AND a.credentials = $4::jsonb
+				AND a.proxy_id IS NOT DISTINCT FROM $5
+			RETURNING a.id
+		)
+		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+		SELECT $6, updated.id, NULL, NULL FROM updated
+	`, profileArn, id, service.AccountTypeKiro, string(expectedJSON), expectedProxyID, service.SchedulerOutboxEventAccountChanged)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows == 0 {
+		return false, err
+	}
+	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	return true, nil
+}
+
+// UpdateKiroRefreshedCredentialsIfUnchanged patches only refreshed fields so a
+// concurrently discovered profile cannot be lost to an old account snapshot.
+func (r *accountRepository) UpdateKiroRefreshedCredentialsIfUnchanged(ctx context.Context, id int64, expectedCredentials map[string]any, expectedProxyID *int64, fields map[string]any) (bool, error) {
+	if r == nil || r.sql == nil {
+		return false, errors.New("account repository SQL executor is not configured")
+	}
+	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	if err != nil {
+		return false, err
+	}
+	fieldsJSON, err := json.Marshal(fields)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		WITH updated AS (
+			UPDATE accounts AS a
+			SET credentials = COALESCE(a.credentials, '{}'::jsonb) || $1::jsonb,
+				updated_at = NOW()
+			WHERE a.id = $2 AND a.deleted_at IS NULL AND a.type = $3
+				AND a.parent_account_id IS NULL
+				AND a.credentials = $4::jsonb
+				AND a.proxy_id IS NOT DISTINCT FROM $5
+			RETURNING a.id
+		)
+		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+		SELECT $6, updated.id, NULL, NULL FROM updated
+	`, string(fieldsJSON), id, service.AccountTypeKiro, string(expectedJSON), expectedProxyID, service.SchedulerOutboxEventAccountChanged)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows == 0 {
+		return false, err
+	}
+	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	return true, nil
+}
+
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {

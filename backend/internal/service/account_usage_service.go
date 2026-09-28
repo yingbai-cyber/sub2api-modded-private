@@ -396,7 +396,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 	// Kiro 平台原生余量查询
 	if account.Platform == PlatformAnthropic && account.Type == AccountTypeKiro {
 		usage, err := s.getKiroUsage(ctx, account)
-		if err == nil {
+		if err == nil && usage != nil && usage.Error == "" {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err

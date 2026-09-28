@@ -41,7 +41,10 @@ type Credentials struct {
 	KiroAPIKey   string // ksk_* ; when set, used directly as Bearer
 
 	ProfileArn string
-	ExpiresAt  string // RFC3339 or unix; parsed by caller
+	// ProfileScanConfirmed is request-local evidence that every scan region returned
+	// successfully without a profile. Never persisted as an ARN.
+	ProfileScanConfirmed bool
+	ExpiresAt            string // RFC3339 or unix; parsed by caller
 
 	AuthMethod   AuthMethod
 	ClientID     string // IdC / external_idp
@@ -127,6 +130,41 @@ func (c *Credentials) UsesNativeUpstream() bool {
 		return true
 	}
 	return false
+}
+
+// BuilderIDProfileArn is the IDE streaming compatibility value, not an enterprise profile.
+const BuilderIDProfileArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+
+// SocialProfileArn is the shared profile used by legacy social logins.
+const SocialProfileArn = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
+
+// EffectiveProfileArn returns only an actual profile, never the Builder ID placeholder.
+func (c *Credentials) EffectiveProfileArn() string {
+	if c == nil || c.IsAPIKey() || c.ProfileArn == BuilderIDProfileArn || regionFromProfileArn(c.ProfileArn) == "" {
+		return ""
+	}
+	return strings.TrimSpace(c.ProfileArn)
+}
+
+// StreamingProfileArn supplies IDE's mandatory profile only after a successful
+// discovery or when an explicit real profile is already present.
+func (c *Credentials) StreamingProfileArn() string {
+	if c == nil || c.IsAPIKey() {
+		return ""
+	}
+	if arn := c.EffectiveProfileArn(); arn != "" {
+		return arn
+	}
+	if !c.ProfileScanConfirmed {
+		return ""
+	}
+	if c.EffectiveAuthMethod() == AuthSocial {
+		return SocialProfileArn
+	}
+	if c.EffectiveAuthMethod() == AuthIDC {
+		return BuilderIDProfileArn
+	}
+	return ""
 }
 
 // TokenTypeHeader returns the value for the upstream "TokenType" header, if any.

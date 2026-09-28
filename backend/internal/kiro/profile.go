@@ -3,8 +3,11 @@ package kiro
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 )
 
 // This file ports kiro-rs kiro::token_manager::list_available_profiles: it
@@ -63,6 +66,60 @@ func (p availableProfileRaw) name() string {
 	return p.Name
 }
 
+// SelectProfileArn selects a profile deterministically. When several profiles
+// exist, an explicitly configured API region takes precedence over the SSO
+// region; without a unique regional match, require user configuration instead
+// of silently assigning another enterprise's profile. Errors contain regions,
+// never full ARNs or bearer credentials.
+func SelectProfileArn(profiles []AvailableProfile, c *Credentials) (string, error) {
+	if len(profiles) == 0 {
+		return "", nil
+	}
+	if len(profiles) == 1 {
+		if c != nil && strings.TrimSpace(c.APIRegion) != "" && strings.TrimSpace(c.APIRegion) != profiles[0].Region {
+			return "", fmt.Errorf("kiro: discovered profile region [%s] conflicts with configured api_region", profiles[0].Region)
+		}
+		return profiles[0].ProfileArn, nil
+	}
+	if c == nil {
+		return "", fmt.Errorf("kiro: multiple profiles require credentials with a configured region")
+	}
+	regions := make([]string, 0, len(profiles))
+	unique := make(map[string]struct{}, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := unique[profile.Region]; !ok {
+			unique[profile.Region] = struct{}{}
+			regions = append(regions, profile.Region)
+		}
+	}
+	sort.Strings(regions)
+	region := strings.TrimSpace(c.APIRegion)
+	kind := "api_region"
+	if region == "" {
+		region = strings.TrimSpace(c.AuthRegion)
+		kind = "auth_region"
+	}
+	if region == "" {
+		region = strings.TrimSpace(c.Region)
+		kind = "region"
+	}
+	if region == "" {
+		return "", fmt.Errorf("kiro: %d profiles in regions [%s]; set api_region to select one", len(profiles), strings.Join(regions, ", "))
+	}
+	var match string
+	matches := 0
+	for _, profile := range profiles {
+		if profile.Region == region {
+			match = profile.ProfileArn
+			matches++
+		}
+	}
+	if matches != 1 {
+		return "", fmt.Errorf("kiro: %d profiles match configured %s (total=%d, available regions=[%s]); set an unambiguous api_region or explicit profile_arn", matches, kind, len(profiles), strings.Join(regions, ", "))
+	}
+	return match, nil
+}
+
 // ListAvailableProfiles discovers profile ARNs for a credential across the
 // scan regions, de-duplicating by ARN and paginating via nextToken.
 func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credentials, cfg *Config, token string) ([]AvailableProfile, error) {
@@ -70,13 +127,18 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 	kiroVersion := cfg.kiroVersion()
 	var result []AvailableProfile
 	seen := map[string]struct{}{}
+	var scanErrors []error
 
 	for _, region := range profileScanRegions {
 		host := "q." + region + ".amazonaws.com"
 		url := "https://" + host + "/"
 		var nextToken string
+		pages := map[string]struct{}{}
 
 		for {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			userAgent := "aws-sdk-js/2.0.0 ua/2.1 os/" + cfg.systemVersion() +
 				" lang/js md/nodejs#" + cfg.nodeVersion() +
 				" api/codewhisperer#2022-11-11 m/E KiroIDE-" + kiroVersion + "-" + machineID
@@ -100,25 +162,34 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 				"Authorization":               "Bearer " + token,
 				"Connection":                  "close",
 			}
-			if c.IsAPIKey() {
-				headers["tokentype"] = "API_KEY"
+			if tokenType := c.TokenTypeHeader(); tokenType != "" {
+				headers["tokentype"] = tokenType
 			}
 
 			status, body, err := doJSON(ctx, client, url, headers, payload)
 			if err != nil {
-				return nil, err
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				// Transport errors may contain proxy URLs or headers; do not
+				// expose them in a credential-bearing discovery path.
+				scanErrors = append(scanErrors, fmt.Errorf("kiro: ListAvailableProfiles %s: request failed", region))
+				break
 			}
 			if status < 200 || status >= 300 {
-				return nil, fmt.Errorf("kiro: ListAvailableProfiles failed (%s): %d %s", region, status, string(body))
+				// Never include response bodies: upstream may echo credentials.
+				scanErrors = append(scanErrors, fmt.Errorf("kiro: ListAvailableProfiles %s: HTTP %d", region, status))
+				break
 			}
 
 			var data listProfilesResponse
 			if err := json.Unmarshal(body, &data); err != nil {
-				return nil, err
+				scanErrors = append(scanErrors, fmt.Errorf("kiro: ListAvailableProfiles %s: invalid response: %w", region, err))
+				break
 			}
 			for _, p := range data.allProfiles() {
 				arn := p.arn()
-				if arn == "" {
+				if arn == BuilderIDProfileArn || regionFromProfileArn(arn) == "" {
 					continue
 				}
 				if _, dup := seen[arn]; dup {
@@ -140,8 +211,18 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 			if nextToken == "" {
 				break
 			}
+			if _, duplicate := pages[nextToken]; duplicate {
+				scanErrors = append(scanErrors, fmt.Errorf("kiro: ListAvailableProfiles %s: repeated nextToken", region))
+				break
+			}
+			pages[nextToken] = struct{}{}
 		}
 	}
 
+	// A partial list cannot establish uniqueness: another region or page may
+	// contain a different profile. Never persist a profile from incomplete scans.
+	if len(scanErrors) > 0 {
+		return nil, errors.Join(scanErrors...)
+	}
 	return result, nil
 }
