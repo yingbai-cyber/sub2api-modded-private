@@ -2250,6 +2250,39 @@
 
 ---
 
+### 2026-09-28：ListAvailableProfiles 对齐 runtime 0.9.2 指纹
+**类型**：修复 / 反代适配
+
+**背景**：
+- 账号 #5003 连接测试在 token resolve 阶段 fail-closed：`us-east-1` 与 `eu-central-1` 的 `ListAvailableProfiles` 均返回 HTTP 403，发现被标为 incomplete。
+- 对照 Zyphr `list_available_profiles` 与本仓库用量 GET：Q 端点使用 runtime `0.9.2` 指纹（`aws-sdk-js/1.0.0` + `api/codewhispererruntime#1.0.0`），不带 `Accept` / `x-amzn-codewhisperer-optout`。发现请求此前误用 IDE `aws-sdk-js/2.0.0` 指纹。
+
+**影响文件**：
+- `backend/internal/kiro/profile.go`
+- `backend/internal/kiro/profile_test.go`
+- `backend/internal/kiro/upstream_api.go`
+- `backend/internal/kiro/config.go`
+- `docs/magic-patch-log.md`
+
+**改动摘要**：
+- `ListAvailableProfiles` 复用用量 GET 的 `setRESTHeaders`，固定 `KiroIDE-0.9.2`，保留 JSON-RPC `Content-Type` / `X-Amz-Target`。
+- 去掉发现请求上的 `Accept` 与 `x-amzn-codewhisperer-optout`。
+- 双区域非 2xx 仍 fail-closed，不把部分结果当唯一 Profile 落库。
+- 补指纹断言与双区 403 incomplete 回归测试。
+
+**与官方差异原因**：
+- 官方 sub2api 没有这条 Kiro 原生发现链路；Q 端对客户端指纹敏感，错误 UA 会直接 403，无法发现 IdC `profileArn`。
+
+**rebase 风险点**：
+- 不得把发现请求改回 IDE `aws-sdk-js/2.0.0` / `api/codewhisperer#2022-11-11` 指纹。
+- `usageAPIKiroVersion` 必须与用量 GET 共用；不要改回 `DefaultConfig().KiroVersion`。
+
+**验证结果**：
+- 本机仅做 gofmt、`git diff --check` 静态核验；**未在生产服务器运行构建或测试，未手动重启**。
+- 生产部署由带 `[deploy]` 的 Actions 工作流受控执行后，再核对 #5003 账号测试是否仍双区 403。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
