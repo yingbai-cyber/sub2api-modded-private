@@ -2356,8 +2356,13 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖**。
-- rebase 重写了 239 个本地提交；本文档提交**不带** `[deploy]`，待 GitHub Actions 跑 CI/构建后再决定是否部署。
-- 本轮 rebase 到 upstream v0.2.9 **源码层完成**；**待 GitHub Actions 验证**（L9 仍未做）。
+- rebase 重写了 239 个本地提交，以 `git push --force-with-lease=main:cc87a5add` 更新 `origin/main`（`e3f1b1512`，**不带** `[deploy]`）。
+- **Actions（`e3f1b1512`）全绿**：
+  - **CI** run `36441967390`：`shell` / `golangci-lint` / `test`（Unit + Integration） / `frontend` / `release-helpers` 均 success。
+  - **Security Scan** run `36441967388`：success。
+  - **Build** run `36441967405`：构建 success，**Deploy skipped**（提交无 `[deploy]`）。
+- 生产二进制仍是 rebase 前的 `cc87a5add`（Kiro desktop usage batch）；本轮无测试失败，不需要为跟上游补测试。需上线 v0.2.9 时另开 `[deploy]`。
+- 本轮 rebase 到 upstream v0.2.9 **完成**（CI 复验通过；L9 仍未做）。
 
 ---
 
