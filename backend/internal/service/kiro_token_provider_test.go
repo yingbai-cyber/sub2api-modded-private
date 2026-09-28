@@ -249,8 +249,28 @@ func TestKiroResolveDoesNotPersistProfileFromPartialScan(t *testing.T) {
 		"auth_method": "idc", "access_token": "safe-token", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 	}}
 	cred, token, err := provider.Resolve(context.Background(), account)
-	if err == nil || cred != nil || token != "" || repo.calls != 0 || requests != 2 || strings.Contains(err.Error(), "sensitive") {
-		t.Fatalf("partial discovery must not persist/bypass: error=%v writes=%d requests=%d", err, repo.calls, requests)
+	if err != nil || cred == nil || token != "safe-token" || repo.calls != 0 || requests != 2 {
+		t.Fatalf("partial discovery must fail-open without persist: error=%v writes=%d requests=%d", err, repo.calls, requests)
+	}
+	if cred.StreamingProfileArn() != kiro.BuilderIDProfileArn || cred.EffectiveProfileArn() != "" || account.Credentials["profile_arn"] != nil {
+		t.Fatalf("incomplete scan leaked persist: profile=%q effective=%q persisted=%v", cred.StreamingProfileArn(), cred.EffectiveProfileArn(), account.Credentials["profile_arn"])
+	}
+}
+
+func TestKiroResolveProfileDiscoveryRateLimitStillFails(t *testing.T) {
+	repo := &kiroProfileRepoStub{written: true}
+	provider := NewKiroTokenProvider(repo)
+	provider.profileClient = func(string) (*http.Client, error) {
+		return &http.Client{Transport: kiroProfileTransport(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(`{"message":"throttled"}`)), Header: make(http.Header)}, nil
+		})}, nil
+	}
+	account := &Account{ID: 511, Platform: PlatformAnthropic, Type: AccountTypeKiro, Credentials: map[string]any{
+		"auth_method": "idc", "access_token": "safe-token", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+	}}
+	cred, token, err := provider.Resolve(context.Background(), account)
+	if err == nil || cred != nil || token != "" || repo.calls != 0 || !strings.Contains(err.Error(), "HTTP 429") || !errors.Is(err, kiro.ErrProfileDiscoveryRateLimited) {
+		t.Fatalf("429 must stay fail-closed: error=%v writes=%d", err, repo.calls)
 	}
 }
 
@@ -281,8 +301,8 @@ func TestKiroResolveOnlyUsesPlaceholderAfterCompleteEmptyScan(t *testing.T) {
 	status = http.StatusBadGateway
 	account.ID++ // bypass negative cache
 	cred, _, err = provider.Resolve(context.Background(), account)
-	if err == nil || cred != nil {
-		t.Fatalf("partial failure must not permit fallback: %v", err)
+	if err != nil || cred == nil || cred.StreamingProfileArn() != kiro.BuilderIDProfileArn || cred.EffectiveProfileArn() != "" {
+		t.Fatalf("incomplete discovery should fail-open with placeholder: error=%v credential=%t", err, cred != nil)
 	}
 }
 

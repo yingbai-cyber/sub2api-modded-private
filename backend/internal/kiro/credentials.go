@@ -41,8 +41,9 @@ type Credentials struct {
 	KiroAPIKey   string // ksk_* ; when set, used directly as Bearer
 
 	ProfileArn string
-	// ProfileScanConfirmed is request-local evidence that every scan region returned
-	// successfully without a profile. Never persisted as an ARN.
+	// ProfileScanConfirmed is request-local evidence that streaming may use a
+	// compatibility placeholder: a complete empty scan, or Zyphr-style fail-open
+	// after a non-429 discovery error. Never persisted as an ARN.
 	ProfileScanConfirmed bool
 	ExpiresAt            string // RFC3339 or unix; parsed by caller
 
@@ -146,8 +147,8 @@ func (c *Credentials) EffectiveProfileArn() string {
 	return strings.TrimSpace(c.ProfileArn)
 }
 
-// StreamingProfileArn supplies IDE's mandatory profile only after a successful
-// discovery or when an explicit real profile is already present.
+// StreamingProfileArn supplies IDE's mandatory profile after a real ARN is
+// present, or after ProfileScanConfirmed authorizes the Social/BuilderID placeholder.
 func (c *Credentials) StreamingProfileArn() string {
 	if c == nil || c.IsAPIKey() {
 		return ""

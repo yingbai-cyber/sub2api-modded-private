@@ -20,6 +20,10 @@ var profileScanRegions = []string{"us-east-1", "eu-central-1"}
 
 const listAvailableProfilesTarget = "AmazonCodeWhispererService.ListAvailableProfiles"
 
+// ErrProfileDiscoveryRateLimited is returned when any scan region answers HTTP 429.
+// Callers must not fail-open into generate while upstream is throttling.
+var ErrProfileDiscoveryRateLimited = errors.New("kiro: profile discovery rate limited")
+
 // AvailableProfile is a discovered enterprise profile.
 type AvailableProfile struct {
 	ProfileArn  string
@@ -160,7 +164,11 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 			}
 			if status < 200 || status >= 300 {
 				// Never include response bodies: upstream may echo credentials.
-				scanErrors = append(scanErrors, fmt.Errorf("kiro: ListAvailableProfiles %s: HTTP %d", region, status))
+				err := fmt.Errorf("kiro: ListAvailableProfiles %s: HTTP %d", region, status)
+				if status == http.StatusTooManyRequests {
+					err = fmt.Errorf("%w: %w", err, ErrProfileDiscoveryRateLimited)
+				}
+				scanErrors = append(scanErrors, err)
 				break
 			}
 
