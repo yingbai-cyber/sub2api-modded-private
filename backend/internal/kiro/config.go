@@ -13,6 +13,11 @@ const (
 	defaultKiroVersion   = "0.12.333"
 	defaultSystemVersion = "darwin#24.6.0"
 	defaultNodeVersion   = "22.22.0"
+
+	// usageAPIKiroVersion is the Q REST / ListAvailableProfiles User-Agent
+	// version. It mirrors kiro-rs USAGE_API_KIRO_VERSION and stays independent
+	// of the IDE streaming fingerprint in DefaultConfig.
+	usageAPIKiroVersion = "0.9.2"
 )
 
 // Config holds the client fingerprint and region defaults for upstream calls.

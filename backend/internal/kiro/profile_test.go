@@ -107,3 +107,60 @@ func TestListAvailableProfilesPaginationAndInvalidARN(t *testing.T) {
 		t.Fatalf("profiles=%v pages=%d error=%v", profiles, pages, err)
 	}
 }
+
+func TestListAvailableProfilesUsesRuntimeFingerprint(t *testing.T) {
+	const machineID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cfg := &Config{KiroVersion: "99.0", SystemVersion: "linux#6.0.0", NodeVersion: "20.0.0"}
+	cred := &Credentials{AuthMethod: AuthIDC, MachineID: machineID}
+	var calls int
+	client := &http.Client{Transport: profileRoundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		ua := r.Header.Get("User-Agent")
+		amzUA := r.Header.Get("x-amz-user-agent")
+		if r.Method != http.MethodPost ||
+			r.Header.Get("Content-Type") != "application/x-amz-json-1.0" ||
+			r.Header.Get("X-Amz-Target") != listAvailableProfilesTarget ||
+			r.Header.Get("Authorization") != "Bearer test-token" ||
+			!strings.Contains(ua, "aws-sdk-js/1.0.0") ||
+			!strings.Contains(ua, "os/linux#6.0.0") ||
+			!strings.Contains(ua, "md/nodejs#20.0.0") ||
+			!strings.Contains(ua, "api/codewhispererruntime#1.0.0 m/N,E KiroIDE-0.9.2-") ||
+			!strings.Contains(ua, "KiroIDE-0.9.2-"+machineID) ||
+			amzUA != "aws-sdk-js/1.0.0 KiroIDE-0.9.2-"+machineID ||
+			r.Header.Get("amz-sdk-request") != "attempt=1; max=1" ||
+			r.Header.Get("amz-sdk-invocation-id") == "" ||
+			r.Header.Get("Accept") != "" ||
+			r.Header.Get("x-amzn-codewhisperer-optout") != "" ||
+			strings.Contains(ua, "aws-sdk-js/2.0.0") ||
+			strings.Contains(ua, "api/codewhisperer#2022-11-11") ||
+			strings.Contains(ua, "KiroIDE-99.0-") {
+			t.Errorf("discovery fingerprint mismatch: %+v", r.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"profiles":[]}`)), Header: make(http.Header)}, nil
+	})}
+	profiles, err := ListAvailableProfiles(context.Background(), client, cred, cfg, "test-token")
+	if err != nil || len(profiles) != 0 || calls != 2 {
+		t.Fatalf("complete empty scan should succeed: profiles=%v error=%v calls=%d", profiles, err, calls)
+	}
+}
+
+func TestListAvailableProfilesBothRegionsForbiddenIsIncomplete(t *testing.T) {
+	var hosts []string
+	client := &http.Client{Transport: profileRoundTrip(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(strings.NewReader(`{"message":"sensitive-token"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	profiles, err := ListAvailableProfiles(context.Background(), client, &Credentials{AuthMethod: AuthIDC}, DefaultConfig(), "secret-token")
+	if err == nil || len(profiles) != 0 || len(hosts) != 2 {
+		t.Fatalf("dual 403 must stay incomplete: profiles=%v error=%v hosts=%v", profiles, err, hosts)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "us-east-1") || !strings.Contains(msg, "eu-central-1") || !strings.Contains(msg, "HTTP 403") ||
+		strings.Contains(msg, "sensitive") || strings.Contains(msg, "secret-token") {
+		t.Fatalf("dual 403 diagnostic leaked or incomplete: %v", err)
+	}
+}
