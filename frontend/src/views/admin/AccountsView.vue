@@ -321,7 +321,7 @@
               :batched-usage="usageBatchByAccountId[String(row.id)] ?? null"
               :batched-usage-error="usageBatchErrorByAccountId[String(row.id)] ?? null"
               :batched-usage-loading="usageBatchLoadingByAccountId[String(row.id)] === true"
-              :request-batched-usage="isDesktopViewport ? queueBatchedUsage : null"
+              :request-batched-usage="isDesktopViewport && accountSupportsBatchUsage(row) ? queueBatchedUsage : null"
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
@@ -516,6 +516,7 @@ import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
+import { accountSupportsBatchUsage } from '@/components/account/accountSupportsBatchUsage'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
@@ -730,17 +731,6 @@ const buildDefaultTodayStats = (): WindowStats => ({
   standard_cost: 0,
   user_cost: 0
 })
-
-const accountSupportsBatchUsage = (account: Account) => {
-  if (account.platform === 'anthropic') {
-    return account.type === 'oauth' || account.type === 'setup-token'
-  }
-  if (account.platform === 'gemini') return true
-  if (account.platform === 'antigravity') return account.type === 'oauth'
-  if (account.platform === 'openai') return account.type === 'oauth'
-  if (account.platform === 'grok') return account.type === 'oauth'
-  return false
-}
 
 const setUsageBatchLoading = (accountID: number, loadingState: boolean) => {
   usageBatchLoadingByAccountId.value = {
