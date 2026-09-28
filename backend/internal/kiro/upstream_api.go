@@ -232,14 +232,14 @@ func getREST(ctx context.Context, client *http.Client, cred *Credentials, token 
 	return lastErr
 }
 
-// setRESTHeaders matches kiro.rs v0.9.0 token_manager.rs for both REST GETs.
-// The 0.9.2 usage fingerprint is intentionally independent of the IDE version.
+// setRESTHeaders matches kiro.rs token_manager.rs for Q REST GETs and the
+// ListAvailableProfiles JSON-RPC fingerprint. The 0.9.2 usage version is
+// intentionally independent of the IDE streaming version.
 func setRESTHeaders(h http.Header, host, machineID string, cfg *Config, cred *Credentials, token string) {
-	const kiroVersion = "0.9.2"
 	h.Set("User-Agent", "aws-sdk-js/1.0.0 ua/2.1 os/"+cfg.systemVersion()+
 		" lang/js md/nodejs#"+cfg.nodeVersion()+
-		" api/codewhispererruntime#1.0.0 m/N,E KiroIDE-"+kiroVersion+"-"+machineID)
-	h.Set("x-amz-user-agent", "aws-sdk-js/1.0.0 KiroIDE-"+kiroVersion+"-"+machineID)
+		" api/codewhispererruntime#1.0.0 m/N,E KiroIDE-"+usageAPIKiroVersion+"-"+machineID)
+	h.Set("x-amz-user-agent", "aws-sdk-js/1.0.0 KiroIDE-"+usageAPIKiroVersion+"-"+machineID)
 	h.Set("Host", host)
 	h.Set("amz-sdk-invocation-id", uuid.NewString())
 	h.Set("amz-sdk-request", "attempt=1; max=1")
