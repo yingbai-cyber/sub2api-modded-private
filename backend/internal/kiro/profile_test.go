@@ -144,6 +144,16 @@ func TestListAvailableProfilesUsesRuntimeFingerprint(t *testing.T) {
 	}
 }
 
+func TestListAvailableProfilesRateLimitIsSentinel(t *testing.T) {
+	client := &http.Client{Transport: profileRoundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	})}
+	_, err := ListAvailableProfiles(context.Background(), client, &Credentials{AuthMethod: AuthIDC}, DefaultConfig(), "test-token")
+	if !errors.Is(err, ErrProfileDiscoveryRateLimited) || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("429 must wrap rate-limit sentinel: %v", err)
+	}
+}
+
 func TestListAvailableProfilesBothRegionsForbiddenIsIncomplete(t *testing.T) {
 	var hosts []string
 	client := &http.Client{Transport: profileRoundTrip(func(r *http.Request) (*http.Response, error) {

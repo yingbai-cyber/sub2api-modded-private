@@ -151,7 +151,8 @@ func kiroProfileProxyHash(account *Account) [32]byte {
 }
 
 // ensureProfile resolves missing IDE profiles using the same account proxy as
-// token refresh. Only a complete, successful empty scan authorizes fallback.
+// token refresh. A complete empty scan, or a non-429 discovery error for
+// IdC/Social, authorizes the streaming placeholder. Incomplete scans never persist.
 func (p *KiroTokenProvider) ensureProfile(ctx context.Context, account *Account, cred *kiro.Credentials, token string) (*kiro.Credentials, string, error) {
 	if cred.IsAPIKey() || strings.EqualFold(cred.Endpoint, kiro.EndpointCLI) || account == nil {
 		return cred, token, nil
@@ -194,6 +195,17 @@ func (p *KiroTokenProvider) ensureProfile(ctx context.Context, account *Account,
 	}
 	profiles, err := kiro.ListAvailableProfiles(ctx, client, cred, kiro.DefaultConfig(), token)
 	if err != nil {
+		if errors.Is(err, kiro.ErrProfileDiscoveryRateLimited) {
+			return nil, "", fmt.Errorf("kiro: profile discovery incomplete: %w", err)
+		}
+		// Zyphr ensure_profile_arn: non-429 errors warn and continue with the
+		// original/placeholder profileArn. Do not persist, and do not cache, so
+		// the next request retries discovery.
+		switch cred.EffectiveAuthMethod() {
+		case kiro.AuthIDC, kiro.AuthSocial:
+			cred.ProfileScanConfirmed = true
+			return cred, token, nil
+		}
 		return nil, "", fmt.Errorf("kiro: profile discovery incomplete: %w", err)
 	}
 	if len(profiles) == 0 {
