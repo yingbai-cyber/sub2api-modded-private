@@ -122,9 +122,10 @@ func SelectProfileArn(profiles []AvailableProfile, c *Credentials) (string, erro
 
 // ListAvailableProfiles discovers profile ARNs for a credential across the
 // scan regions, de-duplicating by ARN and paginating via nextToken.
+// The request fingerprint matches Zyphr / usage GET (runtime 0.9.2), not the
+// IDE streaming User-Agent; Q endpoints 403 mismatched client fingerprints.
 func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credentials, cfg *Config, token string) ([]AvailableProfile, error) {
 	machineID := GenerateMachineID(c, "")
-	kiroVersion := cfg.kiroVersion()
 	var result []AvailableProfile
 	seen := map[string]struct{}{}
 	var scanErrors []error
@@ -139,32 +140,13 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			userAgent := "aws-sdk-js/2.0.0 ua/2.1 os/" + cfg.systemVersion() +
-				" lang/js md/nodejs#" + cfg.nodeVersion() +
-				" api/codewhisperer#2022-11-11 m/E KiroIDE-" + kiroVersion + "-" + machineID
-			amzUserAgent := "aws-sdk-js/2.0.0 KiroIDE-" + kiroVersion + "-" + machineID
 
 			payload := map[string]any{"maxResults": 10}
 			if nextToken != "" {
 				payload["nextToken"] = nextToken
 			}
 
-			headers := map[string]string{
-				"Content-Type":                "application/x-amz-json-1.0",
-				"Accept":                      "application/json",
-				"X-Amz-Target":                listAvailableProfilesTarget,
-				"user-agent":                  userAgent,
-				"x-amz-user-agent":            amzUserAgent,
-				"x-amzn-codewhisperer-optout": "true",
-				"host":                        host,
-				"amz-sdk-invocation-id":       newInvocationID(),
-				"amz-sdk-request":             "attempt=1; max=1",
-				"Authorization":               "Bearer " + token,
-				"Connection":                  "close",
-			}
-			if tokenType := c.TokenTypeHeader(); tokenType != "" {
-				headers["tokentype"] = tokenType
-			}
+			headers := listAvailableProfilesHeaders(host, machineID, cfg, c, token)
 
 			status, body, err := doJSON(ctx, client, url, headers, payload)
 			if err != nil {
@@ -225,4 +207,21 @@ func ListAvailableProfiles(ctx context.Context, client *http.Client, c *Credenti
 		return nil, errors.Join(scanErrors...)
 	}
 	return result, nil
+}
+
+// listAvailableProfilesHeaders reuses the Q runtime fingerprint from
+// setRESTHeaders, then adds the JSON-RPC target headers. Zyphr does not send
+// Accept or x-amzn-codewhisperer-optout on this call.
+func listAvailableProfilesHeaders(host, machineID string, cfg *Config, c *Credentials, token string) map[string]string {
+	h := make(http.Header)
+	setRESTHeaders(h, host, machineID, cfg, c, token)
+	h.Set("Content-Type", "application/x-amz-json-1.0")
+	h.Set("X-Amz-Target", listAvailableProfilesTarget)
+	headers := make(map[string]string, len(h))
+	for name, values := range h {
+		if len(values) > 0 {
+			headers[name] = values[0]
+		}
+	}
+	return headers
 }
