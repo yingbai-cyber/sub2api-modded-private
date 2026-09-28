@@ -2283,6 +2283,45 @@
 
 ---
 
+### 2026-09-28：Kiro profile 发现 403 对齐 Zyphr fail-open
+**类型**：修复 / 反代适配
+
+**背景**：
+- 指纹对齐 `d758bfa4f` 上线后，#5003 仍在 `ensureProfile` 双区 `ListAvailableProfiles` HTTP 403 处 fail-closed，Generate 从未发出。
+- 对照已跑通的 Zyphr kiro.rs v0.9.0：发现失败（非 429）只 warn，继续用 Social/BuilderID 占位 `profileArn` 打 `generateAssistantResponse`。
+
+**影响文件**：
+- `backend/internal/service/kiro_token_provider.go`
+- `backend/internal/service/kiro_token_provider_test.go`
+- `backend/internal/kiro/profile.go`
+- `backend/internal/kiro/profile_test.go`
+- `backend/internal/kiro/credentials.go`
+- `backend/internal/kiro/endpoint.go`
+- `backend/internal/kiro/endpoint_test.go`
+- `backend/internal/kiro/config.go`
+- `docs/magic-patch-log.md`
+
+**改动摘要**：
+- `ensureProfile`：IdC/Social 在发现非 429 错误时 fail-open，设置 `ProfileScanConfirmed` 走占位 ARN；**不落库、不负缓存**，下次请求仍重试发现。HTTP 429 仍 fail-closed。
+- `ListAvailableProfiles` 本身仍在任一区非 2xx 时返回 incomplete（不把部分结果当唯一 Profile 落库），429 包装 `ErrProfileDiscoveryRateLimited`。
+- IDE generate API 去掉 `x-amzn-kiro-profile-arn`（ARN 只进 JSON body，对齐 Zyphr `decorate_api`）。
+- 默认 `systemVersion` 改为 Zyphr 的 `macos`。
+
+**与官方差异原因**：
+- 官方 sub2api 没有这条 Kiro 原生链路。Q 上 `ListAvailableProfiles` 对部分 IdC 会 403，但 Generate 仍接受占位 ARN；fail-closed 会把能通的账号整段拦住。
+
+**rebase 风险点**：
+- 不得把发现 403 改回阻断 Resolve。
+- 不得把部分扫描结果重新落库。
+- 不得把 `x-amzn-kiro-profile-arn` 加回 generate API。
+- `usageAPIKiroVersion` 仍须与用量 GET 共用 0.9.2。
+
+**验证结果**：
+- 本机仅做源码修改与静态核对；**未在生产服务器运行构建或测试，未手动重启**。
+- 待带 `[deploy]` 的 GitHub Actions 构建部署后，用 #5003 再打账号测试 / `/v1/messages`。
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
