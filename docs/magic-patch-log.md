@@ -2439,7 +2439,7 @@
 - 本机只跑过 `go test ./internal/kiro/`（ok）；随后在本机对 `internal/service` 跑 `go vet` 期间整机重启（2.4G 内存），服务自恢复、health 200。此后按用户要求**本机不再跑任何测试/构建**，编译、vet、全量测试交给 GitHub Actions。
 - **Actions（`15c6060df`）全绿**：CI run `36518927901`（`golangci-lint` / `test`（Unit + Integration）/ `frontend` / `shell` / `release-helpers`）success；Security Scan run `36518927847` success；Build+Deploy run `36518927834` 三段 success。
 - 上线：部署标记 `commit=15c6060df…`、`sha256=a3124dfd24ef5d97fd787e2a2d4658eb29172787b0066cecd25e7ee25bf4389d`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T03:58:46Z`、`backup=bin/sub2api.bak.36518927834.1`；服务 MainPID=`9785`，`ActiveEnterTimestamp=Mon 2026-09-28 23:58:43 EDT`。
-- 线上确认 `native_effort=max`：待下一条真实 opus-5.5 请求出现在 `[Kiro] native` 日志后核对（不在本机发测试请求）。
+- 线上确认：用户 NarraFork 请求（北京时间 2026-09-29 12:25:33，api_key 44 → 账号 5004）日志为 `[Kiro] native model=claude-opus-5.5 upstream_model=claude-opus-5.5 native_effort=max`，200、credits 0.607、duration 10349ms。对比修复前同会话 11:20:31（未发原生 effort）：首 token 3054→6869ms、总耗时 3700→10349ms、输出 44→79 token；轮次不同，仅作旁证。
 
 ---
 
