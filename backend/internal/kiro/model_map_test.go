@@ -25,6 +25,10 @@ func TestMapModel(t *testing.T) {
 		{"claude-opus-4.8", "claude-opus-4.8", true},
 		{"claude-opus-5", "claude-opus-5", true},
 		{"claude-opus-5-thinking", "claude-opus-5", true},
+		// Opus 5.5 must not be swallowed by the "opus-5" substring match.
+		{"claude-opus-5-5", "claude-opus-5.5", true},
+		{"claude-opus-5.5", "claude-opus-5.5", true},
+		{"claude-opus-5-5-thinking", "claude-opus-5.5", true},
 		// Haiku
 		{"claude-haiku-4-5-20251001-thinking", "claude-haiku-4.5", true},
 		{"claude-haiku-4-20250514", "claude-haiku-4.5", true},
@@ -58,6 +62,8 @@ func TestContextWindowSize(t *testing.T) {
 		{"claude-opus-4-7", 1_000_000},
 		{"claude-opus-4.8", 1_000_000},
 		{"claude-opus-5", 1_000_000},
+		{"claude-opus-5-5", 1_000_000},
+		{"claude-opus-5.5", 1_000_000},
 		{"claude-sonnet-4-5", 200_000},
 		{"claude-sonnet-4", 200_000},
 		{"claude-opus-4-5", 200_000},
