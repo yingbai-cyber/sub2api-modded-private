@@ -2371,6 +2371,39 @@
 
 ---
 
+### 2026-09-29：修复 Kiro MapModel 把 Opus 5.5 静默降级成 Opus 5
+**类型**：修复 / 反代适配
+
+**背景**：
+- 用户反馈 `claude-opus-5-5` 经 Cursor / kiro-rs 走 Kiro 时偶发「空回」（Cursor 报 `error decoding response body`，kiro-rs 报「end_turn 但无内容」）。
+- 排查结论（本机 kiro-rs `usage_log` + `traces.db` 取证）：
+  - **空回是上游行为、少数且间歇**：kiro-rs 侧 `claude-opus-5.5` 共 294 次、success 291、零输出仅 10（约 3.4%），输出中位数 223 token（高于 Opus 5 的 108）。零输出集中在大上下文（27k–52k input），`traces.db` 显示三类上游成因：400 `Invalid tool use format`、500 高负载、大上下文时 200 但 0 输出。**不是模型不被支持**，本地配置改不了这部分。
+  - **另发现本地真 bug（本次修复对象）**：kiro-rs 把 `claude-opus-5.5`（点号）原样透传给 CodeWhisperer 且能正常出内容，说明上游认识 5.5；而 sub2api-modded 的 `internal/kiro` `MapModel` 因 `claude-opus-5-5` 含子串 `opus-5`，先命中 `opus-5` 分支被**静默降级成 `claude-opus-5`**。结果：走 sub2api 的 5.5 实际跑 Opus 5，却按 5.5 计费（`claude.IsOpus55` 用请求名判定）。
+
+**影响文件**：
+- `backend/internal/kiro/model_map.go`
+- `backend/internal/kiro/model_map_test.go`
+
+**改动摘要**：
+- `MapModel` opus 分支在 `opus-5` 之前先判 `5-5` / `5.5`，映射到规范 upstream id `claude-opus-5.5`（对齐 kiro-rs 透传形态）。`-thinking` 变体同样命中。
+- `ContextWindowSize` 把 `claude-opus-5.5` 纳入 1M 上下文集合。
+- 补测试：`claude-opus-5-5` / `claude-opus-5.5` / `-thinking` → `claude-opus-5.5`；上下文 1M。`claude-opus-5` 仍映射自身，不受影响。
+- **不改** effort：映射后 `FallbackSupportedEfforts("claude-opus-5.5")` 仍走 default→nil（legacy XML thinking），与 kiro-rs 对 Opus 5 系「跳过原生 effort」的行为一致。计费侧 `claude` 包 `effort_catalog.go` 早已用归一化正确识别 `opus-5-5`（含 OpenRouter 点号），不受影响。
+
+**与官方差异原因**：
+- 官方 sub2api 无此 Kiro 原生链路与 `internal/kiro` MapModel；Opus 5.5 的规范化只存在于本地魔改。
+
+**rebase 风险点**：
+- opus 分支里 `5-5`/`5.5` 判断必须保持在 `opus-5`/`opus5` **之前**，否则又会被 `opus-5` 子串吞掉。
+- 若上游后续出更高 opus 小版本，沿用「更具体的小版本先判」的顺序。
+
+**验证结果**：
+- 本机用 go1.27.0 toolchain 跑 `go test ./internal/kiro/`：ok；`go vet` / `gofmt` 干净。
+- 空回的上游成因未改（非本地可控）；本次仅修正模型名映射与上下文窗口。
+- 上线：<pending-deploy>
+
+---
+
 ## 后续记录模板
 
 ### YYYY-MM-DD：补丁名称
