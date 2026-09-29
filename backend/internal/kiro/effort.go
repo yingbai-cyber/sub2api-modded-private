@@ -200,11 +200,19 @@ func containsEffort(set []EffortLevel, e EffortLevel) bool {
 
 // FallbackSupportedEfforts returns the model's supported effort tiers based on
 // the built-in table (mirrors kiro-rs fallback_supported_efforts).
+//
+// The Opus 5 and Sonnet 5 families (5, 5.5, …) take native output_config.effort
+// with xhigh, matching kiro.rs model_supports_native_reasoning
+// (contains "opus-5" / "sonnet-5"). Without these entries they fell back to
+// legacy XML and effort=max never reached the upstream as a real parameter.
+// "opus-5" never matches "opus-4-5" / "opus-4.5", so 4.x keeps its own tiers.
 func FallbackSupportedEfforts(modelID string) []EffortLevel {
 	base := strings.TrimSuffix(strings.ToLower(modelID), "-thinking")
 	switch {
 	case strings.Contains(base, "opus"):
 		switch {
+		case strings.Contains(base, "opus-5"), strings.Contains(base, "opus5"):
+			return []EffortLevel{EffortLow, EffortMedium, EffortHigh, EffortXhigh, EffortMax}
 		case strings.Contains(base, "4.8"), strings.Contains(base, "4-8"),
 			strings.Contains(base, "4.7"), strings.Contains(base, "4-7"):
 			return []EffortLevel{EffortLow, EffortMedium, EffortHigh, EffortXhigh, EffortMax}
@@ -214,6 +222,9 @@ func FallbackSupportedEfforts(modelID string) []EffortLevel {
 			return nil
 		}
 	case strings.Contains(base, "sonnet"):
+		if strings.Contains(base, "sonnet-5") || strings.Contains(base, "sonnet5") {
+			return []EffortLevel{EffortLow, EffortMedium, EffortHigh, EffortXhigh, EffortMax}
+		}
 		if strings.Contains(base, "4.6") || strings.Contains(base, "4-6") {
 			return []EffortLevel{EffortLow, EffortMedium, EffortHigh, EffortMax}
 		}

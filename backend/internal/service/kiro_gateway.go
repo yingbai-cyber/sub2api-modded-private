@@ -148,8 +148,8 @@ func (s *GatewayService) streamKiroNative(
 	}
 
 	duration := time.Since(startTime)
-	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s stream endpoint=%s credits=%.6f duration_ms=%d",
-		parsed.Model, resp.Endpoint, outcome.Credits, duration.Milliseconds())
+	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s upstream_model=%s native_effort=%s stream endpoint=%s credits=%.6f duration_ms=%d",
+		parsed.Model, pr.UpstreamModel, kiroNativeEffortLabel(pr), resp.Endpoint, outcome.Credits, duration.Milliseconds())
 
 	return &ForwardResult{
 		Model:            parsed.Model,
@@ -190,8 +190,8 @@ func (s *GatewayService) nonStreamKiroNative(
 	_, _ = c.Writer.Write(out)
 
 	duration := time.Since(startTime)
-	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s non-stream endpoint=%s credits=%.6f duration_ms=%d",
-		parsed.Model, resp.Endpoint, res.Credits, duration.Milliseconds())
+	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s upstream_model=%s native_effort=%s non-stream endpoint=%s credits=%.6f duration_ms=%d",
+		parsed.Model, pr.UpstreamModel, kiroNativeEffortLabel(pr), resp.Endpoint, res.Credits, duration.Milliseconds())
 
 	return &ForwardResult{
 		Model:         parsed.Model,
@@ -294,6 +294,17 @@ func (s *GatewayService) mapKiroUpstreamError(
 		failover.RetryableOnSameAccount = account.IsPoolMode() && account.IsPoolModeRetryableStatus(ue.Status)
 	}
 	return nil, failover
+}
+
+// kiroNativeEffortLabel reports the effort tier actually sent upstream as the
+// native output_config.effort field, or "none" when no native effort was sent
+// (legacy XML hint or no thinking). usage_logs.reasoning_effort only records
+// what the client requested, so this is the one place that shows what applied.
+func kiroNativeEffortLabel(pr *kiro.PreparedRequest) string {
+	if pr == nil || !pr.EffortNative {
+		return "none"
+	}
+	return pr.EffortLevel.String()
 }
 
 // kiroFailoverStatus returns the upstream status when set, else a fallback.
