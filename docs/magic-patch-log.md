@@ -2400,7 +2400,9 @@
 **验证结果**：
 - 本机用 go1.27.0 toolchain 跑 `go test ./internal/kiro/`：ok；`go vet` / `gofmt` 干净。
 - 空回的上游成因未改（非本地可控）；本次仅修正模型名映射与上下文窗口。
-- 上线：<pending-deploy>
+- 上线：`1c9d03865 …[deploy]`，Build+Deploy run `36510994556` 三段全 success。
+  - 部署标记：`commit=1c9d03865…`、`sha256=e479fc61e8cc5a2ad1a29bd704029282b311b6572aecb876dbe3d72aaa739527`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T02:14:07Z`、`backup=bin/sub2api.bak.36510994556.1`。
+  - 服务 `active (running)`，MainPID=`2303099`，`ActiveEnterTimestamp=Mon 2026-09-28 22:14:03 EDT`；`/health` 直连 + NPM 均 200。
 
 ---
 
