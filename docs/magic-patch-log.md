@@ -2388,7 +2388,8 @@
 - `MapModel` opus 分支在 `opus-5` 之前先判 `5-5` / `5.5`，映射到规范 upstream id `claude-opus-5.5`（对齐 kiro-rs 透传形态）。`-thinking` 变体同样命中。
 - `ContextWindowSize` 把 `claude-opus-5.5` 纳入 1M 上下文集合。
 - 补测试：`claude-opus-5-5` / `claude-opus-5.5` / `-thinking` → `claude-opus-5.5`；上下文 1M。`claude-opus-5` 仍映射自身，不受影响。
-- **不改** effort：映射后 `FallbackSupportedEfforts("claude-opus-5.5")` 仍走 default→nil（legacy XML thinking），与 kiro-rs 对 Opus 5 系「跳过原生 effort」的行为一致。计费侧 `claude` 包 `effort_catalog.go` 早已用归一化正确识别 `opus-5-5`（含 OpenRouter 点号），不受影响。
+- **不改** effort：映射后 `FallbackSupportedEfforts("claude-opus-5.5")` 仍走 default→nil（legacy XML thinking）。计费侧 `claude` 包 `effort_catalog.go` 早已用归一化正确识别 `opus-5-5`（含 OpenRouter 点号），不受影响。
+  - **更正（2026-09-29）**：此处原写「与 kiro-rs 对 Opus 5 系『跳过原生 effort』一致」是误判——kiro-rs 二进制里 `opus-5, skipping unsupported reasoning effort` 是两个相邻字符串拼接，不是规则。kiro.rs 实际对 Opus 5 系下发原生 effort；见下一条「Kiro effort 表补 Opus 5 / Sonnet 5」。
 
 **与官方差异原因**：
 - 官方 sub2api 无此 Kiro 原生链路与 `internal/kiro` MapModel；Opus 5.5 的规范化只存在于本地魔改。
@@ -2403,6 +2404,40 @@
 - 上线：`1c9d03865 …[deploy]`，Build+Deploy run `36510994556` 三段全 success。
   - 部署标记：`commit=1c9d03865…`、`sha256=e479fc61e8cc5a2ad1a29bd704029282b311b6572aecb876dbe3d72aaa739527`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T02:14:07Z`、`backup=bin/sub2api.bak.36510994556.1`。
   - 服务 `active (running)`，MainPID=`2303099`，`ActiveEnterTimestamp=Mon 2026-09-28 22:14:03 EDT`；`/health` 直连 + NPM 均 200。
+
+---
+
+### 2026-09-29：Kiro effort 表补 Opus 5 / 5.5 与 Sonnet 5 原生 effort
+**类型**：修复 / 反代适配
+
+**背景**：
+- 用户问 11:20:31（北京时间）那条 `claude-opus-5.5` + `effort=max` 是否生效。`usage_logs` 记 `requested_reasoning_effort=max`、`reasoning_effort=max`，但这两列只记**客户端请求值**，不代表上游收到。
+- 用生产同款 `kiro.PrepareRequest`（不传 `SupportedEfforts`，与 `kiro_gateway.go` 一致）复现：opus-5.5 三种形态都**不发**原生 `output_config.effort`——仅 effort 时被丢弃；adaptive+effort 退化成 system 里的 XML 提示 `<thinking_effort>max`；enabled+budget 用 `<max_thinking_length>`、effort 被忽略。对照 opus-4.8 三种形态都发原生 `effort: max`。
+- 根因：`FallbackSupportedEfforts` 只认 opus 4.6/4.7/4.8 与 sonnet 4.6，Opus 5 系 / Sonnet 5 返回 nil → `DecideLegacy`。14 天内 Kiro 账号 199 条 opus-5.5 `effort=max` 请求均未按原生参数下发。
+- 参照 kiro.rs master `src/anthropic/converter.rs` 的 `model_supports_native_reasoning`：`contains("opus-5")` / `contains("sonnet-5")` 下发原生 effort，xhigh 保留。本机 kiro-rs 跑 opus-5.5 294 次无 effort 相关 400。
+
+**影响文件**：
+- `backend/internal/kiro/effort.go`
+- `backend/internal/kiro/effort_test.go`
+- `backend/internal/kiro/handler_test.go`
+- `backend/internal/service/kiro_gateway.go`
+
+**改动摘要**：
+- `FallbackSupportedEfforts`：opus 分支最前面加 `opus-5` / `opus5` → low/medium/high/xhigh/max；sonnet 分支加 `sonnet-5` / `sonnet5` → 同五档。`opus-5` 不会误中 `opus-4-5` / `opus-4.5`。
+- 测试：5 系支持 xhigh/max；4.5 仍无 effort（防子串误伤）；`TestPrepareRequestOpus55NativeMaxEffort` 锁定三种形态都带 `output_config.effort=max` 且不再注入 legacy XML。
+- `[Kiro] native` 日志（流式 / 非流式）加 `upstream_model=` 与 `native_effort=`（实际下发的原生档位，未下发为 `none`），以后「effort 生效没有」可以直接从日志回答。
+
+**未改（有意）**：
+- **Opus 4.6**：kiro.rs 注释称上游只在 adaptive 下接受 `output_config`、xhigh 需降到 high。2026-09-29 用临时 key 实测 4.6 的 enabled+budget / adaptive / 纯 effort 三种形态带 `effort=max` 均 200 正常出结果，该限制当前上游不复现；Kiro 账号 14 天 4.6 流量为 0、相关报错为 0。维持原逻辑。
+- 默认档位：带 thinking 但**不带** effort 时，Go 版用全局默认 `medium`（kiro.rs 按 budget_tokens 推导），与既有 4.x 行为一致；本次不改。用户实际流量均显式 `effort=max`，不受影响。
+
+**rebase 风险点**：
+- opus 分支里 `opus-5` 判断须在 4.x 版本号判断之前；若改回只认 4.x，Opus 5 系会重新静默退回 legacy。
+- `usage_logs.reasoning_effort` 是请求值；判断是否真正下发看 `[Kiro] native ... native_effort=`。
+
+**验证结果**：
+- 本机只跑过 `go test ./internal/kiro/`（ok）；随后在本机对 `internal/service` 跑 `go vet` 期间整机重启（2.4G 内存），服务自恢复、health 200。此后按用户要求**本机不再跑任何测试/构建**，编译、vet、全量测试交给 GitHub Actions。
+- 上线：<pending-deploy>
 
 ---
 

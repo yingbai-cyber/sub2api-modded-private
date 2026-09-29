@@ -77,6 +77,36 @@ func TestPrepareRequestNativeEffort(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestOpus55NativeMaxEffort(t *testing.T) {
+	// Production case: opus-5.5 + effort=max must reach the upstream as a native
+	// output_config.effort field, not be dropped or turned into legacy XML.
+	for _, shape := range []string{
+		`"output_config":{"effort":"max"}`,
+		`"thinking":{"type":"adaptive"},"output_config":{"effort":"max"}`,
+		`"thinking":{"type":"enabled","budget_tokens":16000},"output_config":{"effort":"max"}`,
+	} {
+		raw := `{"model":"claude-opus-5.5","max_tokens":100,` + shape +
+			`,"messages":[{"role":"user","content":"hi"}]}`
+		pr, err := PrepareRequest([]byte(raw), PrepareOptions{})
+		if err != nil {
+			t.Fatalf("PrepareRequest(%s): %v", shape, err)
+		}
+		if pr.UpstreamModel != "claude-opus-5.5" {
+			t.Errorf("%s: UpstreamModel = %q; want claude-opus-5.5", shape, pr.UpstreamModel)
+		}
+		if !pr.EffortNative || pr.EffortLevel != EffortMax {
+			t.Errorf("%s: want native/max; got native=%v level=%v", shape, pr.EffortNative, pr.EffortLevel)
+		}
+		kr := prepUnmarshalBody(t, pr.RequestBody)
+		if kr.AdditionalModelRequestFields == nil || kr.AdditionalModelRequestFields.OutputConfig.Effort != "max" {
+			t.Errorf("%s: upstream body must carry output_config.effort=max", shape)
+		}
+		if strings.Contains(pr.RequestBody, "thinking_mode") {
+			t.Errorf("%s: native effort must suppress legacy XML", shape)
+		}
+	}
+}
+
 func TestPrepareRequestThinkingSuffixOverride(t *testing.T) {
 	// "-thinking" opus 4.6 => adaptive thinking + high effort override.
 	raw := `{"model":"claude-opus-4-6-thinking","max_tokens":100,

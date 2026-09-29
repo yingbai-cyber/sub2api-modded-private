@@ -111,6 +111,23 @@ func TestFallbackSupportedEfforts(t *testing.T) {
 	}
 }
 
+// Opus 5 / 5.5 and Sonnet 5 take native effort with xhigh (kiro.rs parity).
+// Before this they returned nil and silently fell back to legacy XML.
+func TestFallbackSupportedEffortsFiveSeries(t *testing.T) {
+	for _, m := range []string{"claude-opus-5.5", "claude-opus-5", "claude-opus-5-thinking", "claude-sonnet-5"} {
+		got := FallbackSupportedEfforts(m)
+		if !containsEffort(got, EffortXhigh) || !containsEffort(got, EffortMax) {
+			t.Errorf("%s should support xhigh and max; got %v", m, got)
+		}
+	}
+	// "opus-5" must not match the 4.5 generation.
+	for _, m := range []string{"claude-opus-4.5", "claude-opus-4-5-20251101"} {
+		if got := FallbackSupportedEfforts(m); len(got) != 0 {
+			t.Errorf("%s should keep no effort support; got %v", m, got)
+		}
+	}
+}
+
 func TestHasThinkingIntent(t *testing.T) {
 	if !HasThinkingIntent(&MessagesRequest{Model: "claude-opus-4-7-thinking"}) {
 		t.Error("-thinking suffix => intent")
