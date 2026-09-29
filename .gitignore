@@ -167,3 +167,5 @@ issues/
 .worktrees/
 bin/
 backend/.tmp_admin_hash.go
+# 排障时抓的 journalctl / 工具输出转储，不属于仓库产物
+agent-tools/
