@@ -2361,8 +2361,13 @@
   - **CI** run `36441967390`：`shell` / `golangci-lint` / `test`（Unit + Integration） / `frontend` / `release-helpers` 均 success。
   - **Security Scan** run `36441967388`：success。
   - **Build** run `36441967405`：构建 success，**Deploy skipped**（提交无 `[deploy]`）。
-- 生产二进制仍是 rebase 前的 `cc87a5add`（Kiro desktop usage batch）；本轮无测试失败，不需要为跟上游补测试。需上线 v0.2.9 时另开 `[deploy]`。
-- 本轮 rebase 到 upstream v0.2.9 **完成**（CI 复验通过；L9 仍未做）。
+- 本轮无测试失败，不需要为跟上游补测试用例。
+- **上线 v0.2.9**：`5bf74a06b chore: ignore local agent-tools dumps [deploy]`（同时把排障用的 `agent-tools/` 加进 `.gitignore`），Build+Deploy run `36508061448` 三段全 success。
+  - 部署标记 `/root/sub2api-modded-data/deployments/last-github-actions-deploy.json`：`commit=5bf74a06b…`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T01:31:16Z`、`backup=bin/sub2api.bak.36508061448.1`。
+  - 服务 `active (running)`，MainPID=`2277917`，`ActiveEnterTimestamp=Mon 2026-09-28 21:31:12 EDT`；二进制 sha256=`e98f5552d95307eabe21617d24dbda60348c7e9176158e8fa6486bb06e537932`。
+  - `172.19.0.1:18081/health` **200** `{"status":"ok"}`；`docker exec npm-app curl` 亦 200。
+  - 启动后 `token_refresh` 对 grok 账号 4685/4686/4693/4694/4695 报 `GROK_OAUTH_REQUEST_FAILED … Proxy Authentication Required`。**与本次升级无关**（代理认证问题，非 v0.2.9 引入），待代理侧处理。
+- 本轮 rebase 到 upstream v0.2.9 **完成并已上线**（CI 复验通过；L9 仍未做）。
 
 ---
 
