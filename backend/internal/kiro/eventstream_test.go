@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"testing"
 
@@ -119,6 +120,54 @@ func TestDecodeErrorFrame(t *testing.T) {
 	}
 	if ev.ErrorMessage != "rate exceeded" {
 		t.Errorf("error message = %q", ev.ErrorMessage)
+	}
+}
+
+func TestDecodeTruncatedFrameIsUnexpectedEOF(t *testing.T) {
+	// The SDK reports a frame cut off mid-payload as a plain io.EOF (its
+	// payload copy treats a short read as success); Next must not.
+	full := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`))
+	cut := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world and more"}`))
+	var raw bytes.Buffer
+	_, _ = raw.Write(full)
+	_, _ = raw.Write(cut[:len(cut)-8])
+
+	dec := NewEventDecoder(&raw)
+	if _, err := dec.Next(); err != nil {
+		t.Fatalf("first frame: %v", err)
+	}
+	_, err := dec.Next()
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated frame err = %v; want io.ErrUnexpectedEOF", err)
+	}
+}
+
+func TestDecodeCleanEndIsEOF(t *testing.T) {
+	raw := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hi"}`))
+	dec := NewEventDecoder(bytes.NewReader(raw))
+	if _, err := dec.Next(); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	if _, err := dec.Next(); err != io.EOF {
+		t.Fatalf("clean end err = %v; want io.EOF", err)
+	}
+}
+
+func TestDecodeMalformedPayloadIsSkippable(t *testing.T) {
+	var raw bytes.Buffer
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{not json`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"after"}`)))
+
+	dec := NewEventDecoder(&raw)
+	_, err := dec.Next()
+	var payloadErr *PayloadDecodeError
+	if !errors.As(err, &payloadErr) {
+		t.Fatalf("err = %v; want *PayloadDecodeError", err)
+	}
+	// The bad frame was fully consumed, so the next one still decodes.
+	ev, err := dec.Next()
+	if err != nil || ev.Assistant == nil || ev.Assistant.Content != "after" {
+		t.Fatalf("next frame = %+v, %v; want content \"after\"", ev, err)
 	}
 }
 

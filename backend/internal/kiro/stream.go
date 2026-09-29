@@ -11,6 +11,13 @@ import (
 // legacy inline <thinking> state machine and native reasoningContentEvent
 // handling, plus tool_use block management.
 
+// thinkingSignaturePlaceholder is sent as the thinking block signature when the
+// upstream did not supply one. Thinking-mode clients (Claude Code, Anthropic
+// SDK) reject a next-turn request whose assistant thinking block has no
+// signature. The history converter only reads block.thinking when replaying to
+// Kiro, so the placeholder never reaches the upstream (kiro.rs 766bd96).
+const thinkingSignaturePlaceholder = "sub2api-kiro-thinking-signature"
+
 // StreamContext holds all streaming conversion state.
 type StreamContext struct {
 	State     *SseStateManager
@@ -32,9 +39,9 @@ type StreamContext struct {
 	thinkingBlockIndex    int
 	hasThinkingBlockIndex bool
 
-	nativeThinkingText string
-	thinkingSignature  string
-	hasThinkingSig     bool
+	// pendingThinkingSignature is the upstream signature for the thinking
+	// block currently streaming; it is emitted as signature_delta on close.
+	pendingThinkingSignature string
 
 	textBlockIndex    int
 	hasTextBlockIndex bool
@@ -174,8 +181,7 @@ func (c *StreamContext) processReasoningContent(r *ReasoningContentEvent) []SseE
 	var events []SseEvent
 
 	if r.Signature != "" {
-		c.thinkingSignature = r.Signature
-		c.hasThinkingSig = true
+		c.pendingThinkingSignature = r.Signature
 	}
 
 	if r.RedactedContent != "" {
@@ -196,25 +202,20 @@ func (c *StreamContext) processReasoningContent(r *ReasoningContentEvent) []SseE
 		return events
 	}
 
-	delta := computeCumulativeDelta(r.Text, c.nativeThinkingText)
-	if strings.HasPrefix(r.Text, c.nativeThinkingText) || strings.HasPrefix(c.nativeThinkingText, r.Text) {
-		c.nativeThinkingText = r.Text
-	} else {
-		c.nativeThinkingText += delta
-	}
-	if delta == "" {
-		return events
-	}
-
-	c.OutputTokens += estimateTokens(delta)
+	// Text is an incremental fragment: forward it verbatim, like kiro.rs.
+	// The old cumulative de-dup dropped fragments that happened to match a
+	// prefix or tail of the thinking so far, truncating and garbling thinking.
+	c.OutputTokens += estimateTokens(r.Text)
 	events = append(events, c.ensureThinkingBlockStarted()...)
 	if c.hasThinkingBlockIndex {
-		events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, delta))
+		events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, r.Text))
 	}
 	return events
 }
 
 // ensureThinkingBlockStarted opens a native thinking block if not already open.
+// The signature is not put on content_block_start; it is sent as a
+// signature_delta right before the block closes (see closeThinkingBlock).
 func (c *StreamContext) ensureThinkingBlockStarted() []SseEvent {
 	if c.hasThinkingBlockIndex && c.State.isBlockOpenOfType(c.thinkingBlockIndex, "thinking") {
 		return nil
@@ -223,25 +224,41 @@ func (c *StreamContext) ensureThinkingBlockStarted() []SseEvent {
 	c.thinkingBlockIndex = idx
 	c.hasThinkingBlockIndex = true
 
-	contentBlock := map[string]any{"type": "thinking", "thinking": ""}
-	if c.hasThinkingSig {
-		contentBlock["signature"] = c.thinkingSignature
-	}
 	return c.State.handleContentBlockStart(idx, "thinking", map[string]any{
 		"type":          "content_block_start",
 		"index":         idx,
-		"content_block": contentBlock,
+		"content_block": map[string]any{"type": "thinking", "thinking": ""},
 	})
 }
 
 // closeThinkingBlockIfOpen closes a native thinking block before text/tool_use.
 func (c *StreamContext) closeThinkingBlockIfOpen() []SseEvent {
-	var events []SseEvent
-	if c.hasThinkingBlockIndex && !c.inThinkingBlock &&
-		c.State.isBlockOpenOfType(c.thinkingBlockIndex, "thinking") {
-		if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
-			events = append(events, stop)
-		}
+	if c.inThinkingBlock {
+		return nil
+	}
+	return c.closeThinkingBlock()
+}
+
+// closeThinkingBlock finishes the current thinking block the Anthropic way:
+// empty thinking_delta, signature_delta (upstream signature, else placeholder),
+// then content_block_stop. It is the single close path for native and inline
+// thinking blocks. The signature is consumed so a later block cannot reuse it.
+func (c *StreamContext) closeThinkingBlock() []SseEvent {
+	if !c.hasThinkingBlockIndex || !c.State.isBlockOpenOfType(c.thinkingBlockIndex, "thinking") {
+		return nil
+	}
+	signature := c.pendingThinkingSignature
+	if signature == "" {
+		signature = thinkingSignaturePlaceholder
+	}
+	c.pendingThinkingSignature = ""
+
+	events := []SseEvent{
+		c.createThinkingDeltaEvent(c.thinkingBlockIndex, ""),
+		c.createSignatureDeltaEvent(c.thinkingBlockIndex, signature),
+	}
+	if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
+		events = append(events, stop)
 	}
 	return events
 }
@@ -320,12 +337,7 @@ func (c *StreamContext) processContentWithThinking(content string) []SseEvent {
 				}
 				c.inThinkingBlock = false
 				c.thinkingExtracted = true
-				if c.hasThinkingBlockIndex {
-					events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, ""))
-					if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
-						events = append(events, stop)
-					}
-				}
+				events = append(events, c.closeThinkingBlock()...)
 				c.thinkingBuffer = c.thinkingBuffer[endPos+len("</thinking>\n\n"):]
 				continue
 			}
@@ -396,6 +408,15 @@ func (c *StreamContext) createThinkingDeltaEvent(index int, thinking string) Sse
 	})
 }
 
+// createSignatureDeltaEvent builds the signature_delta that ends a thinking block.
+func (c *StreamContext) createSignatureDeltaEvent(index int, signature string) SseEvent {
+	return NewSseEvent("content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]any{"type": "signature_delta", "signature": signature},
+	})
+}
+
 // processToolUse handles toolUseEvent, closing thinking/flushing pending text
 // buffers first, then emitting the tool_use block start/delta/stop.
 func (c *StreamContext) processToolUse(t *ToolUseEvent) []SseEvent {
@@ -411,12 +432,7 @@ func (c *StreamContext) processToolUse(t *ToolUseEvent) []SseEvent {
 			}
 			c.inThinkingBlock = false
 			c.thinkingExtracted = true
-			if c.hasThinkingBlockIndex {
-				events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, ""))
-				if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
-					events = append(events, stop)
-				}
-			}
+			events = append(events, c.closeThinkingBlock()...)
 			afterPos := endPos + len("</thinking>")
 			remaining := strings.TrimLeft(c.thinkingBuffer[afterPos:], " \t\r\n")
 			c.thinkingBuffer = ""
@@ -487,12 +503,7 @@ func (c *StreamContext) GenerateFinalEvents() []SseEvent {
 				if thinkingContent != "" && c.hasThinkingBlockIndex {
 					events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, thinkingContent))
 				}
-				if c.hasThinkingBlockIndex {
-					events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, ""))
-					if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
-						events = append(events, stop)
-					}
-				}
+				events = append(events, c.closeThinkingBlock()...)
 				afterPos := endPos + len("</thinking>")
 				remaining := strings.TrimLeft(c.thinkingBuffer[afterPos:], " \t\r\n")
 				c.thinkingBuffer = ""
@@ -504,17 +515,19 @@ func (c *StreamContext) GenerateFinalEvents() []SseEvent {
 			} else {
 				if c.hasThinkingBlockIndex {
 					events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, c.thinkingBuffer))
-					events = append(events, c.createThinkingDeltaEvent(c.thinkingBlockIndex, ""))
-					if stop, ok := c.State.handleContentBlockStop(c.thinkingBlockIndex); ok {
-						events = append(events, stop)
-					}
 				}
+				events = append(events, c.closeThinkingBlock()...)
 			}
 		} else {
 			events = append(events, c.createTextDeltaEvents(c.thinkingBuffer)...)
 		}
 		c.thinkingBuffer = ""
 	}
+
+	// Close any thinking block still open at end of stream (native reasoning
+	// with nothing after it, or an inline block whose buffer was drained) so it
+	// ends with a signature_delta instead of a bare stop from the state manager.
+	events = append(events, c.closeThinkingBlock()...)
 
 	// If only a thinking block was produced (no text/tool_use), emit a filler
 	// text block and set stop_reason=max_tokens.
