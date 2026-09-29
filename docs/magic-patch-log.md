@@ -2479,7 +2479,8 @@
 **验证结果**：
 - 本机未运行任何构建或测试（按用户要求全部走 GitHub Actions）。
 - 先推 `a21a90b26`（不带 `[deploy]`）跑全量 CI：CI run `36544043602`（`golangci-lint` / `test`（Unit + Integration）/ `frontend` / `shell` / `release-helpers`）全 success；Build run `36544043765` 构建 + 单测 success，Deploy skipped；Security Scan run `36544043654` success。
-- CI 全绿后由本条文档提交带 `[deploy]` 上线：<pending-deploy>
+- CI 全绿后由 `d05e9a3f7 …[deploy]` 上线：Build+Deploy run `36545245413` 三段 success。部署标记 `commit=d05e9a3f7…`、`sha256=651e5a2b96f7fae899c77bf237aa35a6fdd62ca25c07543aa5ce8810420165a5`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T08:52:44Z`、`backup=bin/sub2api.bak.36545245413.1`。服务 MainPID=`121626`，`ActiveEnterTimestamp=Tue 2026-09-29 04:52:41 EDT`；二进制内已含新日志串与占位签名。
+- 线上真实流量核对（pings / skipped_frames 字段、失败原因日志、400 原文）：待部署后第一批 opus-5.5 请求。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
