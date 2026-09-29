@@ -69,7 +69,7 @@ func (s *GatewayService) forwardKiroNative(
 	})
 	if err != nil {
 		// Unsupported model / malformed request: client error, do not fail over.
-		return s.writeKiroClientError(c, parsed, http.StatusBadRequest, err.Error())
+		return s.writeKiroClientError(c, http.StatusBadRequest, err.Error())
 	}
 
 	// Build a provider whose HTTP client routes through the gateway upstream
@@ -83,7 +83,14 @@ func (s *GatewayService) forwardKiroNative(
 	}}
 	provider := kiro.NewProvider(httpClient, kiro.NewEndpointRegistry(), nil)
 
-	resp, err := provider.Forward(ctx, &kiro.ForwardInput{
+	// Detach the upstream read from the client connection for streams, like
+	// the Anthropic path: otherwise a client disconnect cancels the read and
+	// the trailing meteringEvent is lost (output recorded with 0 credits). A
+	// stalled upstream is still bounded by the stream idle timeout.
+	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, pr.Stream)
+	defer releaseUpstreamCtx()
+
+	resp, err := provider.Forward(upstreamCtx, &kiro.ForwardInput{
 		Credentials: cred,
 		Token:       token,
 		MachineID:   kiro.GenerateMachineID(cred, ""),
@@ -105,19 +112,21 @@ func (s *GatewayService) forwardKiroNative(
 	}
 
 	if pr.Stream {
-		return s.streamKiroNative(c, resp, pr, parsed, startTime)
+		return s.streamKiroNative(c, resp, pr, parsed, account, startTime)
 	}
-	return s.nonStreamKiroNative(c, resp, pr, parsed, startTime)
+	return s.nonStreamKiroNative(c, resp, pr, parsed, account, startTime)
 }
 
 // streamKiroNative drives the upstream event-stream into Anthropic SSE. Once any
 // byte is written to the client, failover is no longer possible; a fatal upstream
-// error surfaces as an in-stream error event (handled inside DriveStream).
+// error or an interrupted stream surfaces as an in-stream error event and is
+// returned as an error (with the partial usage) so it is logged and counted.
 func (s *GatewayService) streamKiroNative(
 	c *gin.Context,
 	resp *kiro.ForwardResponse,
 	pr *kiro.PreparedRequest,
 	parsed *ParsedRequest,
+	account *Account,
 	startTime time.Time,
 ) (*ForwardResult, error) {
 	c.Header("Content-Type", "text/event-stream")
@@ -130,28 +139,29 @@ func (s *GatewayService) streamKiroNative(
 	var firstTokenMs *int
 
 	sctx := pr.NewStreamContext()
-	outcome, _ := kiro.DriveStream(sctx, resp.Body, func(ev kiro.SseEvent) error {
+	outcome, _ := kiro.DriveStreamWithOptions(sctx, resp.Body, func(ev kiro.SseEvent) error {
 		if firstTokenMs == nil {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
 		if _, werr := io.WriteString(c.Writer, ev.ToSSEString()); werr != nil {
-			return werr // signals client disconnect; DriveStream keeps draining
+			return werr // signals client disconnect; the driver keeps draining
 		}
 		if flusher != nil {
 			flusher.Flush()
 		}
 		return nil
-	})
+	}, s.kiroDriveOptions())
 	if outcome == nil {
 		outcome = &kiro.StreamOutcome{}
 	}
 
 	duration := time.Since(startTime)
-	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s upstream_model=%s native_effort=%s stream endpoint=%s credits=%.6f duration_ms=%d",
-		parsed.Model, pr.UpstreamModel, kiroNativeEffortLabel(pr), resp.Endpoint, outcome.Credits, duration.Milliseconds())
+	logger.LegacyPrintf("service.gateway", "[Kiro] native model=%s upstream_model=%s native_effort=%s stream endpoint=%s credits=%.6f duration_ms=%d pings=%d skipped_frames=%d client_disconnected=%t",
+		parsed.Model, pr.UpstreamModel, kiroNativeEffortLabel(pr), resp.Endpoint, outcome.Credits, duration.Milliseconds(),
+		outcome.Pings, outcome.SkippedFrames, outcome.ClientDisconnected)
 
-	return &ForwardResult{
+	result := &ForwardResult{
 		Model:            parsed.Model,
 		UpstreamModel:    pr.UpstreamModel,
 		Stream:           true,
@@ -164,7 +174,42 @@ func (s *GatewayService) streamKiroNative(
 			CacheReadInputTokens: outcome.CacheReadTokens,
 			KiroCredits:          outcome.Credits,
 		},
-	}, nil
+	}
+	if !outcome.HasFatal && !outcome.Interrupted {
+		return result, nil
+	}
+	return result, s.reportKiroStreamFailure(c, account, parsed, outcome)
+}
+
+// reportKiroStreamFailure logs an in-stream failure (fatal upstream error event
+// or interrupted stream) and records it for Ops. The error event was already
+// written to the client, so the response is marked committed to stop the
+// handler from appending a second error frame. The returned error makes the
+// handler log gateway.forward_failed while still billing the partial usage.
+func (s *GatewayService) reportKiroStreamFailure(c *gin.Context, account *Account, parsed *ParsedRequest, outcome *kiro.StreamOutcome) error {
+	reason := "upstream_error"
+	detail := outcome.FatalError
+	if outcome.Interrupted {
+		reason = outcome.InterruptReason
+		detail = outcome.InterruptDetail
+	}
+	logger.LegacyPrintf("service.gateway", "[Kiro] native stream failed account=%d(%s) model=%s reason=%s detail=%s credits=%.6f output_tokens=%d",
+		account.ID, account.Name, parsed.Model, reason, truncateString(detail, 1000), outcome.Credits, outcome.OutputTokens)
+
+	message := sanitizeUpstreamErrorMessage(truncateString(detail, 512))
+	MarkOpsStreamFailure(c, "upstream_error", reason, message, http.StatusBadGateway)
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:     opsUpstreamProxyID(account),
+		ProxyName:   opsUpstreamProxyName(account),
+		Platform:    account.Platform,
+		AccountID:   account.ID,
+		AccountName: account.Name,
+		Kind:        "stream_error",
+		Reason:      reason,
+		Message:     message,
+	})
+	MarkResponseCommitted(c)
+	return fmt.Errorf("kiro stream %s: %s", reason, message)
 }
 
 // nonStreamKiroNative aggregates the upstream event-stream into a single
@@ -174,11 +219,38 @@ func (s *GatewayService) nonStreamKiroNative(
 	resp *kiro.ForwardResponse,
 	pr *kiro.PreparedRequest,
 	parsed *ParsedRequest,
+	account *Account,
 	startTime time.Time,
 ) (*ForwardResult, error) {
 	res, err := kiro.BuildNonStreamResponseFor(resp.Body, pr)
 	if err != nil {
 		return nil, fmt.Errorf("kiro: build non-stream response: %w", err)
+	}
+	if res.HasFatal {
+		// An upstream error event mid-response used to be returned as a 200 with
+		// whatever partial text had arrived. Report it as an error instead.
+		logger.LegacyPrintf("service.gateway", "[Kiro] native non-stream failed account=%d(%s) model=%s detail=%s credits=%.6f",
+			account.ID, account.Name, parsed.Model, truncateString(res.FatalError, 1000), res.Credits)
+		message := sanitizeUpstreamErrorMessage(truncateString(res.FatalError, 512))
+		setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+		MarkResponseCommitted(c)
+		body, _ := json.Marshal(map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "api_error", "message": message},
+		})
+		c.Data(http.StatusBadGateway, "application/json", body)
+		return &ForwardResult{
+			Model:         parsed.Model,
+			UpstreamModel: pr.UpstreamModel,
+			Stream:        false,
+			Duration:      time.Since(startTime),
+			Usage: ClaudeUsage{
+				InputTokens:          res.InputTokens,
+				OutputTokens:         res.OutputTokens,
+				CacheReadInputTokens: res.CacheReadTokens,
+				KiroCredits:          res.Credits,
+			},
+		}, fmt.Errorf("kiro non-stream upstream error: %s", message)
 	}
 
 	out, err := json.Marshal(res.Response)
@@ -207,9 +279,12 @@ func (s *GatewayService) nonStreamKiroNative(
 	}, nil
 }
 
-// writeKiroClientError writes a client-facing error and returns a successful
-// ForwardResult (no failover): the request is malformed, other accounts cannot help.
-func (s *GatewayService) writeKiroClientError(c *gin.Context, parsed *ParsedRequest, status int, msg string) (*ForwardResult, error) {
+// writeKiroClientError writes a client-facing error and returns it as an error
+// (no failover: the request is malformed, other accounts cannot help). It used
+// to return a successful ForwardResult, which recorded the failure as a 0-token
+// success and kept it out of the error logs.
+func (s *GatewayService) writeKiroClientError(c *gin.Context, status int, msg string) (*ForwardResult, error) {
+	MarkResponseCommitted(c)
 	c.Header("Content-Type", "application/json")
 	c.Status(status)
 	body, _ := json.Marshal(map[string]any{
@@ -217,7 +292,7 @@ func (s *GatewayService) writeKiroClientError(c *gin.Context, parsed *ParsedRequ
 		"error": map[string]any{"type": "invalid_request_error", "message": msg},
 	})
 	_, _ = c.Writer.Write(body)
-	return &ForwardResult{Model: parsed.Model, Stream: parsed.Stream}, nil
+	return nil, fmt.Errorf("kiro client error %d: %s", status, truncateString(msg, 512))
 }
 
 // kiroDispositionAction is the gateway's reaction to a classified upstream
@@ -280,7 +355,24 @@ func (s *GatewayService) mapKiroUpstreamError(
 		if status == 0 {
 			status = http.StatusBadRequest
 		}
-		return s.writeKiroClientError(c, parsed, status, ue.Body)
+		// Keep the upstream reason (e.g. "Invalid tool use format.") in the log
+		// and Ops. It used to reach only the client, which made the instant
+		// empty-reply 400s impossible to diagnose from the server side.
+		upstreamMsg := sanitizeUpstreamErrorMessage(kiroUpstreamErrorMessage(ue.Body))
+		logger.LegacyPrintf("service.gateway", "[Kiro] native upstream client error account=%d(%s) endpoint=%s status=%d model=%s body=%s",
+			account.ID, account.Name, ue.Endpoint, status, parsed.Model, truncateString(ue.Body, 1000))
+		setOpsUpstreamError(c, status, upstreamMsg, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: status,
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+		})
+		return s.writeKiroClientError(c, status, ue.Body)
 	}
 
 	failover := &UpstreamFailoverError{
@@ -294,6 +386,49 @@ func (s *GatewayService) mapKiroUpstreamError(
 		failover.RetryableOnSameAccount = account.IsPoolMode() && account.IsPoolModeRetryableStatus(ue.Status)
 	}
 	return nil, failover
+}
+
+// kiroUpstreamErrorMessage extracts a readable reason from a Kiro error body
+// such as {"message":"Invalid tool use format.","reason":"REQUEST_BODY_INVALID"}.
+func kiroUpstreamErrorMessage(body string) string {
+	var kb struct {
+		Message string `json:"message"`
+		Reason  string `json:"reason"`
+	}
+	_ = json.Unmarshal([]byte(body), &kb)
+	msg := strings.TrimSpace(kb.Message)
+	if msg == "" {
+		msg = strings.TrimSpace(extractUpstreamErrorMessage([]byte(body)))
+	}
+	reason := strings.TrimSpace(kb.Reason)
+	switch {
+	case msg != "" && reason != "":
+		return msg + " (" + reason + ")"
+	case msg != "":
+		return msg
+	case reason != "":
+		return reason
+	default:
+		return truncateString(strings.TrimSpace(body), 512)
+	}
+}
+
+// kiroDriveOptions maps the gateway stream settings onto the native Kiro stream
+// driver so Kiro streams get the same keepalive pings and idle bound as the
+// other stream paths (gateway.stream_keepalive_interval and
+// gateway.stream_data_interval_timeout, default 10s / 180s).
+func (s *GatewayService) kiroDriveOptions() kiro.DriveOptions {
+	var opts kiro.DriveOptions
+	if s.cfg == nil {
+		return opts
+	}
+	if v := s.cfg.Gateway.StreamKeepaliveInterval; v > 0 {
+		opts.KeepaliveInterval = time.Duration(v) * time.Second
+	}
+	if v := s.cfg.Gateway.StreamDataIntervalTimeout; v > 0 {
+		opts.IdleTimeout = time.Duration(v) * time.Second
+	}
+	return opts
 }
 
 // kiroNativeEffortLabel reports the effort tier actually sent upstream as the

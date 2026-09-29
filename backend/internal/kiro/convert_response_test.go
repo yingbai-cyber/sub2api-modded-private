@@ -93,6 +93,73 @@ func TestNonStreamThinkingExtraction(t *testing.T) {
 	}
 }
 
+func TestNonStreamNativeReasoning(t *testing.T) {
+	// Native reasoningContentEvent used to be dropped in non-stream replies.
+	raw := buildStream(t, [][2]string{
+		{"reasoningContentEvent", `{"text":"step one"}`},
+		{"reasoningContentEvent", `{"text":", step two","signature":"sig-x"}`},
+		{"assistantResponseEvent", `{"content":"the answer"}`},
+	})
+	res, err := BuildNonStreamResponse(bytes.NewReader(raw), "claude-opus-5.5", true, 5, nil)
+	if err != nil {
+		t.Fatalf("BuildNonStreamResponse: %v", err)
+	}
+	content, _ := res.Response["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("content blocks = %d; want 2 (thinking+text)", len(content))
+	}
+	th, _ := content[0].(map[string]any)
+	if th["type"] != "thinking" || th["thinking"] != "step one, step two" || th["signature"] != "sig-x" {
+		t.Errorf("thinking block = %v", th)
+	}
+	txt, _ := content[1].(map[string]any)
+	if txt["type"] != "text" || txt["text"] != "the answer" {
+		t.Errorf("text block = %v", txt)
+	}
+}
+
+func TestNonStreamInlineThinkingHasPlaceholderSignature(t *testing.T) {
+	raw := buildStream(t, [][2]string{
+		{"assistantResponseEvent", `{"content":"<thinking>\nmy reasoning</thinking>\n\nthe answer"}`},
+	})
+	res, err := BuildNonStreamResponse(bytes.NewReader(raw), "claude-sonnet-4", true, 5, nil)
+	if err != nil {
+		t.Fatalf("BuildNonStreamResponse: %v", err)
+	}
+	content, _ := res.Response["content"].([]any)
+	th, _ := content[0].(map[string]any)
+	if th["signature"] != thinkingSignaturePlaceholder {
+		t.Errorf("thinking signature = %v; want placeholder", th["signature"])
+	}
+}
+
+func TestNonStreamSkipsMalformedFrame(t *testing.T) {
+	raw := buildStream(t, [][2]string{
+		{"assistantResponseEvent", `{"content":"Hello "}`},
+		{"assistantResponseEvent", `{not json`},
+		{"assistantResponseEvent", `{"content":"world"}`},
+	})
+	res, err := BuildNonStreamResponse(bytes.NewReader(raw), "claude-sonnet-4", false, 5, nil)
+	if err != nil {
+		t.Fatalf("BuildNonStreamResponse: %v", err)
+	}
+	content, _ := res.Response["content"].([]any)
+	txt, _ := content[0].(map[string]any)
+	if txt["text"] != "Hello world" {
+		t.Errorf("text = %v; want \"Hello world\"", txt["text"])
+	}
+}
+
+func TestNonStreamTruncatedStreamIsError(t *testing.T) {
+	raw := buildStream(t, [][2]string{
+		{"assistantResponseEvent", `{"content":"Hello"}`},
+		{"assistantResponseEvent", `{"content":" world and more"}`},
+	})
+	if _, err := BuildNonStreamResponse(bytes.NewReader(raw[:len(raw)-8]), "claude-sonnet-4", false, 5, nil); err == nil {
+		t.Fatal("a stream cut off mid-frame must be an error, not a truncated 200")
+	}
+}
+
 func TestNonStreamContextUsageTokens(t *testing.T) {
 	// contextUsageEvent overrides the estimated input tokens.
 	raw := buildStream(t, [][2]string{

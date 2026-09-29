@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
 )
@@ -258,5 +260,120 @@ func TestDriveStreamFatalErrorShortCircuits(t *testing.T) {
 	}
 	if !strings.Contains(outcome.FatalError, "ThrottlingException") {
 		t.Errorf("FatalError = %q; want it to mention ThrottlingException", outcome.FatalError)
+	}
+}
+
+func TestDriveStreamKeepalivePingsWhileUpstreamSilent(t *testing.T) {
+	// The upstream sends one frame, stays silent, then finishes. Pings must go
+	// out during the silence, and the stream must still end normally.
+	first := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hi"}`))
+	last := encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.25}`))
+	upR, upW := io.Pipe()
+	defer func() { _ = upR.Close() }()
+	go func() {
+		_, _ = upW.Write(first)
+		time.Sleep(300 * time.Millisecond)
+		_, _ = upW.Write(last)
+		_ = upW.Close()
+	}()
+
+	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
+	var events []string
+	outcome, err := DriveStreamWithOptions(ctx, upR, collectEmit(&events), DriveOptions{KeepaliveInterval: 40 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("DriveStreamWithOptions: %v", err)
+	}
+	if outcome.Pings < 1 || countName(events, "ping") != outcome.Pings {
+		t.Errorf("pings = %d (emitted %d); want >= 1 and equal", outcome.Pings, countName(events, "ping"))
+	}
+	if outcome.Interrupted || events[len(events)-1] != "message_stop" {
+		t.Errorf("want a normal end; interrupted=%v last=%q", outcome.Interrupted, events[len(events)-1])
+	}
+	if outcome.Credits < 0.24 || outcome.Credits > 0.26 {
+		t.Errorf("credits = %v; want ~0.25", outcome.Credits)
+	}
+}
+
+func TestDriveStreamIdleTimeoutInterrupts(t *testing.T) {
+	first := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hi"}`))
+	upR, upW := io.Pipe()
+	defer func() { _ = upR.Close() }()
+	defer func() { _ = upW.Close() }()
+	go func() { _, _ = upW.Write(first) }() // then the upstream stalls
+
+	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
+	var events []string
+	outcome, err := DriveStreamWithOptions(ctx, upR, collectEmit(&events), DriveOptions{IdleTimeout: 80 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("DriveStreamWithOptions: %v", err)
+	}
+	if !outcome.Interrupted || outcome.InterruptReason != InterruptIdleTimeout {
+		t.Fatalf("want idle_timeout interrupt; got interrupted=%v reason=%q", outcome.Interrupted, outcome.InterruptReason)
+	}
+	if countName(events, "error") != 1 || countName(events, "message_stop") != 0 {
+		t.Errorf("want one error event and no message_stop; got %v", events)
+	}
+}
+
+func TestDriveStreamTruncatedFrameIsReadErrorNotNormalEnd(t *testing.T) {
+	// A frame cut off mid-payload used to decode as a clean io.EOF, so the
+	// reply ended with end_turn + message_stop and looked complete.
+	full := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`))
+	cut := encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world and more"}`))
+	var raw bytes.Buffer
+	_, _ = raw.Write(full)
+	_, _ = raw.Write(cut[:len(cut)-8])
+
+	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
+	var events []string
+	outcome, err := DriveStream(ctx, &raw, collectEmit(&events))
+	if err != nil {
+		t.Fatalf("DriveStream: %v", err)
+	}
+	if !outcome.Interrupted || outcome.InterruptReason != InterruptReadError {
+		t.Fatalf("want read_error interrupt; got interrupted=%v reason=%q", outcome.Interrupted, outcome.InterruptReason)
+	}
+	if countName(events, "message_stop") != 0 || countName(events, "error") != 1 {
+		t.Errorf("want an error event and no message_stop; got %v", events)
+	}
+}
+
+func TestDriveStreamSkipsMalformedPayloadFrame(t *testing.T) {
+	var raw bytes.Buffer
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":"Hello"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{not json`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{"content":" world"}`)))
+	_, _ = raw.Write(encodeFrame(t, eventHeaders("meteringEvent"), []byte(`{"unit":"credit","usage":0.5}`)))
+
+	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
+	var events []string
+	outcome, err := DriveStream(ctx, &raw, collectEmit(&events))
+	if err != nil {
+		t.Fatalf("DriveStream: %v", err)
+	}
+	if outcome.Interrupted || outcome.SkippedFrames != 1 {
+		t.Errorf("want 1 skipped frame and no interrupt; got skipped=%d interrupted=%v", outcome.SkippedFrames, outcome.Interrupted)
+	}
+	if events[len(events)-1] != "message_stop" {
+		t.Errorf("last event = %q; want message_stop", events[len(events)-1])
+	}
+	if outcome.Credits < 0.49 || outcome.Credits > 0.51 {
+		t.Errorf("credits = %v; want ~0.5 (frames after the bad one still read)", outcome.Credits)
+	}
+}
+
+func TestDriveStreamTooManyMalformedFramesInterrupts(t *testing.T) {
+	var raw bytes.Buffer
+	for i := 0; i < maxConsecutiveDecodeErrors; i++ {
+		_, _ = raw.Write(encodeFrame(t, eventHeaders("assistantResponseEvent"), []byte(`{not json`)))
+	}
+	ctx := NewStreamContext("claude-sonnet-4.5", 5, false, nil)
+	var events []string
+	outcome, err := DriveStream(ctx, &raw, collectEmit(&events))
+	if err != nil {
+		t.Fatalf("DriveStream: %v", err)
+	}
+	if !outcome.Interrupted || outcome.InterruptReason != InterruptDecodeErrors {
+		t.Fatalf("want decode_errors interrupt; got interrupted=%v reason=%q", outcome.Interrupted, outcome.InterruptReason)
 	}
 }

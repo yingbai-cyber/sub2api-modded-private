@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -42,6 +43,11 @@ type nonStreamAccumulator struct {
 	totalCredits     float64
 	fatalError       string
 	hasFatal         bool
+
+	// Native reasoningContentEvent thinking (incremental fragments).
+	nativeThinking   strings.Builder
+	thinkingSig      string
+	redactedThinking []string
 }
 
 // processEvent accumulates a single decoded event.
@@ -81,6 +87,17 @@ func (a *nonStreamAccumulator) processEvent(ev *Event) {
 		a.hasFatal = true
 	case EventMetering:
 		a.totalCredits += ev.Metering.Usage
+	case EventReasoningContent:
+		// Previously dropped: native thinking never reached non-stream replies.
+		if ev.Reasoning.Text != "" {
+			_, _ = a.nativeThinking.WriteString(ev.Reasoning.Text)
+		}
+		if ev.Reasoning.Signature != "" {
+			a.thinkingSig = ev.Reasoning.Signature
+		}
+		if ev.Reasoning.RedactedContent != "" {
+			a.redactedThinking = append(a.redactedThinking, ev.Reasoning.RedactedContent)
+		}
 	}
 }
 
@@ -124,14 +141,25 @@ func buildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	}
 
 	dec := NewEventDecoder(r)
+	consecutiveDecodeErrors := 0
 	for {
 		ev, err := dec.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
+			// Skip a malformed payload frame (kiro.rs does); anything else, or
+			// too many in a row, is a real failure (incl. a mid-frame cut-off).
+			var payloadErr *PayloadDecodeError
+			if errors.As(err, &payloadErr) {
+				consecutiveDecodeErrors++
+				if consecutiveDecodeErrors < maxConsecutiveDecodeErrors {
+					continue
+				}
+			}
 			return nil, err
 		}
+		consecutiveDecodeErrors = 0
 		acc.processEvent(&ev)
 	}
 
@@ -142,13 +170,30 @@ func buildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	// Assemble content blocks.
 	var content []any
 	rawText := acc.textContent.String()
+	nativeThinking := acc.nativeThinking.String()
 	if acc.thinkingEnabled {
-		thinking, hasThinking, remaining := ExtractThinkingFromCompleteText(rawText)
-		if hasThinking {
-			content = append(content, map[string]any{"type": "thinking", "thinking": thinking})
+		// Mirrors kiro.rs build_non_stream_content. Thinking blocks carry a
+		// signature so thinking-mode clients accept them on the next turn.
+		if nativeThinking != "" {
+			sig := acc.thinkingSig
+			if sig == "" {
+				sig = thinkingSignaturePlaceholder
+			}
+			content = append(content, map[string]any{"type": "thinking", "thinking": nativeThinking, "signature": sig})
+		} else {
+			thinking, hasThinking, remaining := ExtractThinkingFromCompleteText(rawText)
+			if hasThinking {
+				content = append(content, map[string]any{"type": "thinking", "thinking": thinking, "signature": thinkingSignaturePlaceholder})
+			}
+			if remaining != "" {
+				content = append(content, map[string]any{"type": "text", "text": remaining})
+			}
 		}
-		if remaining != "" {
-			content = append(content, map[string]any{"type": "text", "text": remaining})
+		for _, redacted := range acc.redactedThinking {
+			content = append(content, map[string]any{"type": "redacted_thinking", "data": redacted})
+		}
+		if nativeThinking != "" && rawText != "" {
+			content = append(content, map[string]any{"type": "text", "text": rawText})
 		}
 	} else if rawText != "" {
 		content = append(content, map[string]any{"type": "text", "text": rawText})
@@ -171,6 +216,9 @@ func buildNonStreamResponse(r io.Reader, model string, thinkingEnabled bool, inp
 	}
 
 	outputTokens := estimateTokens(rawText) + estimateTokens(toolInputConcat.String())
+	if nativeThinking != "" {
+		outputTokens += estimateTokens(nativeThinking)
+	}
 	if outputTokens < 1 {
 		outputTokens = 1
 	}
