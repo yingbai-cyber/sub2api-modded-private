@@ -2478,7 +2478,8 @@
 
 **验证结果**：
 - 本机未运行任何构建或测试（按用户要求全部走 GitHub Actions）。
-- CI / 部署：<pending-ci>
+- 先推 `a21a90b26`（不带 `[deploy]`）跑全量 CI：CI run `36544043602`（`golangci-lint` / `test`（Unit + Integration）/ `frontend` / `shell` / `release-helpers`）全 success；Build run `36544043765` 构建 + 单测 success，Deploy skipped；Security Scan run `36544043654` success。
+- CI 全绿后由本条文档提交带 `[deploy]` 上线：<pending-deploy>
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
