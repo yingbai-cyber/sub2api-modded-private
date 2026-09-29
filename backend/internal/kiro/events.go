@@ -58,8 +58,9 @@ type ToolUseEvent struct {
 	Stop      bool   `json:"stop"`
 }
 
-// ReasoningContentEvent is native thinking content. Kiro CLI/runtime typically
-// returns cumulative text, so downstream must compute deltas.
+// ReasoningContentEvent is native thinking content. Text is an incremental
+// fragment (not cumulative), matching kiro.rs, which forwards it verbatim as a
+// thinking_delta and appends it in the non-streaming path.
 type ReasoningContentEvent struct {
 	Text            string `json:"text"`
 	Signature       string `json:"signature"`

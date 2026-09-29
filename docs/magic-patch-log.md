@@ -2443,7 +2443,42 @@
 
 ---
 
-## 后续记录模板
+### 2026-09-29：Kiro 原生链路流式可靠性六项修复（对齐 kiro.rs v0.9.0）
+**类型**：修复 / 反代适配
+
+**背景**：
+- 用户反馈走 sub2api 的 opus-5.5 常见空回、输出截断、思考截断；同上游走本机 Zyphr kiro-rs v0.9.0 则正常。
+- 取证（账号 5004，北京时间）：
+  - 10:14 前 198 条 opus-5.x 中 35 条在 **63.4–66.7s** 被切断：首 token 3–6s、输出中位 7 token、0 credits。原因是上游静默约 60s 后被空闲断开，而 Kiro 原生路径静默期不发 ping（Zyphr 25s、网关其他路径 10s）。NPM 超时为 15m，已排除。kiro-rs 同上游 617 条 opus-5.x 流有 32 条超过 70s，最长 184s。
+  - 11:58 后 167 条中 12 条是瞬间 400 空回：每串是同一段对话被客户端反复重发（共 5 段，含 opus-5）。网关只记状态码，并记成一条 0 token 的「成功」，看不到上游原因。
+- 只读比对 kiro.rs v0.9.0 与 Go 版（移植自旧 hank9999 版）确认 Go 缺后续修复。
+
+**影响文件**：
+- `backend/internal/kiro/{handler,stream,stream_util,eventstream,events,convert_response}.go` 及对应测试；删除 `stream_util_test.go`
+- `backend/internal/service/kiro_gateway.go`，新增 `kiro_gateway_stream_test.go`
+
+**改动摘要**：
+1. **保活 ping**：新增 `DriveStreamWithOptions`，上游在独立 goroutine 读取；向客户端静默满 `gateway.stream_keepalive_interval`（默认 10s）即发 `event: ping`。
+2. **上游读取与客户端解绑**：流式请求用 `detachStreamUpstreamContext`（同 Anthropic 路径），客户端断开不再取消上游读取、不再丢尾部计量。上游停滞由 `gateway.stream_data_interval_timeout`（默认 180s）兜底，超时以错误事件结束。
+3. **400 原因可见**：上游 4xx 原文写日志（`[Kiro] native upstream client error ... body=`），写入 Ops（`setOpsUpstreamError` + `appendOpsUpstreamError`）。`writeKiroClientError` 改为返回 error，不再记成 0 token 成功。
+4. **原生 reasoning 原样透传**：删除 `computeCumulativeDelta`。Kiro `reasoningContentEvent.text` 是增量片段（kiro.rs 流式原样转发、非流式直接拼接），旧的累积去重会把恰好等于前文前缀或尾部的片段误丢，导致思考截断/乱码。非流式路径原先完全丢弃原生思考，现已收集（含 redacted）。
+5. **流出错不再伪装正常结束**：AWS SDK 用 `io.Copy` 读 payload，短读当成功，帧中途断开只表现为普通 `io.EOF`，被当成正常结束。`EventDecoder` 现按字节计数，帧内 EOF 返回 `io.ErrUnexpectedEOF`。读取失败、连续 5 个坏帧、静默超时一律发 `error` 事件、不发 `message_stop`，并记 Ops（`MarkOpsStreamFailure`）与日志（`[Kiro] native stream failed`），部分用量照常计费。单个坏 payload 帧跳过（同 kiro.rs）。非流式遇上游错误事件改返回 502，不再返回截断的 200。
+6. **thinking 块补 `signature_delta`**：每个 thinking 块在 `content_block_stop` 前发 `signature_delta`（上游签名，否则占位 `sub2api-kiro-thinking-signature`）。流式 5 条关闭路径统一走 `closeThinkingBlock`，签名用后即清。非流式 thinking 块带 `signature`。回放时转换器只读 `block.thinking`，占位不会发给上游（同 kiro.rs 766bd96）。
+
+**未改（有意，另议）**：
+- 原生 thinking 开块时不 flush inline 缓冲、不关闭已开 text 块（Zyphr 会做）。答案正文里若出现字面 `<thinking>` 仍可能被误当思考。
+- Claude Code 的 noop-delta keepalive（Anthropic 路径对新版 Claude Code 用 delta 代替 ping）未接到 Kiro 路径。
+- 400 的具体根因要等本次上线后从日志看到上游原文再定。
+
+**rebase 风险点**：
+- Kiro 流必须走 `DriveStreamWithOptions(..., s.kiroDriveOptions())`，不要退回无保活的 `DriveStream`。
+- 流式 `provider.Forward` 必须用解绑后的 ctx。
+- `EventDecoder` 的 `countingReader` 帧内 EOF 转 `io.ErrUnexpectedEOF` 不可去掉，否则截断又会被当成正常结束。
+- 不要恢复 reasoning 的累积去重。
+
+**验证结果**：
+- 本机未运行任何构建或测试（按用户要求全部走 GitHub Actions）。
+- CI / 部署：<pending-ci>
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配

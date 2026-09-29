@@ -84,10 +84,11 @@ func TestStreamBasicText(t *testing.T) {
 }
 
 func TestStreamNativeThinking(t *testing.T) {
-	// Kiro returns cumulative reasoning text; deltas must be de-duplicated.
+	// Kiro reasoningContentEvent text is an incremental fragment (kiro.rs
+	// forwards it verbatim), and the signature arrives on a later event.
 	out := runStream("claude-sonnet-4", 5, true, nil, []Event{
-		reasoningEv("Let me", "sig-1"),
-		reasoningEv("Let me think", ""),
+		reasoningEv("Let me", ""),
+		reasoningEv(" think", "sig-1"),
 		assistantEv("Answer"),
 	})
 	if out.thinking != "Let me think" {
@@ -98,9 +99,48 @@ func TestStreamNativeThinking(t *testing.T) {
 	}
 	// thinking block must open and close before the text block opens.
 	assertOrder(t, out.names, "content_block_start", "content_block_stop")
-	// signature captured
-	if !hasThinkingSignature(out.events) {
-		t.Error("expected thinking block to carry a signature")
+	// The upstream signature is sent as signature_delta before the block stops.
+	if sig := thinkingSignatureBeforeStop(t, out.events); sig != "sig-1" {
+		t.Errorf("signature_delta = %q; want sig-1", sig)
+	}
+}
+
+func TestStreamNativeThinkingKeepsOverlappingFragments(t *testing.T) {
+	// Regression: the old cumulative de-dup dropped " is" (a tail of the text
+	// so far) and "The" (a prefix of it), truncating the thinking.
+	out := runStream("claude-sonnet-4", 5, true, nil, []Event{
+		reasoningEv("The plan is", ""),
+		reasoningEv(" is", ""),
+		reasoningEv(" fine. ", ""),
+		reasoningEv("The", ""),
+		assistantEv("ok"),
+	})
+	want := "The plan is is fine. The"
+	if out.thinking != want {
+		t.Errorf("thinking = %q; want %q", out.thinking, want)
+	}
+}
+
+func TestStreamInlineThinkingGetsPlaceholderSignature(t *testing.T) {
+	out := runStream("claude-sonnet-4", 5, true, nil, []Event{
+		assistantEv("<thinking>\nreasoning here</thinking>\n\nFinal answer"),
+	})
+	if sig := thinkingSignatureBeforeStop(t, out.events); sig != thinkingSignaturePlaceholder {
+		t.Errorf("signature_delta = %q; want placeholder", sig)
+	}
+}
+
+func TestStreamNativeThinkingClosedAtEndHasSignature(t *testing.T) {
+	// Native thinking with nothing after it is closed by GenerateFinalEvents,
+	// which must still send signature_delta before the stop.
+	out := runStream("claude-sonnet-4", 5, true, nil, []Event{
+		reasoningEv("only thinking", ""),
+	})
+	if sig := thinkingSignatureBeforeStop(t, out.events); sig != thinkingSignaturePlaceholder {
+		t.Errorf("signature_delta = %q; want placeholder", sig)
+	}
+	if sr := finalStopReason(out.events); sr != "max_tokens" {
+		t.Errorf("stop_reason = %q; want max_tokens", sr)
 	}
 }
 
@@ -130,19 +170,37 @@ func assertOrder(t *testing.T, names []string, first, second string) {
 	}
 }
 
-func hasThinkingSignature(events []SseEvent) bool {
+// thinkingSignatureBeforeStop returns the signature_delta sent for the first
+// thinking block, failing unless it comes before that block's
+// content_block_stop.
+func thinkingSignatureBeforeStop(t *testing.T, events []SseEvent) string {
+	t.Helper()
+	thinkingIdx := -1
+	sig := ""
 	for _, e := range events {
-		if e.Event != "content_block_start" {
-			continue
-		}
-		cb, _ := e.Data["content_block"].(map[string]any)
-		if cb["type"] == "thinking" {
-			if _, ok := cb["signature"]; ok {
-				return true
+		idx, _ := e.Data["index"].(int)
+		switch e.Event {
+		case "content_block_start":
+			cb, _ := e.Data["content_block"].(map[string]any)
+			if cb["type"] == "thinking" && thinkingIdx < 0 {
+				thinkingIdx = idx
+			}
+		case "content_block_delta":
+			delta, _ := e.Data["delta"].(map[string]any)
+			if thinkingIdx >= 0 && idx == thinkingIdx && delta["type"] == "signature_delta" {
+				sig, _ = delta["signature"].(string)
+			}
+		case "content_block_stop":
+			if thinkingIdx >= 0 && idx == thinkingIdx {
+				if sig == "" {
+					t.Fatal("thinking block stopped without a signature_delta")
+				}
+				return sig
 			}
 		}
 	}
-	return false
+	t.Fatal("no closed thinking block found")
+	return ""
 }
 
 func TestStreamInlineThinking(t *testing.T) {

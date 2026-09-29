@@ -2,8 +2,10 @@ package kiro
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
+	"time"
 )
 
 // This file ports the request-orchestration flow kiro-rs keeps in
@@ -214,24 +216,120 @@ type StreamOutcome struct {
 	// FatalError is the upstream error message, when the stream ended fatally.
 	FatalError string
 	HasFatal   bool
+	// Interrupted reports that the stream ended abnormally (upstream read
+	// failure, repeated malformed frames or idle timeout) after an error event.
+	Interrupted bool
+	// InterruptReason is one of the Interrupt* constants when Interrupted.
+	InterruptReason string
+	// InterruptDetail is the internal error text. It may contain upstream
+	// addresses: log it, never send it to the client.
+	InterruptDetail string
+	// SkippedFrames counts malformed payload frames that were skipped.
+	SkippedFrames int
+	// Pings counts keepalive pings sent while the upstream was silent.
+	Pings int
 }
 
 // EmitFunc writes one already-rendered SSE event to the client. Returning an
-// error signals the client disconnected; DriveStream then stops emitting but
+// error signals the client disconnected; the driver then stops emitting but
 // keeps draining upstream so usage/credits are captured for billing.
 type EmitFunc func(SseEvent) error
 
-// DriveStream decodes the upstream Kiro event-stream from r and drives ctx,
-// invoking emit for every produced SSE event (initial, per-event, final). It
-// mirrors kiro-rs create_sse_stream ordering: initial events, then per-chunk
-// events, then final events — except a fatal upstream error terminates the
-// stream immediately after the error event (no final events), matching kiro-rs.
-//
-// r is typically the ForwardResponse.Body (caller owns Close).
+// DriveOptions tunes DriveStreamWithOptions. The zero value disables both.
+type DriveOptions struct {
+	// KeepaliveInterval sends an SSE ping after this long without writing to
+	// the client, so proxies/clients with an idle timeout do not drop a
+	// stream while the upstream is silent (long thinking, huge context).
+	KeepaliveInterval time.Duration
+	// IdleTimeout ends the stream when no upstream event arrives for this
+	// long. It bounds a stalled upstream now that the read is detached from
+	// the client connection.
+	IdleTimeout time.Duration
+}
+
+// Interrupt reasons reported in StreamOutcome.InterruptReason.
+const (
+	InterruptReadError    = "read_error"
+	InterruptDecodeErrors = "decode_errors"
+	InterruptIdleTimeout  = "idle_timeout"
+)
+
+// maxConsecutiveDecodeErrors is how many malformed payload frames in a row
+// are skipped before the stream is treated as broken (kiro.rs uses 5).
+const maxConsecutiveDecodeErrors = 5
+
+// pingSSE builds the Anthropic keepalive event.
+func pingSSE() SseEvent {
+	return NewSseEvent("ping", map[string]any{"type": "ping"})
+}
+
+// DriveStream is DriveStreamWithOptions without keepalive or idle timeout.
 func DriveStream(ctx *StreamContext, r io.Reader, emit EmitFunc) (*StreamOutcome, error) {
+	return DriveStreamWithOptions(ctx, r, emit, DriveOptions{})
+}
+
+// DriveStreamWithOptions decodes the upstream Kiro event-stream from r and
+// drives ctx, invoking emit for every produced SSE event, in kiro-rs order:
+// initial events, per-event events, then final events.
+//
+// A fatal upstream error, an upstream read failure, repeated malformed frames
+// or an idle timeout end the stream with an error event and no message_stop,
+// so a cut-off reply is never passed off as a normal end_turn. A single
+// malformed payload frame is skipped, like kiro.rs.
+//
+// The upstream is read on its own goroutine so keepalive pings and the idle
+// timeout keep working while a read blocks. r is typically the
+// ForwardResponse.Body; the caller's Close unblocks that goroutine.
+func DriveStreamWithOptions(ctx *StreamContext, r io.Reader, emit EmitFunc, opts DriveOptions) (*StreamOutcome, error) {
+	type decodeResult struct {
+		ev  Event
+		err error
+	}
+	results := make(chan decodeResult, 16)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(results)
+		dec := NewEventDecoder(r)
+		for {
+			ev, err := dec.Next()
+			select {
+			case results <- decodeResult{ev: ev, err: err}:
+			case <-done:
+				return
+			}
+			var payloadErr *PayloadDecodeError
+			if err != nil && !errors.As(err, &payloadErr) {
+				return
+			}
+		}
+	}()
+
+	var keepaliveTimer *time.Timer
+	var keepaliveC <-chan time.Time
+	if opts.KeepaliveInterval > 0 {
+		keepaliveTimer = time.NewTimer(opts.KeepaliveInterval)
+		defer keepaliveTimer.Stop()
+		keepaliveC = keepaliveTimer.C
+	}
+	resetKeepalive := func() {
+		if keepaliveTimer == nil {
+			return
+		}
+		if !keepaliveTimer.Stop() {
+			select {
+			case <-keepaliveTimer.C:
+			default:
+			}
+		}
+		keepaliveTimer.Reset(opts.KeepaliveInterval)
+	}
+
 	disconnected := false
+	pings := 0
+	skipped := 0
 	emitAll := func(events []SseEvent) {
-		if disconnected {
+		if disconnected || len(events) == 0 {
 			return
 		}
 		for _, ev := range events {
@@ -240,31 +338,97 @@ func DriveStream(ctx *StreamContext, r io.Reader, emit EmitFunc) (*StreamOutcome
 				return
 			}
 		}
+		resetKeepalive()
+	}
+
+	var idleTimer *time.Timer
+	var idleC <-chan time.Time
+	if opts.IdleTimeout > 0 {
+		idleTimer = time.NewTimer(opts.IdleTimeout)
+		defer idleTimer.Stop()
+		idleC = idleTimer.C
+	}
+	resetIdle := func() {
+		if idleTimer == nil {
+			return
+		}
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(opts.IdleTimeout)
+	}
+
+	finish := func() *StreamOutcome {
+		out := outcomeFrom(ctx, disconnected)
+		out.SkippedFrames = skipped
+		out.Pings = pings
+		return out
+	}
+	// interrupt ends the stream with an error event (no message_stop). The
+	// client only sees the reason; detail stays in the server log.
+	interrupt := func(reason string, err error) *StreamOutcome {
+		emitAll([]SseEvent{errorSSE("上游流中断: " + reason)})
+		out := finish()
+		out.Interrupted = true
+		out.InterruptReason = reason
+		if err != nil {
+			out.InterruptDetail = err.Error()
+		}
+		return out
 	}
 
 	emitAll(ctx.GenerateInitialEvents())
 
-	dec := NewEventDecoder(r)
+	consecutiveDecodeErrors := 0
 	for {
-		ev, err := dec.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			// Transport/decode error: close out the stream gracefully.
-			emitAll(ctx.GenerateFinalEvents())
-			return outcomeFrom(ctx, disconnected), nil
-		}
-		emitAll(ctx.ProcessKiroEvent(&ev))
-		if ctx.HasFatalError {
-			// Fatal upstream error: the error event was already produced; do not
-			// emit final events (mirrors kiro-rs fatal short-circuit).
-			return outcomeFrom(ctx, disconnected), nil
+		select {
+		case res, ok := <-results:
+			resetIdle()
+			if !ok {
+				// Reader stopped without a terminal result (not expected).
+				emitAll(ctx.GenerateFinalEvents())
+				return finish(), nil
+			}
+			if res.err != nil {
+				if errors.Is(res.err, io.EOF) {
+					// Clean end between frames: normal completion.
+					emitAll(ctx.GenerateFinalEvents())
+					return finish(), nil
+				}
+				var payloadErr *PayloadDecodeError
+				if errors.As(res.err, &payloadErr) {
+					skipped++
+					consecutiveDecodeErrors++
+					if consecutiveDecodeErrors >= maxConsecutiveDecodeErrors {
+						return interrupt(InterruptDecodeErrors, res.err), nil
+					}
+					continue
+				}
+				return interrupt(InterruptReadError, res.err), nil
+			}
+			consecutiveDecodeErrors = 0
+			emitAll(ctx.ProcessKiroEvent(&res.ev))
+			if ctx.HasFatalError {
+				// Fatal upstream error: the error event was already produced; do
+				// not emit final events (mirrors kiro-rs fatal short-circuit).
+				return finish(), nil
+			}
+		case <-keepaliveC:
+			if !disconnected {
+				if err := emit(pingSSE()); err != nil {
+					disconnected = true
+				} else {
+					pings++
+				}
+			}
+			resetKeepalive()
+		case <-idleC:
+			return interrupt(InterruptIdleTimeout, errors.New("no upstream event for "+opts.IdleTimeout.String())), nil
 		}
 	}
-
-	emitAll(ctx.GenerateFinalEvents())
-	return outcomeFrom(ctx, disconnected), nil
 }
 
 // outcomeFrom snapshots the final usage/credits from a StreamContext.
