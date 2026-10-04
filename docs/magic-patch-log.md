@@ -2482,6 +2482,52 @@
 - CI 全绿后由 `d05e9a3f7 …[deploy]` 上线：Build+Deploy run `36545245413` 三段 success。部署标记 `commit=d05e9a3f7…`、`sha256=651e5a2b96f7fae899c77bf237aa35a6fdd62ca25c07543aa5ce8810420165a5`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-09-29T08:52:44Z`、`backup=bin/sub2api.bak.36545245413.1`。服务 MainPID=`121626`，`ActiveEnterTimestamp=Tue 2026-09-29 04:52:41 EDT`；二进制内已含新日志串与占位签名。
 - 线上真实流量核对（pings / skipped_frames 字段、失败原因日志、400 原文）：待部署后第一批 opus-5.5 请求。
 
+---
+
+### 2026-10-04：rebase 到 upstream v0.2.13（b8dece900）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `9a62841fd`（VERSION `0.2.9`）。本轮 `upstream/main` 推进到 `b8dece900 chore: sync VERSION to 0.2.13 [skip ci]`：新增 **95** 个提交（65 个非 merge），310 文件 +14905/−915。新 tag **`v0.2.10`**（`2f3fed2fd`）、**`v0.2.11`**（`96f4c115c`）、**`v0.2.12`**（`510606571`）、**`v0.2.13`**（`3040209f2`）；VERSION 文件在 `b8dece900` 对齐到 **0.2.13**。Go 仍为 **1.27.0**。
+- 上游本轮主要范围：
+  - **TypeSafe / Jev System One**：一等平台、校验与模型列表、API-key 上游计费探测。
+  - **Claude**：Sonnet 5.5、原生 reset credit 查询与兑换。
+  - **OpenAI / Codex**：GPT-6.1 Sol、远程模型目录、订阅计划识别、Astra Ultrafast、OpenAI 分组省略 Codex catalog、流式 usage 转发、晚到 cache 扣减。
+  - **计费**：在途余额预留、API key 删除后仍结算 usage、未定价别名估价。
+  - **网关**：复合模型归属、白名单 mapping 冲突、tool name 单次改写、Antigravity 首包前保活与上游错误脱敏。
+  - **运营 / UI**：API key 创建数量与频率限制、按分组名排序、账号优先级步进、充值赠送/折扣阶梯、仪表盘用量/花费切换、Claude Code-only 分组客户端与 OpenAI 兼容降级、风控白名单、公开订单校验限流、邮箱验证码原子化。
+  - **依赖 / 安全**：Axios 1.20.0；新增 `.github/SECURITY.md`。Grok CLI 身份头对齐 1.0.46。
+- 本地 **251** 个提交全部重放到 `upstream/main` 之上。rebase 前打回溯分支 `backup/pre-rebase-20261004T133931Z`（指向旧 `origin/main` = `4bbcc6b3a`）。
+
+**冲突文件与合并策略**（均两边保留）：
+- `backend/cmd/server/wire_gen.go`（重放 `818486ee4`，31/251）：补 `availableModelHandler`。**不**再声明已经在 `ProvideAdminHandlers` 前创建的 `idempotencyCoordinator`（上游把它提前给 `ClaudeResetCreditService`）。
+- `frontend/src/types/index.ts`（`70636c318`，41/251）：`AccountPlatform` 保留上游 `typesafe`；`AccountType` 保留本地 `'kiro'`。
+- `backend/internal/service/account.go` 的 `GetBaseURL`（`dd319a358`，50/251）：Kiro 空 `base_url` 返回空串；TypeSafe 回 `typesafe.DefaultBaseURL`；其余 API Key 才回 Anthropic。
+- `frontend/src/i18n/locales/en/misc.ts`、`frontend/src/i18n/locales/zh/misc.ts`、`frontend/src/views/user/PaymentView.vue`（`719be98e8`，63/251）：上游充值赠送/折扣阶梯与本地「到账 U」、`estimatedCredit` 并存。到账行显示 `U`。
+- `backend/internal/service/gateway_forward_as_chat_completions.go`（`f06338018`，87/251）：保留 empty-stream 重试。上游 `handleCCStreamingFromAnthropic` 已去掉 `includeUsage`，流式分支按当前签名调用。Responses 路径自动合上。
+- `backend/cmd/server/wire_gen.go`（`c7eed4f13`，161/251）：`ProvideAdminHandlers` 同时传 `kiroOAuthHandler` 与上游末参 `claudeResetCreditService`。
+- `backend/internal/handler/admin/account_handler.go` 的 `GetAvailableModels`（`aaf314a51`，180/251）：TypeSafe 单模型分支与 `kiroAvailableModels()` 各自 `return`。
+- `backend/internal/service/billing_service.go`（`8d2938f97`、`f8d51da85`，217–219/251）：cache-write premium 保留 `IsGPT61SolModelSpelling`；长上下文仍不在 threshold==0 时回填 272000。Fable 隐式 3x 与 Opus 5.5 Fast 2x 不动。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包相对备份无差异；`Forward` 的 `IsKiro()` 分发点；`kiroTokenProvider` 字段与构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点。L7b-2 四接缝仍在：`provideCleanup` 顺序 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → claudeCodeVersionSync → kiroTokenRefresher`，末参 `pluginManager`。
+- `ProvideChannelMonitorRunner` 仍带 `ChannelMonitorQuotaFetcher`；`ProvideAdminHandlers` 同时传 `kiroOAuthHandler`、`cnProviderHandler`、`openCodeGoUsageService`、`claudeResetCreditService`（`ollamaCloudUsageService` 未在 handlers 前重复声明）。
+- `SensitiveCredentialKeys` 的 kiro 键；两处 web_search 过滤；web2api 路由与 failover；OAuth `detachUpstreamContext`；`AccountUsageCell` 的 Kiro credits 与 CN 单元格仍是独立分支；`UsageProgressBar` 的 Kiro wide 变体仍在。
+- `AccountPlatform` 含 `kimi/zhipu/deepseek/minimax/opencode_go/typesafe`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- `grokImagineGCD` 仍为 `int64`；`stripCodexTurnStartedAt` 仍在 fingerprint 测试中；Fable 5.1 隐式 3x 与 PNG fixture 仍在；`TestGroupReasoningPricingRoundTripAndBilling` 仍用 `claude-sonnet-4`。
+- `getAvailableModels` 仍返回 `availableModelsQueryResult`，passthrough 走 skip-continue，再由 `supplementUnmappedOpenAIModels` 补默认集。
+- usage_log INSERT 仍 `$1–$63`，尾序 `upstream_request_id, session_id, native_compaction_v2, kiro_credits, created_at`。
+- 计费：`needsOpus55FastMultiplier` + `needsMaxReasoningEffortMultiplier` + `usesOpenAILegacyLongContextPricing` 与 GPT-6 / GPT-6.1 Sol cache-write premium 并存；**不**在 threshold==0 时回填 272000。
+- Go **1.27.0**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 新增两份同号 migration，按 filename 主键都执行：`241_add_typesafe_platform.sql`（平台 CHECK 加入 `typesafe`）、`241_add_payment_order_bonus_amount.sql`（`payment_orders.bonus_amount`）。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
+- 待推送后由 GitHub Actions 验证。本提交不带 `[deploy]`。
+
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
 
