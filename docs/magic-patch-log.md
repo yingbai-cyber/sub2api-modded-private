@@ -2526,7 +2526,12 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
-- 待推送后由 GitHub Actions 验证。本提交不带 `[deploy]`。
+- rebase 重写了 251 个本地提交，以 `git push --force-with-lease=main:4bbcc6b3a` 更新 `origin/main`（`aac12c411`，**不带** `[deploy]`）。
+- **Actions（`aac12c411`）全绿**：
+  - **CI** run `37209693959`：`shell` / `golangci-lint` / `test`（Unit + Integration）/ `frontend` / `release-helpers` 均 success。
+  - **Security Scan** run `37209693946`：success。
+  - **Build** run `37209693909`：前端 embed 构建、后端测试、embed 二进制构建均 success；**Deploy skipped**（提交无 `[deploy]`）。
+- 本轮无测试失败，不需要为跟上游补测试用例。尚未上线；L9 仍未做。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
