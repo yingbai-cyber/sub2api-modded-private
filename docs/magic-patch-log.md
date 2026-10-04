@@ -2531,7 +2531,11 @@
   - **CI** run `37209693959`：`shell` / `golangci-lint` / `test`（Unit + Integration）/ `frontend` / `release-helpers` 均 success。
   - **Security Scan** run `37209693946`：success。
   - **Build** run `37209693909`：前端 embed 构建、后端测试、embed 二进制构建均 success；**Deploy skipped**（提交无 `[deploy]`）。
-- 本轮无测试失败，不需要为跟上游补测试用例。CI 全绿后按用户要求带 `[deploy]` 上线；L9 仍未做。
+- 本轮无测试失败，不需要为跟上游补测试用例。
+- **上线 v0.2.13**：`e337219bf docs: deploy rebase onto upstream v0.2.13 [deploy]`，Build+Deploy run `37211689130` 三段全 success（Detect changed areas / Build embedded Linux binary / Deploy）。该次构建复用前端缓存，Build 作业跳过后端测试（仅文档变更）；全量单测与集成测试已在 `aac12c411` 的 CI run `37209693959` 通过。
+  - 部署标记 `/root/sub2api-modded-data/deployments/last-github-actions-deploy.json`：`commit=e337219bf…`、`sha256=c020d9093171d9ad00425de9c454ec7c8547d08cda01e944a7f00745569a9f75`、`health_code=200`、`npm_health_code=200`、`deployed_at=2026-10-04T15:07:22Z`、`backup=bin/sub2api.bak.37211689130.1`。
+  - 服务 `active (running)`，MainPID=`2200056`，`ActiveEnterTimestamp=Sun 2026-10-04 11:07:18 EDT`；`172.19.0.1:18081/health` 200 `{"status":"ok"}`。二进制内含版本串 `0.2.13`，sha256 与部署标记一致。
+- 本轮 rebase 到 upstream v0.2.13 **完成并已上线**（L9 仍未做）。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
