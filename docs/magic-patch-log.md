@@ -2585,7 +2585,7 @@
   - **CI** run `38499057608`：`shell` / `golangci-lint` / `test`（Unit + Integration）/ `frontend` / `release-helpers` 均 success。
   - **Security Scan** run `38499057599`：success。
   - **Build** run `38499057617`：后端测试与 embed 二进制构建 success；**Deploy skipped**。
-- 本轮 rebase 到 upstream v0.2.16 **源码与 Actions 验证完成，尚未上线**（L9 仍未做）。
+- 本轮 rebase 到 upstream v0.2.16 的 CI 已全绿。按用户要求带 `[deploy]` 上线；L9 仍未做。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
