@@ -2537,6 +2537,50 @@
   - 服务 `active (running)`，MainPID=`2200056`，`ActiveEnterTimestamp=Sun 2026-10-04 11:07:18 EDT`；`172.19.0.1:18081/health` 200 `{"status":"ok"}`。二进制内含版本串 `0.2.13`，sha256 与部署标记一致。
 - 本轮 rebase 到 upstream v0.2.13 **完成并已上线**（L9 仍未做）。
 
+---
+
+### 2026-10-14：rebase 到 upstream v0.2.16（4d9ac3e48）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `b8dece900`（VERSION `0.2.13`，已上线 `e337219bf`）。本轮 `upstream/main` 推进到 `4d9ac3e48 chore: sync VERSION to 0.2.16 [skip ci]`：新增 **233** 个提交（142 个非 merge），472 文件 +33936/−2128。新 tag **`v0.2.14`**（`0363b8cdb`）、**`v0.2.15`**（`f2669c8cf`）、**`v0.2.16`**（`01842576b`）；VERSION 文件在 `4d9ac3e48` 对齐到 **0.2.16**。Go 从 **1.27.0** 升到 **1.27.2**。
+- 上游本轮主要范围：
+  - **平台**：Command Code、Cline；平台白名单改为应用层校验，前端平台列表改为开放字符串（`KnownAccountPlatform | (string & {})`）。
+  - **Gemini**：显式上下文缓存（AI Studio / Vertex / 自建网关）、工具结果图片、Vertex API Key、3.6 Flash 兜底价。
+  - **模型 / 计费**：Claude Haiku 5.5；GPT-6.1 Sol 生成上下文默认 500k，并取消其订阅长上下文附加费。
+  - **网关**：`/v1/responses` 转 Anthropic 的统一协议分流；Antigravity 图片限流隔离；web_search 历史回放。
+  - **运营**：分组多语言、国际额度端点、Ops 账号名与输出 TPS、监控样本门槛、fresh install 不再带可猜测管理员口令。
+  - **依赖**：Go 1.27.2、x/net；前端 source-map-js / vue / xlsx 审计。
+- 本地 **255** 个提交里 **254** 个重放到 `upstream/main` 之上。`2e7a839cc fix(test): repair v0.1.156 rebase test-compile errors` 的补丁内容已在上游，rebase 自动丢弃。rebase 前打回溯分支 `backup/pre-rebase-20261014T011440Z`（指向旧 `origin/main` = `e42ccfff3`）。
+
+**冲突文件与合并策略**（均两边保留）：
+- `backend/internal/repository/scheduler_cache.go`（重放 `2a953eb17`）：候选投影同时留 `openai_images_transport` 与 Gemini 显式缓存键。
+- `frontend/src/types/index.ts`（`1c53d3eff`）：保留上游 `KnownAccountPlatform`（含 `typesafe` / `command_code` / `cline`）和开放 `AccountPlatform`；`AccountType` 保留 `'kiro'`。
+- `frontend/src/components/account/EditAccountModal.vue`（`cd7424c93`）：`syncFormFromAccount` 先写 Gemini 显式缓存，再写 Kiro `credits_per_dollar`。
+- `backend/internal/handler/gateway_models_test.go`（`6562217d9`）：保留 `ListSchedulableByGroupIDAndPlatforms` / `ListSchedulableByPlatforms` 测试桩，构造器跟上上游 composite resolver。
+- `backend/internal/handler/admin/account_handler_available_models_test.go`（`5b7074679`）：上游 Antigravity 模型测试与本地五条 saved-key 探测测试都留。`setupProbeModelsRouter` 补上 `NewAccountHandler` 新增的 `tokenCacheInvalidator` 实参。
+- `backend/internal/domain/constants.go`（`d2648d457`）：`PlatformCommandCode`、`PlatformCline`、`PlatformComposite` 与 `PlatformKiro` 并存。
+- `backend/cmd/server/wire_gen.go`（`91cd9b51d`）：`provideCleanup` 在 Claude Code 版本同步之后传 `kiroTokenRefresher`，在幂等清理之后传上游 `geminiCachedContentService`。
+- `frontend/src/components/account/EditAccountModal.vue`（`cbe86db81`）：通用多协议账号模式留在 Kiro legacy `<template>` 内，然后闭合模板。
+- `backend/internal/handler/admin/account_handler.go`（`51b53070f`）：`antigravityAccountTestModels` 与 `kiroAvailableModels` 各自成函数；`GetAvailableModels` 里 TypeSafe 与 Kiro 仍各自 `return`。
+- `frontend/package.json`、`frontend/pnpm-lock.yaml`（`ae0f72df3`）：overrides 同时留 nanoid `>=3.3.17`、postcss `>=8.5.26`、dompurify，以及上游 `source-map-js >=1.2.2`。Vue 编译器锁依赖取更高的 postcss `8.5.29` 与 source-map-js `1.2.2`。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `internal/kiro` 整包相对备份无差异；`Forward` 的 `IsKiro()` 分发点；`kiroTokenProvider` 字段与构造器体内 `NewKiroTokenProvider`；`PlatformKiro` 双锚点。L7b-2 仍独立于共享 `TokenRefreshService`。`provideCleanup` 顺序为 `accountExpiry → cnProviderBalanceCheck → openAICodexVersionSync → claudeCodeVersionSync → kiroTokenRefresher`，随后 `idempotencyCleanup → geminiCachedContent → batchImageCleanup`，末参 `pluginManager`。
+- `SensitiveCredentialKeys` 的 kiro 键；两处 web_search 过滤；web2api 路由；OAuth `detachUpstreamContext`。
+- `AccountPlatform` 是开放字符串，内置清单含 `kimi/zhipu/deepseek/minimax/opencode_go/typesafe/command_code/cline`，**不含 kiro**；`AccountType` 仍含 `'kiro'`。
+- 计费：`needsOpus55FastMultiplier` + `needsMaxReasoningEffortMultiplier` + `usesOpenAILegacyLongContextPricing` 与 GPT-6 / GPT-6.1 Sol cache-write premium 并存；**不**在 threshold==0 时回填 272000，也**不**把上游取消的 GPT-6.1 Sol 订阅长上下文附加费加回去。Fable 5.1 隐式 3x、`TestGroupReasoningPricingRoundTripAndBilling` 的 `claude-sonnet-4`、PNG fixture 仍在。
+- usage_log SELECT 尾序仍是 `upstream_request_id, session_id, native_compaction_v2, kiro_credits, created_at`。
+- Go **1.27.2**；全仓无 git 冲突标记。
+
+**生产迁移 / L9**：
+- 新增 migration，同号按 filename 主键都执行：`242_drop_platform_check_constraints.sql`、`242_group_i18n.sql`，以及 `243_gemini_cached_contents.sql`、`244_gemini_cached_contents_channel_usage.sql`、`245_gemini_cached_contents_mutation_lease.sql`。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
+- 待推送后由 GitHub Actions 验证。本提交不带 `[deploy]`。
+
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
 
