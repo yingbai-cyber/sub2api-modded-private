@@ -2579,7 +2579,13 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
-- 首次推送 `413ecfdbc`（不带 `[deploy]`）后，CI run `38495356079` 单元测试失败：`TestAccountTestFailureLogAttribution` 看不到 `account_test.failed`。失败日志只写在 `Request.Context` 上，后续换掉 `c.Request` 后会退回 nop logger；后台探测在账号不存在时也在建 gin 上下文之前直接返回。修复把 logger 挂到 gin.Keys，并让缺失账号仍走 `TestAccountConnection`。OpenAI 轻量探针不变。修复提交不带 `[deploy]`，待 GitHub Actions 复验。
+- 首次推送 `413ecfdbc`（不带 `[deploy]`）后，CI run `38495356079` 单元测试失败：`TestAccountTestFailureLogAttribution` 看不到 `account_test.failed`。同提交的 Security Scan run `38495356052` 与 Build run `38495356047` 成功，Deploy skipped。
+- 修复提交 `d2a64f642`（不带 `[deploy]`）：失败日志挂在 gin.Keys 上，缺失账号的后台探测仍走 `TestAccountConnection`。OpenAI 轻量探针不变。
+- **Actions（`d2a64f642`）全绿**：
+  - **CI** run `38499057608`：`shell` / `golangci-lint` / `test`（Unit + Integration）/ `frontend` / `release-helpers` 均 success。
+  - **Security Scan** run `38499057599`：success。
+  - **Build** run `38499057617`：后端测试与 embed 二进制构建 success；**Deploy skipped**。
+- 本轮 rebase 到 upstream v0.2.16 **源码与 Actions 验证完成，尚未上线**（L9 仍未做）。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
