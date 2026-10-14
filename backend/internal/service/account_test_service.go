@@ -3406,16 +3406,16 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 	}
 
 	account, err := s.accountRepo.GetByID(ctx, accountID)
-	if err != nil {
-		return buildScheduledProbeResult(startedAt, "", "Account not found"), nil
-	}
-	if account.IsOpenAI() {
+	// OpenAI scheduled probes stay on the light path. A missing account, or any
+	// other platform, still goes through TestAccountConnection so the failure is
+	// logged instead of returning before a gin context exists.
+	if err == nil && account != nil && account.IsOpenAI() {
 		return s.runOpenAILightProbeBackground(ctx, account, modelID, startedAt), nil
 	}
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
-	ginCtx.Request = (&http.Request{}).WithContext(ctx)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/accounts/test", nil).WithContext(ctx)
 	ginCtx.Set(accountTestBackgroundKey, true)
 
 	testErr := s.TestAccountConnection(ginCtx, accountID, modelID, "", AccountTestModeDefault)
