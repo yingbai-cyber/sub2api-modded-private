@@ -2579,7 +2579,7 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
-- 待推送后由 GitHub Actions 验证。本提交不带 `[deploy]`。
+- 首次推送 `413ecfdbc`（不带 `[deploy]`）后，CI run `38495356079` 单元测试失败：`TestAccountTestFailureLogAttribution` 看不到 `account_test.failed`。失败日志只写在 `Request.Context` 上，后续换掉 `c.Request` 后会退回 nop logger；后台探测在账号不存在时也在建 gin 上下文之前直接返回。修复把 logger 挂到 gin.Keys，并让缺失账号仍走 `TestAccountConnection`。OpenAI 轻量探针不变。修复提交不带 `[deploy]`，待 GitHub Actions 复验。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
