@@ -2619,7 +2619,7 @@
 
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
-- **待 GitHub Actions 验证**。CI、Security Scan 与 Build 由指向 `main` 的 pull request 触发；在 Actions 全绿且明确要求上线之前，不带 `[deploy]`，也不改写 `origin/main`。
+- **待 GitHub Actions 验证**。当前 token 不能创建 pull request，也不能派发 `workflow_dispatch`。CI 与 Security Scan 已由推送 `rebase/upstream-v0.2.22` 触发。Build 只监听 `main` 和指向 `main` 的 PR，因此在该分支的 `build.yml` 里临时加入同名 push 触发；提交信息不含 `[deploy]`，Deploy 不会执行。`origin/main` 不改写。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
