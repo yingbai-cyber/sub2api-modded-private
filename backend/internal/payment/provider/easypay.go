@@ -323,7 +323,7 @@ func (e *EasyPay) upstreamPaymentType(paymentType string) string {
 
 func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	tradeNo = strings.TrimSpace(tradeNo)
-	result, err := e.queryOrder(ctx, tradeNo)
+	result, err := e.queryOrder(ctx, tradeNo, true)
 	if err != nil {
 		return nil, err
 	}
@@ -356,20 +356,29 @@ type easyPayQueryResult struct {
 	pid     string
 }
 
-func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*easyPayQueryResult, error) {
+func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string, allowFindOrderFallback bool) (*easyPayQueryResult, error) {
 	outTradeNo = strings.TrimSpace(outTradeNo)
 	if strings.EqualFold(strings.TrimSpace(e.config["queryMode"]), easypayQueryModeFindOrder) {
 		return e.queryOrderFindOrder(ctx, outTradeNo)
 	}
 	result, err := e.queryOrderLegacy(ctx, outTradeNo)
-	if err == nil {
-		return result, nil
+	// A parsed gateway answer (including an explicit failure code or an
+	// order-identity mismatch) is final. findorder is only a fallback when
+	// api.php?act=order is not this gateway's protocol: the request never
+	// completed, or the body is not JSON (rainbow pay's "No Act!").
+	if err == nil || !allowFindOrderFallback || !easyPayLegacyQueryShouldFallback(err) {
+		return result, err
 	}
 	findResult, findErr := e.queryOrderFindOrder(ctx, outTradeNo)
 	if findErr == nil {
 		return findResult, nil
 	}
 	return nil, fmt.Errorf("easypay query legacy: %v; findorder: %w", err, findErr)
+}
+
+func easyPayLegacyQueryShouldFallback(err error) bool {
+	msg := err.Error()
+	return strings.HasPrefix(msg, "easypay query:") || strings.HasPrefix(msg, "easypay parse query:")
 }
 
 func (e *EasyPay) queryOrderLegacy(ctx context.Context, outTradeNo string) (*easyPayQueryResult, error) {
@@ -457,7 +466,7 @@ func (e *EasyPay) ConfirmNotification(ctx context.Context, n *payment.PaymentNot
 	if n == nil || n.Status != payment.NotificationStatusSuccess {
 		return nil
 	}
-	result, err := e.queryOrder(ctx, n.OrderID)
+	result, err := e.queryOrder(ctx, n.OrderID, false)
 	if err != nil {
 		return fmt.Errorf("easypay confirm: %w", err)
 	}

@@ -110,7 +110,7 @@ func nativeImageRequest(t *testing.T, endpoint string, native bool) *http.Reques
 		require.NoError(t, writer.WriteField("prompt", "edit fixture"))
 		part, err := writer.CreateFormFile("image", "input.png")
 		require.NoError(t, err)
-		_, err = part.Write([]byte("fixture-image"))
+		_, err = part.Write([]byte("\x89PNG\r\n\x1a\nfake-png-payload"))
 		require.NoError(t, err)
 		require.NoError(t, writer.Close())
 		contentType = writer.FormDataContentType()

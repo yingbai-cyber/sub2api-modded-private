@@ -57,7 +57,7 @@ func TestUserAvailableModel_FieldWhitelist(t *testing.T) {
 
 func TestDefaultModelIDsForPlatform_FallsBackByPlatform(t *testing.T) {
 	require.Contains(t, defaultModelIDsForPlatform(service.PlatformOpenAI), "gpt-5.4")
-	require.Contains(t, defaultModelIDsForPlatform(service.PlatformGemini), "gemini-2.5-pro")
+	require.Contains(t, defaultModelIDsForPlatform(service.PlatformGemini), "gemini-3.5-flash")
 	require.Contains(t, defaultModelIDsForPlatform(service.PlatformAnthropic), "claude-sonnet-4-5-20250929")
 	require.Contains(t, defaultModelIDsForPlatform(service.PlatformAntigravity), "gemini-2.5-flash")
 }

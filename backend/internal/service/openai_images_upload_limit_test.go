@@ -14,6 +14,7 @@ import (
 func buildImagesEditMultipartBody(t *testing.T, imageSize int) ([]byte, string, []byte) {
 	t.Helper()
 	image := bytes.Repeat([]byte{0xAB}, imageSize)
+	copy(image, []byte("\x89PNG\r\n\x1a\n"))
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	require.NoError(t, writer.WriteField("model", "gpt-image-2"))

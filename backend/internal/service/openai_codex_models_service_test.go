@@ -39,6 +39,17 @@ func (r codexModelsVisibilityAccountRepo) ListSchedulableByGroupID(_ context.Con
 	return append([]Account(nil), accounts...), nil
 }
 
+func (r codexModelsVisibilityAccountRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, groupID int64, platform string) ([]Account, error) {
+	accounts := r.byGroup[groupID]
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Platform == platform {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
+}
+
 func (r codexModelsVisibilityAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, _ []string, _ bool) ([]Account, error) {
 	if groupID == nil {
 		return nil, nil

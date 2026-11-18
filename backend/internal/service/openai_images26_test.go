@@ -44,7 +44,7 @@ func TestGPTImage26ComplexityAcrossImageEndpoints(t *testing.T) {
 							}
 							part, err := writer.CreateFormFile("image", "input.png")
 							require.NoError(t, err)
-							_, err = part.Write([]byte("image-bytes"))
+							_, err = part.Write([]byte("\x89PNG\r\n\x1a\nfake-png-payload"))
 							require.NoError(t, err)
 							require.NoError(t, writer.Close())
 							body, contentType = buf.Bytes(), writer.FormDataContentType()

@@ -2620,7 +2620,7 @@
 **验证结果**：
 - 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
 - **待 GitHub Actions 验证**。当前 token 不能创建 pull request，也不能派发 `workflow_dispatch`。CI 与 Security Scan 已由推送 `rebase/upstream-v0.2.22` 触发。Build 只监听 `main` 和指向 `main` 的 PR，因此在该分支的 `build.yml` 里临时加入同名 push 触发；提交信息不含 `[deploy]`，Deploy 不会执行。`origin/main` 不改写。
-- Security Scan `44224231651` 的 `govulncheck` 因编译错误失败，不是漏洞：`gateway_upstream_request.go` 的 `baseURL` 被限制在 URL 分支内，后续 Ollama clamp 和 API key 认证用不到；`fetchUpstreamModelListRequest` 已变成四个返回值，Kiro 分支少返回 `*http.Request`。已把实际出站 base 提到函数作用域，Kiro 静态列表和原生拉取都补上 `nil` request。
+- Security Scan `44224231651` 的 `govulncheck` 因编译错误失败，不是漏洞：`gateway_upstream_request.go` 的 `baseURL` 被限制在 URL 分支内，后续 Ollama clamp 和 API key 认证用不到；`fetchUpstreamModelListRequest` 已变成四个返回值，Kiro 分支少返回 `*http.Request`。已把实际出站 base 提到函数作用域，Kiro 静态列表和原生拉取都补上 `nil` request。`e54ac1a97` 上 Security Scan 已绿。Build `44224645576` 与 CI `44224645578` 仍失败，本轮修的是这些失败，仍待下一轮 Actions：Grok 诊断测试补上 `AntigravityGatewayService` 的 nil；查询订单只在 legacy 请求未完成或响应不是 JSON 时才回退 `findorder`，确认通知不回退；图片夹具改用 PNG 魔数；Gemini 默认清单断言改为 `gemini-3.5-flash`；GPT-5.5 退役测试补 `ListSchedulableByGroupIDAndPlatform`。
 
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配

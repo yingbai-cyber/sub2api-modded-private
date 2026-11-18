@@ -322,7 +322,7 @@ func TestEasyPayQueryOrderFallsBackToFindOrder(t *testing.T) {
 		switch r.URL.Path {
 		case "/api.php":
 			legacyCalled = true
-			_, _ = io.WriteString(w, `{"code":400,"msg":"unsupported legacy query"}`)
+			_, _ = io.WriteString(w, "No Act!")
 		case "/api/findorder":
 			findOrderCalled = true
 			if err := r.ParseForm(); err != nil {

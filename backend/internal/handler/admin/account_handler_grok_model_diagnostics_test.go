@@ -186,7 +186,7 @@ func newGrokDiagSyncRouter(adminSvc service.AdminService, repo service.AccountRe
 }
 
 func newGrokDiagTestService(repo service.AccountRepository, upstream service.HTTPUpstream) *service.AccountTestService {
-	return service.NewAccountTestService(repo, nil, nil, nil, nil, upstream, &config.Config{
+	return service.NewAccountTestService(repo, nil, nil, nil, nil, nil, upstream, &config.Config{
 		Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}},
 	}, nil)
 }
