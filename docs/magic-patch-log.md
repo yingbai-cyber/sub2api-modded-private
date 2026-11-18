@@ -2590,6 +2590,37 @@
   - 服务 `active (running)`，MainPID=`1506873`，`ActiveEnterTimestamp=Tue 2026-10-13 23:57:34 EDT`；`172.19.0.1:18081/health` 200 `{"status":"ok"}`。二进制内含版本串 `0.2.16`，sha256 与部署标记一致。新进程启动日志没有 panic 或迁移错误，并在 `172.19.0.1:18081` 开始监听。
 - 本轮 rebase 到 upstream v0.2.16 **完成并已上线**（L9 仍未做）。
 
+---
+
+### 2026-11-18：rebase 到 upstream v0.2.22（69d2fae91）
+**类型**：上游同步 rebase
+
+**背景**：
+- 上一轮基线 `upstream/main` = `4d9ac3e48`（VERSION `0.2.16`，已上线 `1aabc6819`）。本轮 `upstream/main` 推进到 `69d2fae91`：新增 **552** 个提交（334 个非 merge），1080 文件 +95029/−5365。新 tag **`v0.2.17`** 至 **`v0.2.22`**；VERSION 在 `15871f904` 对齐到 **0.2.22**，其后还有 8 个提交。Go 从 **1.27.2** 升到 **1.27.4**。
+- 本地 **259** 个提交逐个重放。重放后 `upstream/main..HEAD` 为 **258** 个：`[deploy] fix: gofmt usage_log scan stub in uncommented neighborhood` 的对齐已包含在前一个冲突解决里，rebase 丢弃了这个空提交。rebase 前打回溯分支 `backup/pre-rebase-20261118T021156Z`（指向旧 `origin/main` = `10af7908f`）。
+- **未** force-push `origin/main`。验证走指向 `main` 的 pull request，让 GitHub Actions 跑测试和构建。本记录提交不带 `[deploy]`。
+
+**冲突文件与合并策略**（均两边保留）：
+- `openai_images_responses.go`：free OAuth 生图继续走 web2api，同时保留上游两参数 `detachUpstreamContext` 和 n>1 告警。
+- `easypay.go`：保留上游 `ConfirmNotification`、金额容差、通知参数白名单和 GET+POST 查询；本地 ezfpy 的成功码 200、`findorder` 回退、`sitename`、`code_url`，以及 `HasTradeStatus`（显式 `trade_status` 不是 `TRADE_SUCCESS` 时保持 pending）。
+- `usage_log` 插入/查询：尾序为 `upstream_request_id, session_id, native_compaction_v2, cache_creation_30m_tokens, cache_creation_12h_tokens, kiro_credits, created_at`，占位符到 `$65`。相关单测按这个尾序钉住列位置。
+- `gateway_forward_as_{chat_completions,responses}.go`：空流只对 buffered 路径重试一次；两条路径都保留一次 401 token 轮换、SSE 错误转移和空闲超时。4xx 仍先执行账号策略，pool mode 的 `RetryableOnSameAccount` 不并进默认 failover 列表。Kiro `web_search` 过滤保留。
+- `wire_gen.go`：`provideCleanup` 在 Claude Code 版本同步之后传 `kiroTokenRefresher`，并保留上游新增的 `usageBillingLaneCombiner`、`balanceNotifyService`、`digestSessionStore` 与 `geminiCachedContentService`。`KiroTokenRefresher` 不并入共享 `TokenRefreshService`。
+- `PaymentView.vue`：赠送行和到账 `U` 保留；汇率预览继续用 `{u}`，并同时传入 `currency` / `usd`，与测试期望一致。
+- `EditAccountModal.vue` / `CreateAccountModal.vue`：Kiro legacy/native 与国产 `account_mode` / `api_protocol` 并存。模型映射开关用上游 `isOpenAIModelRestrictionDisabled`（透传且未开模型过滤才关闭映射）。
+- `account.go`：`AccountTypeSupportsQuota`（含 service_account）与 `GetKiroCacheEmulationRatio` 都留。
+- `billing_service.go`：Fable 5.1 隐式 max 3x、Opus 5.5 Fast 2x、GPT-5.5 fast 2.5x，以及 GPT-6 / GPT-6.1 / GPT-6.2 的 cache-write premium 和 12h 写价并存。`usesOpenAILegacyLongContextPricing` 仍被调用，但 **不** 在 threshold==0 时回填 272000。
+- `frontend/package.json` 与 `pnpm-lock.yaml`：overrides 同时留 nanoid `>=3.3.17`、postcss `>=8.5.26`、dompurify `>=3.4.17`、source-map-js、follow-redirects、decode-uri-component。锁文件里的 nanoid 已是 3.3.18/3.3.20，postcss 已是 8.5.26/8.5.29，未在本机重装依赖。
+
+**本地补丁静态复核（抽查，未跑 build/test）**：
+- `KiroTokenRefresher` 在 `wire.go` / `wire_gen.go` 的构造、形参和 Stop 顺序里。`SensitiveCredentialKeys` 含 `kiro_api_key` 与 `client_secret`。Responses 转发在工具数大于 1 时过滤 Kiro `web_search`。
+- `TestTryModelFilePricing_Fable51MaxEffortUsesTripleQuota` 仍在。全仓无 git 冲突标记。
+- L9 `platform=kiro` 数据迁移仍未执行，继续等待显式授权。
+
+**验证结果**：
+- 本机只做源码级 rebase、冲突解决、只读静态核对；**未运行 build / test / vet / gofmt / pnpm，也未安装依赖，未手动重启**。
+- **待 GitHub Actions 验证**。CI、Security Scan 与 Build 由指向 `main` 的 pull request 触发；在 Actions 全绿且明确要求上线之前，不带 `[deploy]`，也不改写 `origin/main`。
+
 ### YYYY-MM-DD：补丁名称
 **类型**：功能 / 修复 / 运维适配 / 反代适配 / 风控适配
 
