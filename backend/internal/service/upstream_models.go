@@ -808,10 +808,10 @@ func (s *AccountTestService) fetchUpstreamModelListRequest(ctx context.Context, 
 	// must report live upstream failures rather than claim a successful sync.
 	if account.IsKiro() {
 		if !kiro.ParseCredentials(account.ID, account.Credentials, account.Extra).UsesNativeUpstream() {
-			return kiroSupportedModelIDs(), nil, nil
+			return kiroSupportedModelIDs(), nil, nil, nil
 		}
 		models, err := s.fetchKiroUpstreamModels(ctx, account)
-		return models, nil, err
+		return models, nil, nil, err
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {

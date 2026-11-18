@@ -56,15 +56,17 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		return req, body, err
 	}
 
-	// 确定目标URL
+	// 确定目标URL。baseURL 留给后面的 Ollama clamp 和 API key 认证，必须与本次实际出站 base 相同；官方默认端点保持空字符串。
 	targetURL := claudeAPIURL
+	baseURL := ""
 	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeKiro {
-		baseURL := getAnthropicGatewayBaseURL(account)
-		if baseURL != "" {
-			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+		gatewayBaseURL := getAnthropicGatewayBaseURL(account)
+		if gatewayBaseURL != "" {
+			validatedURL, err := s.validateUpstreamBaseURL(gatewayBaseURL)
 			if err != nil {
 				return nil, nil, err
 			}
+			baseURL = validatedURL
 			targetURL = buildAnthropicMessagesURL(validatedURL)
 		}
 	} else if account.IsCustomBaseURLEnabled() {
@@ -76,6 +78,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		if err != nil {
 			return nil, nil, err
 		}
+		baseURL = validatedURL
 		targetURL = s.buildCustomRelayURL(validatedURL, "/v1/messages", account)
 	}
 
